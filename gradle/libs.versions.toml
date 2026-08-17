@@ -1,0 +1,55 @@
+[versions]
+kotlin = "2.4.0"
+app = "0.1.0"
+
+# Quartz from JitPack (amethyst @ commit) — Nostr event models and signature
+# verification. Started aligned with vespa-relay's pin so the two projects agree.
+#
+# A JitPack version IS a git commit hash, and hashes carry no order. Gradle sees
+# version STRINGS and, when two parts of the graph ask for different ones, keeps
+# the lexicographically higher — which for hashes means an arbitrary one, chosen
+# silently. That is why every module force()s this pin, and why "newer" is a word
+# that does not apply here. The only relation that means anything between two
+# hashes is ancestry, and only git can answer it:
+#   git merge-base --is-ancestor A B
+quartz = "1866007e99"
+
+coroutines = "1.11.0"
+serialization = "1.11.0"
+ktor = "3.5.1"
+okhttp = "5.4.0"
+jsoup = "1.21.1"
+anthropic = "2.34.0"
+sqlite = "3.50.1.0"
+junit = "5.11.4"
+spotless = "8.8.0"
+ktlint = "1.8.0"
+
+[libraries]
+quartz = { module = "com.github.vitorpamplona.amethyst:quartz", version.ref = "quartz" }
+
+kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
+kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "serialization" }
+
+# The relay socket. Quartz wraps this same client in BasicOkHttpWebSocket; the
+# generator only reads, so it talks to OkHttp directly.
+okhttp = { module = "com.squareup.okhttp3:okhttp", version.ref = "okhttp" }
+
+# The sanitizer. jsoup's Cleaner + Safelist is the allowlist; the CSS pass is
+# ours, because jsoup does not parse stylesheets.
+jsoup = { module = "org.jsoup:jsoup", version.ref = "jsoup" }
+
+# The writer. Rides on OkHttp, already in the graph.
+anthropic = { module = "com.anthropic:anthropic-java", version.ref = "anthropic" }
+
+# Phase 3: the web app.
+ktor-server-core = { module = "io.ktor:ktor-server-core", version.ref = "ktor" }
+ktor-server-netty = { module = "io.ktor:ktor-server-netty", version.ref = "ktor" }
+sqlite-jdbc = { module = "org.xerial:sqlite-jdbc", version.ref = "sqlite" }
+
+junit-jupiter = { module = "org.junit.jupiter:junit-jupiter", version.ref = "junit" }
+junit-platform-launcher = { module = "org.junit.platform:junit-platform-launcher" }
+
+[plugins]
+kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
+diffplug-spotless = { id = "com.diffplug.spotless", version.ref = "spotless" }

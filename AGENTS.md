@@ -15,6 +15,17 @@ which is the search relay this reads from. That repo's `AGENTS.md` is worth
 reading — the commenting conventions, the JitPack pinning trap, and the
 "instrument before you theorize" habit all apply here.
 
+## Build
+
+    ./gradlew build                 # compile + test + spotless
+    ./gradlew spotlessApply         # run BEFORE committing; formatting alone fails the build
+    ./gradlew :generator:installDist
+    generator/build/install/generator/bin/generator <npub> --dry-run
+
+`--dry-run` does everything except call the model and writes the digest instead
+of a page. It needs no API key and is the fastest way to see whether a lens
+resolves. A full run reads `ANTHROPIC_API_KEY` from the environment.
+
 ## Settled — do not relitigate without a reason
 
 - **Window is 24 hours, fixed.** Not "since last login."
@@ -29,6 +40,11 @@ reading — the commenting conventions, the JitPack pinning trap, and the
   image library in this project.
 - **Login required to generate**; no login to read a published edition.
 - **The system prompt is fixed, hidden, and never reaches the client.**
+- **The paper prints addresses; it does not make them clickable.** No `<a href>`
+  to the open web survives — only permalinks back to a source event. An earlier
+  version allowlisted any URL that appeared in the corpus; a test caught that
+  the corpus is where the attacker writes, so posting a phishing URL was enough
+  to allowlist it. Presence in the corpus is evidence of nothing.
 
 ## Not settled
 

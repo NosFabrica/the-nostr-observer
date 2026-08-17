@@ -1,0 +1,779 @@
+<title>The Nostr Observer</title>
+<style>
+:root{
+  --paper:#FAF8F3;
+  --paper-2:#F2EFE8;
+  --ink:#16121B;
+  --ink-2:#4C4553;
+  --ink-3:#6E6675;
+  --rule:#C8C1CC;
+  --rule-soft:#E0DAE2;
+  --accent:#57277F;
+  --spot:#9C2B24;
+  --reverse-bg:#16121B;
+  --reverse-ink:#F5F1EC;
+  --reverse-ink-2:#A79DB0;
+  --reverse-rule:#3E3648;
+  --serif:"Times New Roman",Times,"Liberation Serif","Nimbus Roman",serif;
+  --body:Georgia,"Liberation Serif","Times New Roman",Times,serif;
+  --util:"Helvetica Neue",Helvetica,Arial,"Liberation Sans",sans-serif;
+  --mono:ui-monospace,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --paper:#131017;
+    --paper-2:#1B1721;
+    --ink:#EDE7E0;
+    --ink-2:#B4ABBB;
+    --ink-3:#928A99;
+    --rule:#3B3444;
+    --rule-soft:#2A2432;
+    --accent:#C6A2E8;
+    --spot:#E38375;
+    --reverse-bg:#241E2E;
+    --reverse-ink:#F3EEEA;
+    --reverse-ink-2:#B0A5BC;
+    --reverse-rule:#4B4159;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#131017;
+  --paper-2:#1B1721;
+  --ink:#EDE7E0;
+  --ink-2:#B4ABBB;
+  --ink-3:#928A99;
+  --rule:#3B3444;
+  --rule-soft:#2A2432;
+  --accent:#C6A2E8;
+  --spot:#E38375;
+  --reverse-bg:#241E2E;
+  --reverse-ink:#F3EEEA;
+  --reverse-ink-2:#B0A5BC;
+  --reverse-rule:#4B4159;
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0;
+  background:var(--paper);
+  color:var(--ink);
+  font-family:var(--body);
+  font-size:16px;
+  line-height:1.5;
+  -webkit-font-smoothing:antialiased;
+}
+.sheet{
+  max-width:1240px;
+  margin:0 auto;
+  padding:20px 22px 72px;
+}
+
+/* ---------- generic type ---------- */
+.kicker{
+  font-family:var(--util);
+  font-size:.62rem;
+  font-weight:700;
+  letter-spacing:.16em;
+  text-transform:uppercase;
+  color:var(--accent);
+}
+.note{font-family:var(--body);font-style:italic;font-size:.8rem;line-height:1.45;color:var(--ink-3)}
+.byline{
+  font-family:var(--util);
+  font-size:.63rem;
+  letter-spacing:.11em;
+  text-transform:uppercase;
+  color:var(--ink-3);
+}
+.dek{
+  font-family:var(--body);
+  font-size:.95rem;
+  line-height:1.45;
+  color:var(--ink-2);
+  font-style:italic;
+}
+h1,h2,h3,h4{font-family:var(--serif);font-weight:700;margin:0;text-wrap:balance;line-height:1.06}
+p{margin:0}
+a{color:inherit;text-decoration:none;border-bottom:1px solid var(--rule)}
+a:hover{border-bottom-color:var(--accent);color:var(--accent)}
+a:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:2px}
+
+/* ---------- folio + masthead ---------- */
+.folio{
+  display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap;
+  font-family:var(--util);font-size:.6rem;letter-spacing:.15em;text-transform:uppercase;
+  color:var(--ink-3);padding-bottom:8px;
+}
+.masthead{border-top:5px solid var(--ink);border-bottom:1px solid var(--ink);padding:18px 0 12px;text-align:center}
+.masthead h1{
+  font-size:clamp(2.3rem,7.6vw,5.1rem);
+  letter-spacing:.015em;text-transform:uppercase;line-height:.92;
+}
+.masthead h1 .the{font-size:.44em;display:block;letter-spacing:.42em;margin-bottom:.28em;text-indent:.42em;color:var(--ink-2)}
+.motto{
+  margin-top:14px;font-family:var(--util);font-size:.6rem;letter-spacing:.28em;
+  text-transform:uppercase;color:var(--ink-3);
+}
+.dateline{
+  display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;
+  border-bottom:3px double var(--ink);padding:7px 0;
+  font-family:var(--util);font-size:.6rem;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-2);
+}
+.dateline b{color:var(--accent);font-weight:700}
+
+/* ---------- grid ---------- */
+.fold{
+  display:grid;grid-template-columns:repeat(12,1fr);gap:0;
+  border-bottom:3px double var(--ink);
+}
+.col{padding:20px 20px 24px;border-left:1px solid var(--rule)}
+.col:first-child{padding-left:0;border-left:0}
+.col:last-child{padding-right:0}
+.c-lead{grid-column:span 4}
+.c-main{grid-column:span 5}
+.c-rail{grid-column:span 3}
+
+.lead-head{font-size:clamp(1.9rem,3.1vw,2.7rem);margin-bottom:10px}
+.main-head{font-size:clamp(1.6rem,2.5vw,2.15rem);margin-bottom:8px}
+.sub-head{font-size:1.28rem;margin-bottom:6px}
+.small-head{font-size:1.02rem;margin-bottom:4px}
+
+.story{display:flex;flex-direction:column;gap:9px}
+.story + .story{margin-top:18px;padding-top:18px;border-top:1px solid var(--rule-soft)}
+.story p{font-size:.925rem;line-height:1.52;hyphens:auto}
+.story p.first::first-letter{
+  float:left;font-family:var(--serif);font-weight:700;font-size:3.1em;line-height:.79;
+  padding:.05em .09em 0 0;color:var(--accent);
+}
+
+/* ---------- art ---------- */
+figure{margin:0;display:flex;flex-direction:column;gap:7px}
+figure img{width:100%;height:auto;display:block;border:1px solid var(--rule);background:var(--paper-2)}
+figcaption{font-family:var(--body);font-style:italic;font-size:.82rem;line-height:1.4;color:var(--ink-2)}
+figcaption .credit{
+  font-family:var(--util);font-style:normal;font-size:.58rem;letter-spacing:.13em;
+  text-transform:uppercase;color:var(--ink-3);display:block;margin-top:4px;
+}
+
+/* ---------- boxes ---------- */
+.box{border:1px solid var(--ink);padding:14px 15px;display:flex;flex-direction:column;gap:10px;background:var(--paper-2)}
+.box-head{
+  font-family:var(--util);font-size:.63rem;font-weight:700;letter-spacing:.18em;text-transform:uppercase;
+  border-bottom:1px solid var(--ink);padding-bottom:7px;color:var(--ink);
+}
+.wire{display:flex;flex-direction:column;gap:0}
+.wire-item{padding:11px 0;border-bottom:1px dotted var(--rule)}
+.wire-item:first-child{padding-top:2px}
+.wire-item:last-child{border-bottom:0;padding-bottom:0}
+.wire-item h4{font-size:1rem;margin-bottom:3px}
+.wire-item p{font-size:.85rem;line-height:1.45;color:var(--ink-2)}
+
+.quote-box blockquote{
+  margin:0;font-family:var(--serif);font-size:1.22rem;line-height:1.24;
+}
+.quote-box .attrib{font-family:var(--util);font-size:.62rem;letter-spacing:.11em;text-transform:uppercase;color:var(--ink-3)}
+
+.weather{display:flex;flex-direction:column;gap:0}
+.weather-row{
+  display:flex;justify-content:space-between;gap:10px;padding:6px 0;
+  border-bottom:1px dotted var(--rule);font-family:var(--util);font-size:.72rem;
+}
+.weather-row:last-child{border-bottom:0}
+.weather-row b{font-variant-numeric:tabular-nums;font-weight:700}
+
+/* ---------- the lens (reverse) ---------- */
+.lens{
+  background:var(--reverse-bg);color:var(--reverse-ink);
+  margin:0 0 0;padding:26px 26px 28px;border-bottom:3px double var(--ink);
+}
+.lens .kicker{color:var(--spot)}
+.lens h2{font-size:clamp(1.6rem,2.7vw,2.3rem);margin:8px 0 6px;color:var(--reverse-ink)}
+.lens .dek{color:var(--reverse-ink-2)}
+.lens-grid{display:grid;grid-template-columns:1fr 1fr;gap:0;margin-top:20px;border-top:1px solid var(--reverse-rule)}
+.lens-side{padding:16px 20px 4px;border-left:1px solid var(--reverse-rule)}
+.lens-side:first-child{padding-left:0;border-left:0}
+.lens-side h3{
+  font-family:var(--util);font-size:.63rem;font-weight:700;letter-spacing:.17em;
+  text-transform:uppercase;color:var(--reverse-ink);margin-bottom:12px;
+}
+.lens-side h3 span{color:var(--reverse-ink-2);font-weight:400}
+.lens-num{font-family:var(--serif);font-size:2.6rem;line-height:1;font-variant-numeric:tabular-nums}
+.lens-list{list-style:none;margin:12px 0 0;padding:0;display:flex;flex-direction:column;gap:7px}
+.lens-list li{
+  font-family:var(--mono);font-size:.7rem;line-height:1.35;color:var(--reverse-ink-2);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+.lens-list li b{color:var(--reverse-ink);font-weight:400}
+.lens-foot{
+  margin-top:20px;padding-top:14px;border-top:1px solid var(--reverse-rule);
+  display:flex;flex-wrap:wrap;gap:26px;
+  font-family:var(--util);font-size:.62rem;letter-spacing:.1em;text-transform:uppercase;color:var(--reverse-ink-2);
+}
+.lens-foot b{display:block;font-family:var(--serif);font-size:1.32rem;letter-spacing:0;text-transform:none;color:var(--reverse-ink);font-variant-numeric:tabular-nums;margin-top:3px}
+
+/* ---------- section bands ---------- */
+.band{border-bottom:1px solid var(--ink);padding:22px 0 26px}
+.band:last-of-type{border-bottom:3px double var(--ink)}
+.band-head{
+  display:flex;align-items:baseline;gap:14px;margin-bottom:18px;
+  border-bottom:1px solid var(--ink);padding-bottom:6px;
+}
+.band-head h2{font-size:1.05rem;letter-spacing:.2em;text-transform:uppercase}
+.band-head .rule-note{font-family:var(--util);font-size:.6rem;letter-spacing:.11em;text-transform:uppercase;color:var(--ink-3);margin-left:auto;text-align:right}
+.cols3{display:grid;grid-template-columns:repeat(3,1fr);gap:0}
+.cols4{display:grid;grid-template-columns:repeat(4,1fr);gap:0}
+.cols2{display:grid;grid-template-columns:repeat(2,1fr);gap:0}
+.cell{padding:0 18px;border-left:1px solid var(--rule-soft);display:flex;flex-direction:column;gap:9px}
+.cell:first-child{padding-left:0;border-left:0}
+.cell:last-child{padding-right:0}
+.cell p{font-size:.885rem;line-height:1.5}
+.cell.wide{grid-column:span 2}
+
+/* ---------- app ledger ---------- */
+.ledger{display:flex;flex-direction:column;gap:0}
+.ledger-row{display:flex;gap:12px;padding:10px 0;border-bottom:1px dotted var(--rule);align-items:baseline}
+.ledger-row:last-child{border-bottom:0}
+.ledger-row .name{font-family:var(--serif);font-weight:700;font-size:1rem;flex:0 0 8.5em}
+.ledger-row .what{font-size:.85rem;color:var(--ink-2);flex:1;min-width:0}
+.ledger-row .tag{font-family:var(--util);font-size:.55rem;letter-spacing:.12em;text-transform:uppercase;color:var(--accent);flex:0 0 auto}
+
+/* ---------- market table ---------- */
+.tablewrap{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}
+th,td{text-align:left;padding:7px 10px 7px 0;border-bottom:1px dotted var(--rule);font-size:.83rem}
+th{font-family:var(--util);font-size:.58rem;letter-spacing:.13em;text-transform:uppercase;color:var(--ink-3);border-bottom:1px solid var(--ink)}
+td.num{text-align:right;padding-right:0;font-family:var(--mono);font-size:.78rem}
+
+/* ---------- quote strip ---------- */
+.tweets{display:flex;flex-direction:column;gap:0}
+.tweet{padding:11px 0;border-bottom:1px dotted var(--rule)}
+.tweet:last-child{border-bottom:0}
+.tweet q{font-family:var(--serif);font-size:1.02rem;line-height:1.3;quotes:"“" "”"}
+.tweet .who{display:block;margin-top:5px;font-family:var(--util);font-size:.58rem;letter-spacing:.13em;text-transform:uppercase;color:var(--ink-3)}
+
+/* ---------- encyclopedia ---------- */
+.defs{display:flex;flex-direction:column;gap:11px}
+.defs div{font-size:.88rem;line-height:1.45}
+.defs b{font-family:var(--serif);font-size:1rem}
+
+/* ---------- colophon ---------- */
+.colophon{
+  padding-top:20px;font-family:var(--util);font-size:.68rem;line-height:1.7;letter-spacing:.02em;color:var(--ink-3);
+  display:flex;flex-direction:column;gap:9px;
+}
+.colophon code{font-family:var(--mono);font-size:.66rem;color:var(--ink-2);word-break:break-all}
+.colophon strong{color:var(--ink-2);letter-spacing:.13em;text-transform:uppercase;font-size:.6rem}
+
+/* ---------- entrance ---------- */
+.rise{opacity:0;transform:translateY(9px);animation:rise .62s cubic-bezier(.22,.68,.36,1) forwards}
+.rise:nth-of-type(2){animation-delay:.06s}
+@keyframes rise{to{opacity:1;transform:none}}
+@media (prefers-reduced-motion:reduce){
+  .rise{animation:none;opacity:1;transform:none}
+}
+
+/* ---------- responsive ---------- */
+@media (max-width:1000px){
+  .c-lead{grid-column:span 12;border-left:0;padding-left:0;padding-right:0;border-bottom:1px solid var(--rule)}
+  .c-main{grid-column:span 7;padding-left:0;border-left:0}
+  .c-rail{grid-column:span 5}
+  .cols4{grid-template-columns:repeat(2,1fr);gap:0 0}
+  .cols4 .cell:nth-child(3){padding-left:0;border-left:0}
+  .cols4 .cell:nth-child(n+3){padding-top:16px;margin-top:16px;border-top:1px solid var(--rule-soft)}
+}
+@media (max-width:720px){
+  .sheet{padding:14px 15px 56px}
+  .fold{display:flex;flex-direction:column}
+  .col{padding:18px 0;border-left:0;border-bottom:1px solid var(--rule)}
+  .col:last-child{border-bottom:0}
+  .cols3,.cols4,.cols2,.lens-grid{display:flex;flex-direction:column}
+  .cell,.lens-side{padding:16px 0;border-left:0;border-top:1px solid var(--rule-soft);margin-top:0}
+  .cell:first-child,.lens-side:first-child{border-top:0;padding-top:0}
+  .cols4 .cell:nth-child(n+3){margin-top:0;padding-top:16px}
+  .cell.wide{grid-column:auto}
+  .lens{padding:20px 16px 22px;margin-left:-15px;margin-right:-15px}
+  .ledger-row{flex-direction:column;gap:3px}
+  .ledger-row .name{flex:none}
+}
+</style>
+
+<div class="sheet">
+
+  <div class="folio">
+    <span>Vol.&nbsp;I &middot; No.&nbsp;1</span>
+    <span>Monday, August 17, 2026</span>
+    <span>Price: Zero Sats</span>
+  </div>
+
+  <header class="masthead rise">
+    <h1><span class="the">The</span>Nostr Observer</h1>
+    <div class="motto">All the Notes Fit to Rank</div>
+  </header>
+
+  <div class="dateline rise">
+    <span>Ranked through observer <b>460c25e6&hellip;f85065c</b> &mdash; Vitor Pamplona</span>
+    <span>24 hours to 20:07&nbsp;UTC</span>
+    <span>773 events &middot; 244 authors &middot; 9 kinds</span>
+  </div>
+
+  <!-- ================= ABOVE THE FOLD ================= -->
+  <div class="fold">
+
+    <!-- LEAD COLUMN -->
+    <div class="col c-lead">
+      <article class="story">
+        <div class="kicker">The Fork That Wasn&rsquo;t</div>
+        <h2 class="lead-head">Two Blocks, Then Silence &mdash; and a Community Deciding What It Learned</h2>
+        <p class="dek">A week after BIP&#8209;110 split off and stalled, your corner of Nostr has stopped arguing about the code and started arguing about the lesson.</p>
+        <p class="byline">From the Bitcoin desk</p>
+        <p class="first">The arithmetic is settled and nobody disputes it. On August 8th two blocks were mined at height 961,632. One chain kept going. The other produced exactly two blocks, stalled at 961,633, and has not moved since &mdash; carrying Bitcoin&rsquo;s full difficulty with a fraction of a percent of the machines. Bitcoin Well, writing today, put the next difficulty adjustment for that chain at 6.3 years out. The day after the split it was 350 days. The exit recedes faster than you can walk toward it.</p>
+        <p>What is not settled is what it meant. Shashue, posting under <em>#MakeBTCDecentralizedAgain</em>, went first and went furthest: &ldquo;It is hard to see a blessing while you are still bleeding. But I propose that the failure of the BIP&#8209;110 fork is exactly that. This weekend tore away a veil.&rdquo; He is not calling it a defeat. He is calling it eyesight.</p>
+        <p>Paula spent the day releasing an interview with Jeff Booth built around the blunter version of the same question &mdash; whether Bitcoin is still decentralized, and whether it has been captured. &ldquo;Some BIP&#8209;110 supporters may not agree with his perspective,&rdquo; she warned before posting it. In Bulgarian, George Manolov: the fiat swindlers won a small battle, but the war is only beginning. In French, Copinmalin was already nostalgic: who remembers the good old days when Bitcoiners tore each other apart over BIP&#8209;110?</p>
+        <p>Nostr Magazine, which files a weekly issue straight onto the relay, ran it as a civil war under the headline <em>The Fork That Lasted Two Blocks and the Fight That&rsquo;s Just Beginning.</em> Nelson, publishing his Acelerando Bitcoin keynote from Paraguay, offered the calmer frame: <em>Bitcoin Culture Is Not Dead. It Just Stopped Being One Culture.</em></p>
+        <p>Meanwhile the chain that kept going was boring in the way a working thing is boring. Clark Moody&rsquo;s dashboard, posting on the hour: one satoshi per vbyte at every horizon, blocks landing every 9 minutes 56 seconds, 915 exahash on the network, 87,102 blocks to the halving. The mempool did not notice the civil war at all.</p>
+      </article>
+
+      <article class="story">
+        <div class="kicker">Devs &middot; NIP-59</div>
+        <h3 class="sub-head">A Timestamp Nobody Can See Starts a Fight Everybody Can</h3>
+        <p>It began with fiatjaf asking, politely, for an option to turn something off. Coop mobile randomizes the timestamp on the <em>seal</em> inside a gift&#8209;wrapped message, and it was &ldquo;giving a hard time due to some reasons.&rdquo; Then the sharper version: &ldquo;It doesn&rsquo;t make sense to randomize the internal thing that no one sees anyway. Is there any reason why the seal should be tweaked? Feels like someone mistyped that while writing the NIP.&rdquo;</p>
+        <p>Yuki Kishimoto arrived with the specification open &mdash; NIP&#8209;59 does say the rumor keeps the current timestamp while the others are tweaked &mdash; and with the threat model behind it: rumor leaked, no signature; seal leaked, randomized timestamp. Then, agreeably: &ldquo;But yeah, I can add that option.&rdquo; reya turned up with the exact offending line, <code>nip59.rs#L441</code>.</p>
+        <p>This paper&rsquo;s own observer weighed in from the sidelines of a neighboring argument about rewriting NIP&#8209;17 entirely: &ldquo;There have been lots of proposals. Nothing with significant gains that would justify breaking everything once again. They can just do a new NIP and wait for people to catch up. If it is better, other people will want to use it.&rdquo;</p>
+      </article>
+    </div>
+
+    <!-- CENTER -->
+    <div class="col c-main">
+      <figure>
+        <img src="art-1" alt="A race barrier lined with dense crowds in Copenhagen, an athlete raising an arm on the course." />
+        <figcaption>One of four photographs and two videos Richard Nakamoto filed from Copenhagen on Sunday, where he says he carried Nostr and Bitcoin past roughly 200,000 spectators. He posted all six before answering a single reply.
+        <span class="credit">Richard Nakamoto &middot; via Primal iOS</span></figcaption>
+      </figure>
+
+      <article class="story" style="margin-top:16px">
+        <div class="kicker">Proof of Work, Literally</div>
+        <h2 class="main-head">The Man Who Ran an Ironman With Your Timeline on His Chest</h2>
+        <p class="dek">&ldquo;The Danes put on a hell of a show,&rdquo; he wrote. Then he spent the rest of the day thanking people one at a time.</p>
+        <p class="first">Richard Nakamoto&rsquo;s morning post was eleven words of substance and two hashtags, and it was the most-replied thing in this edition&rsquo;s window. He put in the proof&#8209;of&#8209;work, he said, and took #nostr and #bitcoin to roughly 200,000 screaming spectators in Copenhagen.</p>
+        <p>What followed is the part a feed algorithm would have thrown away: nine separate replies, none of them longer than a sentence. <em>Cheers EZB! Adidas Adizero Evo SL.</em> <em>Thanks rapadu.</em> <em>Cheers Ben.</em> <em>Report incoming&hellip;</em> And, to somebody who suggested boiled salted potatoes and pickle juice mid&#8209;race: &ldquo;I could have done with some. I&rsquo;ll try that during training next time.&rdquo;</p>
+        <p>Elsewhere in the athletics section of a network that does not have one: dvo ran another beach 5k on sand; RUNSTR paid out sats for first workouts of the day and signed off with &ldquo;the work doesn&rsquo;t care how you feel about it&rdquo;; and crrdlx asked, plaintively, whether we are still doing 100 push&#8209;ups until 100k.</p>
+      </article>
+
+      <article class="story">
+        <div class="kicker">Security</div>
+        <h3 class="sub-head">Trust, but Verify the Firmware: A Bad Week to Own a Hardware Wallet</h3>
+        <p class="byline">From the freedom-tech desk</p>
+        <p>Two vendors shipped, one philosopher needled, and one user quietly rebuilt his entire threat model.</p>
+        <p>BitBox released what it named the Dixence update, and the disclosure was refreshingly plain: during internal audits it found and fixed multiple security issues in its own firmware, and users should update the app and the device. Foundation put KeyOS v1.4.0&#8209;beta1 in front of Passport Prime testers &mdash; app sideloading, a redesigned launcher, multisig exports for Unchained and Casa, imports from Aegis and Proton Authenticator &mdash; with an unusually stern warning that this is a recovery&#8209;mode flash for experienced users only.</p>
+        <p>Gigi spent the day highlighting a licensing autopsy line by line: that Coldcard benefited from Trezor&rsquo;s commitment to software freedom, that a large March commit replaced the remaining Trezor&#8209;derived GPL cryptography and BIP&#8209;39 code in a security&#8209;critical path, and, flatly, that <em>firmware should be free software.</em> Users, he added, should demand more than visible source code.</p>
+        <p>The most human note came from Tim Wiher, who had done everything right. Dice rolls. A passphrase. A single&#8209;signature setup he understood completely and was comfortable with. &ldquo;A hardware&#8209;wallet&#8209;company retirement attack was definitely not in my threat model &mdash; an unknown unknown. Setting up multisig was a massive pain in the ass. But now that I know about this threat, I can&rsquo;t go back.&rdquo;</p>
+      </article>
+    </div>
+
+    <!-- RAIL -->
+    <div class="col c-rail">
+      <div class="box">
+        <div class="box-head">Off the Wire</div>
+        <div class="wire">
+          <div class="wire-item">
+            <h4>GitHub Falls; Self-Hosters Stretch</h4>
+            <p>&ldquo;PSA: #github down&hellip; going out to touch some grass,&rdquo; wrote Dee&nbsp;Kay. hodlbod could not resist: &ldquo;Not to flex, but I&rsquo;m able to get work done today because I moved my main repositories to my self-hosted GitLab. Better uptime than Microsoft.&rdquo; Kräftig, drily: &ldquo;Ngit never goes down? Lol.&rdquo;</p>
+          </div>
+          <div class="wire-item">
+            <h4>One Empty Event, One Broken Inbox</h4>
+            <p>Cody of Jumble spent the day doing tech support in public: &ldquo;Did you use another client ~22 hours ago? You published a kind&nbsp;10044 event with empty tags, so now I can&rsquo;t DM you.&rdquo; He got through only because Jumble had the encryption key cached. He is now considering keeping historical versions of follow lists.</p>
+          </div>
+          <div class="wire-item">
+            <h4>Memory Prices, My Ass</h4>
+            <p>TanukiBTC says a Micron trade will pay for next month&rsquo;s phone. trosso19 has given up on ever affording a better GPU. And in the classifieds, Eluc is listing &ldquo;super rare vintage Micron memory modules, 2&nbsp;&times;&nbsp;2GB DDR2&rdquo; with the sign&#8209;off: <em>Thanks Claude for this bargain!</em></p>
+          </div>
+          <div class="wire-item">
+            <h4>Tor Passes $200,000</h4>
+            <p>The Tor Project&rsquo;s first crowdfunding round closed above $200k for privacy, censorship circumvention and secure communications, matched by Octant and Logos community grants. Small donations, they noted, carried more weight than their size.</p>
+          </div>
+          <div class="wire-item">
+            <h4>Nobody Is Clicking Anything</h4>
+            <p>&ldquo;The fear of clicking any, literally any link nowadays is surreal,&rdquo; wrote Thunder. &ldquo;Doesn&rsquo;t matter if it&rsquo;s from a friend or a person I trust in general. I. WILL. NOT. CLICK.&rdquo;</p>
+          </div>
+          <div class="wire-item">
+            <h4>Also: PayPal, Once, Briefly</h4>
+            <p>hodlbod used PayPal for the first time in a decade and posted the receipt. &ldquo;Wow, is it expensive.&rdquo;</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="box quote-box" style="margin-top:18px">
+        <div class="box-head">Quotation of the Day</div>
+        <blockquote>&ldquo;When people see an artifact, they make assumptions about the process that was used to create it.&rdquo;</blockquote>
+        <div class="attrib">fiatjaf, highlighting somebody else&rsquo;s sentence &mdash; and, unwittingly, this page</div>
+      </div>
+
+      <div class="box" style="margin-top:18px">
+        <div class="box-head">Conditions</div>
+        <div class="weather">
+          <div class="weather-row"><span>Mempool</span><b>1 sat/vB &middot; clear</b></div>
+          <div class="weather-row"><span>Block interval</span><b>9:56</b></div>
+          <div class="weather-row"><span>Hash rate</span><b>915 EH/s</b></div>
+          <div class="weather-row"><span>Hash price</span><b>$31.88/PH</b></div>
+          <div class="weather-row"><span>Height</span><b>962,898</b></div>
+          <div class="weather-row"><span>To halving</span><b>87,102 blocks</b></div>
+          <div class="weather-row"><span>GitHub</span><b>Outage, clearing</b></div>
+        </div>
+        <p class="note">Readings from Clark Moody&rsquo;s dashboard bot, filed hourly to the relay.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= THE LENS ================= -->
+  <section class="lens">
+    <div class="kicker">The Instrument</div>
+    <h2>The Same Query, Twice: What the Web of Trust Actually Buys You</h2>
+    <p class="dek">Identical relay, identical 24&#8209;hour window, identical request for the top 400 notes. The only difference was one token: <code>observer:460c25e6&hellip;</code>. The two front pages share exactly one post.</p>
+
+    <div class="lens-grid">
+      <div class="lens-side">
+        <h3>Without the lens <span>&mdash; anonymous read</span></h3>
+        <div class="lens-num">209&#8202;/&#8202;400</div>
+        <p class="dek" style="margin-top:6px">posts from a single automated account. The top three accounts supply 236 of 400. This is what the network looks like to a stranger.</p>
+        <ul class="lens-list">
+          <li><b>sp_4c43bd1d.38b41fe046d7f4abb13d1824.11.MR2MUNMEVDHNJ&hellip;</b></li>
+          <li><b>channel:__roster 17ce7cb9390f24a3b4c04df3dca77f584e53&hellip;</b></li>
+          <li><b>{"type":"zone_presence","zone":"7gS9HiiyJAlzX6DpcYoq"&hellip;</b></li>
+          <li><b>&#10060;[MISSING] from #LUXSE #exchange in #bond: XS2667627124</b></li>
+          <li><b>&#1047;&#1053;&#1040;&#1052;&#1045; &#1053;&#1040; &#1058;&#1059;&#1042;&#1040;&#1051;&#1059; &mdash; allgraph.ro/advanced-search&hellip;</b></li>
+        </ul>
+      </div>
+      <div class="lens-side">
+        <h3>Through the lens <span>&mdash; observer 460c25e6</span></h3>
+        <div class="lens-num">17&#8202;/&#8202;400</div>
+        <p class="dek" style="margin-top:6px">is the busiest single voice &mdash; trosso19, mid&#8209;thread about inference providers. 174 distinct people, 84 of them posting pictures. This is the whole paper you just read.</p>
+        <ul class="lens-list">
+          <li><b>trosso19 17 &middot; Vitor Pamplona 14 &middot; AZA_21m 13</b></li>
+          <li><b>Henry 11 &middot; serenity&rsquo;s forge 10 &middot; Mander 9</b></li>
+          <li><b>Richard Nakamoto 9 &middot; ChartsBTC 8 &middot; dvo 8</b></li>
+          <li><b>Clients: Amethyst 95, Primal 129, Wisp 22, Damus 11</b></li>
+          <li><b>Top tags: #bitcoin 14 &middot; #nostr 9 &middot; #artstr 3 &middot; #uk 3</b></li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="lens-foot">
+      <span>Events in store<b>215,482,018</b></span>
+      <span>Distinct authors<b>32,470,803</b></span>
+      <span>Pubkeys scored<b>338,798</b></span>
+      <span>Trust scores held<b>28,982,549</b></span>
+      <span>Observers with a lens<b>297</b></span>
+      <span>Overlap of the two feeds<b>1 post</b></span>
+    </div>
+  </section>
+
+  <!-- ================= APPS ================= -->
+  <section class="band">
+    <div class="band-head">
+      <h2>The Apps Desk</h2>
+      <span class="rule-note">Five releases &middot; kind 32267 and the wire</span>
+    </div>
+    <div class="cols2">
+      <div class="cell">
+        <article class="story">
+          <h3 class="sub-head">Everybody Is Building an Escape Hatch This Week</h3>
+          <p>The theme in today&rsquo;s releases is not a feature. It is the removal of a middleman, stated in the marketing copy as the entire point.</p>
+          <p>Soapbox shipped <strong>Armada</strong> &mdash; Discord-shaped communities with text channels and encrypted voice rooms, except the community itself has no host. &ldquo;Your keys, your fleet.&rdquo; Bitcrazy shipped <strong>Chama</strong>, named for the East African savings circle, which replaces the neighbors&rsquo; trust with a 2&#8209;of&#8209;3 escrow split by Shamir secret sharing and held as Fedimint ecash. &ldquo;Your money is never ours to lose,&rdquo; the listing says, &ldquo;because there is no company in the middle.&rdquo; PeerLoom put out <strong>PearCal</strong>, a calendar that shares events peer&#8209;to&#8209;peer &mdash; &ldquo;with people, not platforms.&rdquo;</p>
+          <p>The unglamorous shipping continued elsewhere. mutatrum announced ESP&#8209;Miner v2.15.0rc1 with unified firmware, mDNS and several Stratum&nbsp;V2 fixes. miljan confirmed the Primal 4.0 Android shell will have predictive back animations. And franzap, asked why a bug persists on somebody&rsquo;s specific handset, gave the most honest answer of the day: &ldquo;I don&rsquo;t have enough resources to be testing on multiple devices. I only have hope &mdash; that it will magically get fixed in the next version, as I&rsquo;m rewriting the app from scratch in Kotlin.&rdquo;</p>
+        </article>
+      </div>
+      <div class="cell">
+        <div class="box" style="background:transparent">
+          <div class="box-head">Shipped in the Window</div>
+          <div class="ledger">
+            <div class="ledger-row"><span class="name">Armada</span><span class="what">Serverless encrypted communities, voice rooms, self-hostable servers.</span><span class="tag">New</span></div>
+            <div class="ledger-row"><span class="name">Chama</span><span class="what">Non-custodial P2P bitcoin escrow; ecash, Lightning settlement, M-Pesa cash-out.</span><span class="tag">New</span></div>
+            <div class="ledger-row"><span class="name">PearCal</span><span class="what">Offline-capable P2P calendar; invite by QR, no account.</span><span class="tag">New</span></div>
+            <div class="ledger-row"><span class="name">Oinkoin Pro</span><span class="what">Offline, ad-free money manager. Backup, restore, recurring records.</span><span class="tag">Zapstore</span></div>
+            <div class="ledger-row"><span class="name">ESP-Miner</span><span class="what">v2.15.0rc1 &mdash; unified firmware, mDNS, Stratum V2 fixes, Gamma 603.</span><span class="tag">Release</span></div>
+            <div class="ledger-row"><span class="name">KeyOS</span><span class="what">v1.4.0-beta1 for Passport Prime &mdash; sideloading, new launcher, multisig exports.</span><span class="tag">Beta</span></div>
+            <div class="ledger-row"><span class="name">BitBox</span><span class="what">&ldquo;Dixence&rdquo; security update; multiple firmware issues found in internal audit.</span><span class="tag">Patch</span></div>
+            <div class="ledger-row"><span class="name">Jumble</span><span class="what">26.8.2 &mdash; customizable notification tabs.</span><span class="tag">Update</span></div>
+            <div class="ledger-row"><span class="name">Nitropage</span><span class="what">Katja Lutz&rsquo;s open-source CMS went live under a friend&rsquo;s eyewear brand today.</span><span class="tag">Live</span></div>
+            <div class="ledger-row"><span class="name">Mostro</span><span class="what">Mobile app and Mostrix, a terminal client, on the same P2P nodes.</span><span class="tag">Two clients</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= AI ================= -->
+  <section class="band">
+    <div class="band-head">
+      <h2>Machines</h2>
+      <span class="rule-note">Trust, cost, and whether it can bleed</span>
+    </div>
+    <div class="cols3">
+      <div class="cell">
+        <div class="kicker">Paranoia Desk</div>
+        <h3 class="sub-head">&ldquo;It&rsquo;s Just Very Trust-Me-Bro&rdquo;</h3>
+        <p>trosso19 ran the longest thread of the day and it was, essentially, a threat model. &ldquo;How much do you guys trust the zero data retention inference providers on OpenRouter? My paranoia is starting to set in.&rdquo;</p>
+        <p>He knows the mechanics: policies range from zero retention to trains&#8209;on&#8209;your&#8209;inputs to publishes&#8209;conversations&#8209;to&#8209;public&#8209;datasets, and you can route to ZDR endpoints only. He avoids first&#8209;party DeepSeek for exactly that reason and uses open weights through someone else. &ldquo;If the advertised policies are true I&rsquo;m happy with it. It&rsquo;s just very trust me bro.&rdquo;</p>
+        <p>The economics drove it: &ldquo;Anthropic API prices are ridiculous. DeepSeek via OpenRouter is great for my budget.&rdquo; And the fallback isn&rsquo;t one: &ldquo;My local LLM is pretty retarded. Hope those providers are telling the truth.&rdquo;</p>
+      </div>
+      <div class="cell">
+        <div class="kicker">Benchmarks, Personal</div>
+        <h3 class="sub-head">The Hyped Model Meets the Actual Laptop</h3>
+        <p>Juraj tried qwen3.8&#8209;27b, the model everyone spent the weekend talking about. Verdict: &ldquo;Completely unusable on Apple silicon, too slow. And if I reach for the cloud, there are better models.&rdquo; The mixture&#8209;of&#8209;experts qwen3.6 remains his sweet spot &mdash; still slow, but usable.</p>
+        <p>Braydon Fuller, reading Simon Willison on the same release, surfaced the detail everyone missed: the default reasoning effort ships at <code>xhigh</code>, and can be turned down.</p>
+        <p>This paper&rsquo;s observer filed the day&rsquo;s most practical finding: &ldquo;You know what &mdash; asking Claude to explain complex multithreaded code as a recipe actually works.&rdquo;</p>
+      </div>
+      <div class="cell">
+        <div class="kicker">Highlights</div>
+        <h3 class="sub-head">The Sentences People Underlined</h3>
+        <p>Nostr&rsquo;s highlight events are a slow, quiet channel, and today they were the sharpest writing in the window.</p>
+        <p>wispy, on generated code: &ldquo;They might be able to produce some code, but they can&rsquo;t bleed on the page.&rdquo; And, in the same session: &ldquo;Do not ship code you do not understand.&rdquo;</p>
+        <p>Gigi, from the opposite corner: &ldquo;Human code review has very nearly run its course,&rdquo; and &ldquo;you will find that treating agents like real people will produce empirically better results.&rdquo;</p>
+        <p>And m4d4m surfaced the perverse worry: that AI is about to make software <em>much too secure</em> &mdash; that U.S. intelligence and law enforcement will &ldquo;go dark,&rdquo; and that any backdoors mandated in response will mostly weaken the countries that demand them.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= SURVEILLANCE ================= -->
+  <section class="band">
+    <div class="band-head">
+      <h2>Surveillance</h2>
+      <span class="rule-note">Three fronts, one afternoon</span>
+    </div>
+    <div class="cols3">
+      <div class="cell">
+        <h3 class="small-head">They Are Watching the People Watching the Cameras</h3>
+        <p>Obscura VPN circulated the 404&nbsp;Media report that the government is monitoring anti&#8209;Flock TikTok and Instagram accounts. &ldquo;Not ONLY are they monitoring you outside,&rdquo; they wrote, &ldquo;but if you don&rsquo;t like it and post about it online, they&rsquo;ll monitor you there and hand that data to law enforcement.&rdquo; A.A.Ron, from somewhere considerably more rural, noted that his nearest Flock camera is a 250&#8209;mile drive &mdash; &ldquo;but the roads still look like that.&rdquo;</p>
+      </div>
+      <div class="cell">
+        <h3 class="small-head">A Covert Channel in Your Health App</h3>
+        <p>Sats paa BTC surfaced a USENIX Security paper on Android&rsquo;s Health Connect: the first empirical investigation of it, the authors write, showing design flaws that create &ldquo;a covert communication channel that can be used to bypass existing access control mechanisms.&rdquo; Their conclusion is unusually blunt for a paper: the design &ldquo;ultimately undermines the privacy protections Android has introduced in recent years.&rdquo;</p>
+      </div>
+      <div class="cell">
+        <h3 class="small-head">Contaminate the Censors</h3>
+        <p>Wilder, writing in Slovak, proposed the most inventive countermeasure of the day. We will not avoid Chat Control and state surveillance, he argues, but we can make it worthless: a censor&rsquo;s database is only valuable if what is in it means something. His new privacy rule for the AI era &mdash; <em>any intercepted communication must always be AI-generated</em> &mdash; comes with a promise to publish the prompts. &ldquo;If it isn&rsquo;t end&#8209;to&#8209;end encrypted, then it isn&rsquo;t you.&rdquo;</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= GARDENS ================= -->
+  <section class="band">
+    <div class="band-head">
+      <h2>Gardens &amp; Provisions</h2>
+      <span class="rule-note">The largest beat you did not know you followed</span>
+    </div>
+    <div class="cols4">
+      <div class="cell wide">
+        <article class="story">
+          <div class="kicker">Seed-Saving Season</div>
+          <h3 class="sub-head">Nobody Told the Web of Trust That This Is a Bitcoin Network</h3>
+          <p class="first">Sort your last twenty-four hours by trust rather than by volume and something unexpected happens: the loudest sustained conversation is not about money. It is about chillis.</p>
+          <p>serenity&rsquo;s forge, recovering from yesterday&rsquo;s migraine and pottering on at the fiat mine, saved seed twice before dark &mdash; a sweet pepper gifted last year and grown on, a Buena Mulata chilli, and San Marzano tomatoes bletting in water from her own stock. The technique, offered without ceremony: a cupcake liner makes a good holder while the seeds dry. Later, the harvest photos: Zimbabwe Black, Buena Mulata and habaneros, all doing really well.</p>
+          <p>Henry spent the day being the network&rsquo;s agronomist. Everything has come in a month or two early where he is; he is not looking forward to what that means for prices next year; the sheep near him already have bales in the field in August. Asked about a sickly yellow&#8209;orange plant, he prescribed purple non&#8209;sulphur bacteria. Asked about something else entirely, he delivered an unprompted and genuinely good lecture on chirality &mdash; that nature produces homochirality while synthetic molecules split fifty&#8209;fifty, and that this is why &ldquo;the same&rdquo; compound is not the same in a living system. He learned it, he says, because his dad took a chemistry degree.</p>
+          <p>CKMe tilled a compacted bed for spinach, admitted the soil is not there yet, and is planning a winter cover crop. A.A.Ron bought a small Echo chainsaw for limbing &mdash; &ldquo;way handier than my big saw and easier on the old tennis elbows.&rdquo; And Small Batch Steve photographed 2,400 grams of taco seasoning, restocked chilli flakes, and asked the timeline a genuine business question: would you buy glass shaker jars as an add&#8209;on?</p>
+        </article>
+      </div>
+      <div class="cell">
+        <figure>
+          <img src="art-2" alt="Chilli plants in leaf, hung with slim dark-purple and green pods." />
+          <figcaption>Zimbabwe Black, Buena Mulata and habaneros, photographed late because the grower &ldquo;had been that out of sorts today I forgot to post.&rdquo;
+          <span class="credit">serenity&rsquo;s forge &middot; via Wisp</span></figcaption>
+        </figure>
+      </div>
+      <div class="cell">
+        <figure>
+          <img src="art-3" alt="A parched summer field ringed by trees, sheep grazing at the far edge." />
+          <figcaption>&ldquo;Everything is reversed and topsy turvy.&rdquo; Bales already in the field in mid&#8209;August, and a hope that Ireland is getting more rain.
+          <span class="credit">Henry &middot; via Amethyst</span></figcaption>
+        </figure>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= ARTS ================= -->
+  <section class="band">
+    <div class="band-head">
+      <h2>Arts &amp; Living</h2>
+      <span class="rule-note">A gallery opening, a tiger, and one act of therapeutic stabbing</span>
+    </div>
+    <div class="cols4">
+      <div class="cell">
+        <figure>
+          <img src="art-4" alt="A hand-drawn illustration of flowers in soft colored pencil, posted as a daily drawing." />
+          <figcaption>The daily drawing, filed with &ldquo;GM happy Monday! I hope your week starts off with good vibes.&rdquo;
+          <span class="credit">existing sprinkles &middot; via Wisp</span></figcaption>
+        </figure>
+      </div>
+      <div class="cell">
+        <figure>
+          <img src="art-5" alt="An embroidery hoop with a partially stitched sampler, threads and needle beside it." />
+          <figcaption>Bought this week, under an evacuation order. &ldquo;It is legalized stabbing, so also therapeutic.&rdquo;
+          <span class="credit">Rustypuppy &middot; via Primal iOS</span></figcaption>
+        </figure>
+      </div>
+      <div class="cell wide">
+        <article class="story">
+          <h3 class="sub-head">A Gallery in London, a Fire Line in the West, and a Cat Experiment</h3>
+          <p>Tynka posted a new children&rsquo;s illustration made specifically for a show opening tomorrow at a London gallery and running two weeks &mdash; filed under #artstr, #proofofart and #bitcoinartist, with no press release and no gallery tag.</p>
+          <p>Rustypuppy&rsquo;s update was harder. More properties near her were downgraded from evacuation order to alert; her mother&rsquo;s was not one of them, because the fire perimeter reached just across the street from the cul&#8209;de&#8209;sac. They will likely be the last batch let back in. So she bought an embroidery kit, has never done this before, and is changing the words and the colors.</p>
+          <p>AZA_21m, meanwhile, ran a controlled experiment. &ldquo;They say that cat content always wins online. Let&rsquo;s test it.&rdquo; The result, as far as this paper can determine from the reply volume, was: yes. She also spent the afternoon defending her daughter&rsquo;s concert attendance record, which begins at roughly three months in utero.</p>
+          <p>And in the picture feed, Aman Singh Kattal filed the same confession four separate times, to four different hosts, until one of them stuck.</p>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= SCIENCE ================= -->
+  <section class="band">
+    <div class="band-head">
+      <h2>Science</h2>
+      <span class="rule-note">One eclipse, one tiger, one very large cat</span>
+    </div>
+    <div class="cols4">
+      <div class="cell wide">
+        <figure>
+          <img src="art-6" alt="A total solar eclipse with an unusually golden corona and a pink prominence at the sun's edge." />
+          <figcaption>Totality over Benavente, Spain. The corona is usually pearl white; this one came out gold because the sun set low through a great deal of air, and smoke from nearby forest fires filtered what blue was left. The pink survivor at the left edge is a hydrogen prominence.
+          <span class="credit">Santos &middot; APOD, 17 August 2026 &middot; relayed by apod@satoshi.si</span></figcaption>
+        </figure>
+      </div>
+      <div class="cell">
+        <figure>
+          <img src="art-7" alt="A man seated beside a full-grown tiger, photographed in Thailand." />
+          <figcaption>&ldquo;I always thought lions were the kings of the jungle and tigers were just oversized cats. After taking a picture with one, I realized how wrong I was.&rdquo;
+          <span class="credit">Aman Singh Kattal &middot; Thailand</span></figcaption>
+        </figure>
+      </div>
+      <div class="cell">
+        <h3 class="small-head">Also Filed to the Relay</h3>
+        <p>Sydney Bright published a long essay on neuronal ultraweak photon emission and what she calls the Calm Pond Hypothesis &mdash; an argument that the intellectual mind is a double&#8209;edged sword, and that ancient contemplative practice was a technology for putting it down.</p>
+        <p>Nostr Magazine led its issue with a quantum threat the protocol has not solved: a Nostr public key is published to every relay it touches, and Shor&rsquo;s algorithm recovers a private key from a public key. Encrypted messages become readable retroactively. Events become forgeable.</p>
+        <p>And liminal spent the evening annotating Feyerabend&rsquo;s <em>Against Method</em> in public, including the part where he later wished &ldquo;he had never written that fucking book.&rdquo;</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= BUSINESS ================= -->
+  <section class="band">
+    <div class="band-head">
+      <h2>Business &amp; Markets</h2>
+      <span class="rule-note">Filed by bots, argued over by people</span>
+    </div>
+    <div class="cols3">
+      <div class="cell">
+        <div class="tablewrap">
+          <table>
+            <thead><tr><th>Reading</th><th class="num">17 Aug 2026</th></tr></thead>
+            <tbody>
+              <tr><td>Bitcoin</td><td class="num">$63,580</td></tr>
+              <tr><td>Sats per dollar</td><td class="num">1,573</td></tr>
+              <tr><td>MVRV</td><td class="num">1.20</td></tr>
+              <tr><td>Realized price</td><td class="num">$52,642</td></tr>
+              <tr><td>Four-year ROI</td><td class="num">+172%</td></tr>
+              <tr><td>Supply held &lt; 4 yrs</td><td class="num">62.2%</td></tr>
+              <tr><td>S&amp;P 500</td><td class="num">7,481</td></tr>
+              <tr><td>Gold</td><td class="num">$4,073/oz</td></tr>
+              <tr><td>Days above $100k, ever</td><td class="num">217</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="note">ChartsBTC and Clark Moody, posting on schedule all day.</p>
+      </div>
+      <div class="cell">
+        <h3 class="small-head">Strategy Sits Out Another Week</h3>
+        <p>No purchases. No sales, this time. Instead the company sold 3,458,866 shares of its own common stock to raise $333.7 million, put $149.1 million into a dollar reserve, paid $52.4 million in preferred dividends and bought back $132.2 million of that preferred. It holds 840,447 bitcoin at an average of $63,357 &mdash; which, at today&rsquo;s tape, is roughly break&#8209;even. The stock is down more than 60% this year.</p>
+        <p>dvo, reading the same filing on a phone: &ldquo;Isn&rsquo;t &lsquo;added to dollar reserve&rsquo; a fancy way of saying they sold some of their bitcoin?&rdquo;</p>
+        <h3 class="small-head" style="margin-top:12px">The Overhang</h3>
+        <p>Glassnode&rsquo;s week&#8209;32 note, relayed by TFTC: $48 billion of futures open interest against $12.55 billion of spot. The warning is mechanical rather than moral &mdash; when liquidations hit, there is not enough resting flow to absorb them.</p>
+      </div>
+      <div class="cell">
+        <h3 class="small-head">Two Custody Stories, Filed Ten Minutes Apart</h3>
+        <p>BitMart&rsquo;s founder dismissed calls for independent audits and proof of reserves as &ldquo;fabricated rumors&rdquo; while users report their funds remain inaccessible, with a final trading day of August 26 approaching.</p>
+        <p>And Binance handed Russian authorities transaction records, passport data and personal details on Yuri Belenkiy, a 49&#8209;year&#8209;old IT specialist who had donated roughly $700 in crypto to Ukrainian military groups. He was detained in September 2025 and remains in jail.</p>
+        <p>Which is roughly the argument Hodl Hodl was making all day in its own words: the best offer is not always the cheapest one, it is the one that lets you keep control. And vexl, more bluntly: &ldquo;Buying Bitcoin is not opting out when every purchase is linked to your identity, bank account, and home address.&rdquo;</p>
+        <h3 class="small-head" style="margin-top:12px">In Washington</h3>
+        <p>The Treasury opened public comment on the GENIUS Act stablecoin rules, effective January 2027. The Clarity Act vote slipped to September.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= MISC ================= -->
+  <section class="band">
+    <div class="band-head">
+      <h2>Departments</h2>
+      <span class="rule-note">Encyclopedia &middot; the other timeline &middot; the diary</span>
+    </div>
+    <div class="cols3">
+      <div class="cell">
+        <div class="kicker">From the Encyclopedia Desk</div>
+        <h3 class="small-head" style="margin-bottom:10px">fiatjaf Published Six Wiki Entries Overnight</h3>
+        <div class="defs">
+          <div><b>Nostr.</b> &ldquo;A protocol for sending tweets. Its theme song is &lsquo;Start Wearing Purple&rsquo; from Gogol Bordello.&rdquo;</div>
+          <div><b>Tweet.</b> &ldquo;The generic name of a microblogging article. Pioneered by Twitter in 2006&hellip; In 2024, as Twitter was renamed to X and abandoned the name, it was adopted by the Nostr community.&rdquo;</div>
+          <div><b>Farcaster.</b> &ldquo;A social media company that scams its users by pretending to be decentralized. Similar to Bluesky, but with 10x more money from VC.&rdquo;</div>
+          <div><b>Bluesky.</b> &ldquo;A relationships website created by a team who took Twitter&rsquo;s money in order to develop an open protocol but ended up being captured by the whims of corporate capitalism.&rdquo;</div>
+          <div><b>Michael Jordan.</b> &ldquo;Chicago Bulls player who used the shirt 23.&rdquo;</div>
+        </div>
+      </div>
+      <div class="cell">
+        <div class="kicker">Dispatches From the Other Timeline</div>
+        <h3 class="small-head" style="margin-bottom:6px">A Bot Quietly Reposts X, One Card an Hour</h3>
+        <p class="note" style="margin-bottom:8px">Nine cards filed in the window; five worth keeping.</p>
+        <div class="tweets">
+          <div class="tweet"><q>You have a problem. You add a blockchain. Now you have two problems.</q><span class="who">jimmysong</span></div>
+          <div class="tweet"><q>We need more unifying Bitcoiners, less divisive ones.</q><span class="who">callebtc</span></div>
+          <div class="tweet"><q>The orange pill is hard to swallow because it means accepting that the legacy system is broken and no one is coming to fix it.</q><span class="who">Excellion</span></div>
+          <div class="tweet"><q>Stage 1: your family is annoyed you won&rsquo;t stop evangelizing. Stage 2: they&rsquo;re glad they didn&rsquo;t listen. Stage 3: they&rsquo;re upset you didn&rsquo;t convince them.</q><span class="who">lopp</span></div>
+          <div class="tweet"><q>You&rsquo;re a true bitcoiner when you wish for low prices to get more BTC per USD.</q><span class="who">BTC_for_Freedom</span></div>
+        </div>
+        <p class="note" style="margin-top:10px">Elsewhere, Lois reported she is not allowed to log into Twitter while her VPN is on.</p>
+      </div>
+      <div class="cell">
+        <div class="kicker">The Diary</div>
+        <h3 class="small-head" style="margin-bottom:10px">What Else Happened, in Full</h3>
+        <p>Twenty&#8209;four people said good morning. Four of them posted a photograph of coffee to prove it. Three filed identical WORD5 #682 grids and one of them did it in hard mode in three guesses.</p>
+        <p>Jonathan established that bone&#8209;in New York strip remains his favorite cut. trosso19 ordered his eggs sunny side up with toast and confirmed black coffee is a perfect breakfast. Satoshi Coffee Co. contributed the word &ldquo;Joe,&rdquo; then, ten minutes later, &ldquo;Joe Mama.&rdquo;</p>
+        <p>Henry went out at dawn expecting to find his pet dead in its cage and found it asleep instead: &ldquo;now he&rsquo;s sleeping mocking me with his zombie like sleep food eating.&rdquo; Anna Chekhovich fired 1,500 rounds over two days and fixed her footwork. Zordon confirmed that bone dice really are the best, though balance is a challenge on the femur&#8209;sized ones.</p>
+        <p>aljaz posted his relay traffic graphs with the caption &ldquo;and people say there&rsquo;s no users on nostr&rdquo; &mdash; then, hours later, traced most of it to a headless browser. hodlbod looked at his own numbers on Coracle and asked: &ldquo;What is this, a denial of service attack? I don&rsquo;t really understand them.&rdquo;</p>
+        <p>And Vitor Pamplona, having spent the weekend on something other than a keyboard, filed the day&rsquo;s quietest revelation: &ldquo;I think I finally understand why Jimmy Carter retired and started building houses&hellip; It&rsquo;s like Lego for adults.&rdquo;</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= LISTINGS ================= -->
+  <section class="band">
+    <div class="band-head">
+      <h2>Calendar &amp; Classifieds</h2>
+      <span class="rule-note">115 events and 15 listings crossed the wire; a selection</span>
+    </div>
+    <div class="cols3">
+      <div class="cell">
+        <h3 class="small-head">Coming Up</h3>
+        <p><strong>Nostr Valley</strong> returns to State College, Pennsylvania on October 17. The schedule is filling; speakers and sponsors wanted. &ldquo;No noise. No fluff. Pure signal.&rdquo;</p>
+        <p><strong>Bay Area Bitcoiners</strong> is calling for speakers and sponsors for a Bitcoin&#8209;only conference. Tickets soon.</p>
+        <p><strong>WOB&nbsp;5, Madrid</strong>, October 2: a 160&#8209;minute digital&#8209;sovereignty workshop &mdash; full&#8209;disk&#8209;encrypted Linux, a VM manager with Whonix inside, all traffic forced through Tor, Sparrow isolated from the rest of your digital life, and GrapheneOS flashed live via web installer. No Linux experience required. Bring a laptop or just come and watch.</p>
+        <p><strong>Bitcoin Paraguay</strong> revives its Saturday <em>caminata</em>; BitDevs Asunción runs its 20th.</p>
+      </div>
+      <div class="cell">
+        <h3 class="small-head">Club Orange&rsquo;s Rounds</h3>
+        <p>One bot filed twenty&#8209;four meetups in a single minute this morning, which is as good a census of the network&rsquo;s geography as exists: Jersey City, Minneapolis (twice &mdash; a happy hour and Socratic Seminar #42), Palm Beach, Shropshire, Dundee, Manchester, Leipzig, Bremen, Westmünsterland, Vignola, Brasília, Verona, Lexington, Tokyo.</p>
+        <p>Aaron of Essex, booking his own through a Lightning&#8209;native ticketing system, was in a mood about it: &ldquo;Enjoying a ⚡ native system that means I&rsquo;ll never need to interact with dogshit platforms like Eventbrite or Meta ever again. And to think there are clowns on Twitter telling me no&#8209;one uses bitcoin.&rdquo;</p>
+      </div>
+      <div class="cell">
+        <h3 class="small-head">Classifieds</h3>
+        <p><strong>For sale.</strong> Super rare vintage Micron memory modules, 2 × 2GB DDR2. Photographed. &ldquo;Thanks Claude for this bargain!&rdquo;</p>
+        <p><strong>Services.</strong> &ldquo;There is no magic formula to cut through the AI sludge. Only real stories and sharp insight work.&rdquo; Newsletters, landing pages, eBooks, opinion pieces. Weekly text chat, monthly video call, you take all the credit. Pay the $1 fee to DM.</p>
+        <p><strong>Books.</strong> <em>The A&#8209;Z of Rotten Uncles</em> &mdash; &ldquo;one in every 89 uncles in the world is rotten.&rdquo; Also <em>The Fisherwoman and Other Stories</em>: a war deserter at the Hong Kong races, a city of riderless ghost bicycles.</p>
+        <p><strong>Food.</strong> Chilli flakes back in stock. Two large bags shipped for $33. Glass shaker jars under consideration; stickers are going to be key.</p>
+      </div>
+    </div>
+  </section>
+
+  <footer class="colophon">
+    <div><strong>How this edition was set</strong></div>
+    <div>Every word above is quoted or summarized from real events published to Nostr between 20:07&nbsp;UTC on 16 August and 20:07&nbsp;UTC on 17 August 2026, read from the production relay at <code>wss://search-staging.brainstorm.world</code> over NIP&#8209;50 search. Nine kinds were pulled &mdash; notes, long&#8209;form articles, picture posts, file metadata, highlights, wiki entries, app releases, classifieds and calendar events &mdash; for 773 events in total, plus 244 profile cards to put names to keys. Every query carried the same two tokens: <code>observer:460c25e682fda7832b52d1f22d3d22b3176d972f60dcdc3212ed8c92ef85065c sort:rank</code>.</div>
+    <div>The control run in <em>The Instrument</em> above was the identical query with the observer token removed. Corpus and trust figures are from the relay&rsquo;s own <code>/stats.json</code>, generated 2026&#8209;08&#8209;17T20:09:29Z; they are a reading taken at a moment, not a constant. Market numbers are quoted from the dashboard bots that filed them and were not independently checked.</div>
+    <div>Photographs are reproduced from the events themselves, at the URLs their authors published, resized for the page. No engagement metric, follower count or platform ranking touched any of this. The only sorting instrument was one person&rsquo;s web of trust.</div>
+  </footer>
+
+</div>

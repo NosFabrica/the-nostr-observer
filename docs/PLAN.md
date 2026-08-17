@@ -126,7 +126,7 @@ point at which anything can be checked at all.**
 ### What the sanitizer allows
 
 - **Allowed:** structural and text elements, tables, lists, `figure`/`figcaption`,
-  inline SVG, `class`/`id`/`style` attributes, and one author-written `<style>`
+  `class`/`id`/`style` attributes, and one author-written `<style>`
   block. Grid, flex, custom properties, media queries — all of it.
 - **Dropped:** `<script>`, every `on*` handler, `javascript:` URLs, `<iframe>`,
   `<object>`, `<form>`, and in CSS, `@import` and any `url()` that is not an
@@ -141,6 +141,16 @@ are permitted — but only to URLs that appeared in a real event, never to a URL
 the model composed. The rule is not "same origin"; it is **"provably from the
 corpus."**
 
+**Links are stricter, and building it taught us why.** The first version allowed
+any URL that appeared in the corpus, reasoning that a link nobody posted must
+have been invented. A test caught what that misses: the corpus is where the
+attacker writes. Posting `click https://evil.example.com/drain` put that URL on
+the allowlist, and an injected instruction to link every story to it then passed
+cleanly — a phishing link under the reader's masthead, signed by the reader. So
+the paper does not link to the open web at all: URLs are printed as text, the way
+a printed newspaper prints an address, and the only clickable external link is a
+permalink back to a source event.
+
 Our preview is served under `default-src 'none'; img-src https:; style-src
 'unsafe-inline'` — no `script-src` at all. Note what that does *not* cover: a
 published edition is served by the reader's Blossom host under whatever headers
@@ -152,14 +162,14 @@ it sets, so on the published copy the sanitizer is the only protection there is.
 
 | Stage | What it does | Status |
 |---|---|---|
-| Pre-flight | Both readiness chains. Route to lens provisioning, to a Blossom prompt, or straight through | to build |
+| Pre-flight | Both readiness chains. Route to lens provisioning, to a Blossom prompt, or straight through | decision ported; gathering to build |
 | Pull | One websocket, `REQ` per kind, `since` = 24h, `search: "observer:<pk> sort:rank"`. Kinds 1, 20, 1063, 9802, 30023, 30402, 30818, 31923, 32267 | proven |
 | Identify | Batch `kind 0` for every author seen, 100 per REQ, newest wins | proven |
 | Control run | Same query, observer token removed — the "Instrument" panel. A relay query, not a model call | proven |
-| Budget | Prune to a token target. A rich lens returns far more than a sparse one in the same 24 hours, so the cap is on *volume*, not time | to build |
-| Art shortlist | Read `imeta` for url, MIME, dimensions and alt text. No fetching, no resizing | to build |
-| Generate | One call. Fixed system prompt + continuity block + digest + art shortlist → a complete document | to build |
-| Sanitize & validate | Allowlist pass; every quote a verbatim substring of a source event; every attribution matching that event's pubkey | **unresolved** |
+| Budget | Prune to a token target. A rich lens returns far more than a sparse one in the same 24 hours, so the cap is on *volume*, not time | built |
+| Art shortlist | Read `imeta` for url, MIME, dimensions and alt text. No fetching, no resizing | built |
+| Generate | One call. Fixed system prompt + continuity block + digest + art shortlist → a complete document | built, unverified against the API |
+| Sanitize & validate | Allowlist pass; every quote a verbatim substring of a source event; art resolved from ids; open-web links unwrapped | built |
 | Proof | Render the candidate headlessly. No horizontal overflow, both themes legible, no empty sections. Regenerate once on failure | proven |
 | Publish | On request only: upload the blob, update the manifest, record the address | new |
 
