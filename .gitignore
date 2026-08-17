@@ -1,0 +1,28 @@
+# Gradle / JVM
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+*.class
+*.jar
+*.log
+hs_err_pid*
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# Local config and secrets
+.env
+.env.*
+local.properties
+*.local.conf
+
+# Runtime data
+data/
+*.db
+*.sqlite
+*.sqlite3
+
+# OS
+.DS_Store
