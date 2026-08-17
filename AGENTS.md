@@ -20,11 +20,12 @@ reading — the commenting conventions, the JitPack pinning trap, and the
     ./gradlew build                 # compile + test + spotless
     ./gradlew spotlessApply         # run BEFORE committing; formatting alone fails the build
     ./gradlew :generator:installDist
+    generator/build/install/generator/bin/generator <npub> --check
     generator/build/install/generator/bin/generator <npub> --dry-run
 
-`--dry-run` does everything except call the model and writes the digest instead
-of a page. It needs no API key and is the fastest way to see whether a lens
-resolves. A full run reads `ANTHROPIC_API_KEY` from the environment.
+`--check` reports the readiness chain and stops. `--dry-run` does everything
+except call the model and writes the digest instead of a page. Neither needs an
+API key. A full run reads `ANTHROPIC_API_KEY` from the environment.
 
 ## Settled — do not relitigate without a reason
 
@@ -45,6 +46,24 @@ resolves. A full run reads `ANTHROPIC_API_KEY` from the environment.
   version allowlisted any URL that appeared in the corpus; a test caught that
   the corpus is where the attacker writes, so posting a phishing URL was enough
   to allowlist it. Presence in the corpus is evidence of nothing.
+
+## Measured facts about the relays (2026-08-17 — re-measure, do not trust)
+
+- **`search-staging` holds no kind 3 at all**, and `/stats.json` confirms it is
+  not a mirrored kind. Follow lists must come from the reader's own write relays,
+  discovered from their kind 10002 — which *is* mirrored. The outbox model
+  working, not a workaround.
+- **NIP-45 COUNT answers** on both `search-staging` and `scores.brainstorm.world`.
+  It is still optional, and a null count is a supported answer that must draw
+  nothing rather than estimate.
+- **`search-staging` sends an AUTH challenge before answering a COUNT**, even
+  though `auth_required` is false. Anything resolving on the first non-EVENT
+  frame reads the challenge as the answer.
+- **A NIP-50 search with no `since` times out** on this store; the same search
+  with a 24-hour `since` answers immediately.
+- **Neither `nip85.nosfabrica.com` nor `scores.brainstorm.world` exposes an HTTP
+  API.** Both answer NIP-11 as plain strfry relays, so minting a lens is an
+  operator step, not a call.
 
 ## Not settled
 

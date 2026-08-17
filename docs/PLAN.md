@@ -162,7 +162,7 @@ it sets, so on the published copy the sanitizer is the only protection there is.
 
 | Stage | What it does | Status |
 |---|---|---|
-| Pre-flight | Both readiness chains. Route to lens provisioning, to a Blossom prompt, or straight through | decision ported; gathering to build |
+| Pre-flight | The lens readiness chain, gathered live and decided by the port. Falls back to a provisional lens rather than an empty page | built |
 | Pull | One websocket, `REQ` per kind, `since` = 24h, `search: "observer:<pk> sort:rank"`. Kinds 1, 20, 1063, 9802, 30023, 30402, 30818, 31923, 32267 | proven |
 | Identify | Batch `kind 0` for every author seen, 100 per REQ, newest wins | proven |
 | Control run | Same query, observer token removed — the "Instrument" panel. A relay query, not a model call | proven |
@@ -485,3 +485,29 @@ nsite kinds and resolution order from NIP-5A. Blossom upload authorization
 (`kind 10063`) from BUD-03. The deprecation of `kind 34128` in favour of
 `15128`/`35128` is called out because most tooling and write-ups still describe
 the old shape.
+
+---
+
+## Postscript: what Phase 2 measured
+
+Building the readiness probe corrected four things this plan had guessed at. All
+four are in `AGENTS.md` with their date.
+
+1. **The search relay holds no kind 3.** A provisional lens built against it
+   degrades to "just the reader" for everybody, silently — it did exactly that on
+   the first live run and looked like a reader with no friends. Follow lists come
+   from the reader's own write relays instead, discovered through the kind 10002
+   the store *does* mirror.
+2. **NIP-45 COUNT answers** on both the search relay and the provider relay, so
+   link 3's import percentage is measured rather than guessed. For the prototype
+   observer: 149,171 of 149,266 cards, 99.9%.
+3. **A NIP-50 search without `since` times out.** The first ranked probe left it
+   off; both sides came back empty, `Readiness` correctly read that as a quiet
+   window, and link 4 passed vacuously while testing nothing.
+4. **There is no provisioning API.** Both scoring hosts are plain strfry relays.
+   `LensRequest.Provisioner` is the seam for when one exists; `Manual` is the
+   honest implementation until then, and it says a person is involved rather than
+   pretending to queue something.
+
+The provisional lens works: a reader with no `kind 10040` at all now gets 1,015
+follows and 7,449 vouched-for strangers, capped to 600 authors, and a real paper.
