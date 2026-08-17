@@ -77,6 +77,9 @@ object Fixtures {
                 MALLORY to Profile(MALLORY, 1, "mallory", "Mallory", null, null),
             )
         return Corpus(
+            lens =
+                com.nosfabrica.observer.nostr.Lens
+                    .Trusted(OBSERVER),
             observer = OBSERVER,
             since = 1_786_800_000,
             until = 1_786_900_000,

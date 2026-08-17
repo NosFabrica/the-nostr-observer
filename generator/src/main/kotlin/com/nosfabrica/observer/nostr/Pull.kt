@@ -30,6 +30,7 @@ enum class Desk(
 
 /** Everything one edition is written from. */
 data class Corpus(
+    val lens: Lens,
     val observer: String,
     val since: Long,
     val until: Long,
@@ -61,16 +62,28 @@ class Pull(
         kind: Int,
         since: Long,
         limit: Int,
-        observer: String?,
+        lens: Lens?,
     ): JsonObject =
         buildJsonObject {
             put("kinds", buildJsonArray { add(kind) })
             put("since", since)
-            put("search", search(observer))
+            when (lens) {
+                is Lens.Trusted -> put("search", search(lens.observer))
+
+                // No `search` at all on the provisional path. `sort:rank` without
+                // a resolvable observer is the failure this project exists to
+                // avoid: it silently degrades to the anonymous ranking, which on
+                // a measured window was 209 of 400 posts from one spam account.
+                // An authors filter asks a different question and gets an answer.
+                is Lens.Provisional -> put("authors", buildJsonArray { lens.authors.forEach { add(it) } })
+
+                null -> put("search", search(null))
+            }
             put("limit", limit)
         }
 
     suspend fun corpus(
+        lens: Lens,
         observer: String,
         since: Long,
         until: Long,
@@ -81,7 +94,7 @@ class Pull(
         // read rather than a model call, so running it per edition costs nothing
         // worth optimising and keeps the panel honest for this exact window.
         val filters =
-            desks.map { filter(it.kind, since, it.limit, observer) } +
+            desks.map { filter(it.kind, since, it.limit, lens) } +
                 listOf(filter(Desk.NOTES.kind, since, Desk.NOTES.limit, null))
 
         val results = relay.reqAll(filters)
@@ -92,7 +105,7 @@ class Pull(
         // names — the Instrument panel prints the spammer's own text, and a hex
         // string there would hide what makes the comparison land.
         val keys = (ranked.values.flatten() + control).map { it.pubkey }.distinct()
-        return Corpus(observer, since, until, ranked, control, profiles(keys))
+        return Corpus(lens, observer, since, until, ranked, control, profiles(keys))
     }
 
     /** kind 0 for everyone we will name. Newest wins; batched because 244 authors is normal. */

@@ -11,6 +11,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.longOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -54,6 +55,9 @@ class RelayClient(
         val events = mutableListOf<NostrEvent>()
         val done = CompletableDeferred<Unit>()
 
+        /** Set only by a NIP-45 answer. Null means the relay never gave one. */
+        @Volatile var count: Long? = null
+
         @Synchronized fun add(e: NostrEvent) {
             events.add(e)
         }
@@ -85,11 +89,36 @@ class RelayClient(
                             NostrEvent.from(msg.getOrNull(2)?.jsonObject ?: return)?.let(sub::add)
                         }
 
+                        // A NIP-45 answer both carries the number and ends the
+                        // subscription; there is no EOSE after it.
+                        "COUNT" -> {
+                            val sub = subs[subId] ?: return
+                            sub.count =
+                                msg
+                                    .getOrNull(2)
+                                    ?.jsonObject
+                                    ?.get("count")
+                                    ?.jsonPrimitive
+                                    ?.longOrNull
+                            sub.done.complete(Unit)
+                        }
+
                         // CLOSED means the relay declined the filter. It is an answer,
                         // and treating it as anything but "this one is finished" hangs
                         // the whole edition on one refused query.
                         "EOSE", "CLOSED" -> {
                             subs[subId]?.done?.complete(Unit)
+                        }
+
+                        // AUTH and NOTICE are deliberately ignored rather than
+                        // treated as replies. search-staging sends an AUTH
+                        // challenge before it answers a COUNT even though
+                        // `auth_required` is false, so anything that resolves on
+                        // the first non-EVENT frame reads the challenge as the
+                        // answer and reports "no count" for a relay about to
+                        // give one. That is exactly what happened here once.
+                        else -> {
+                            Unit
                         }
                     }
                 }
@@ -113,18 +142,44 @@ class RelayClient(
             },
         )
 
+    /**
+     * How many events match, or null when the relay will not say.
+     *
+     * NIP-45 is optional and widely unimplemented, and null is a SUPPORTED
+     * answer that callers must draw nothing from rather than estimate — a
+     * progress bar computed from a guess puts a number on screen no relay ever
+     * stated. Measured 2026-08-17: search-staging and scores.brainstorm.world
+     * both answer; nip85.brainstorm.world has been seen to answer none of the
+     * pairs it serves.
+     *
+     * Note the AUTH frame. search-staging sends an AUTH challenge before it
+     * answers even though `auth_required` is false, so anything that resolves on
+     * the first non-EVENT message reads the challenge as the reply and reports
+     * "no count" for a relay that was about to give one.
+     */
+    suspend fun count(
+        filter: JsonObject,
+        timeoutMs: Long = 20_000,
+    ): Long? = run("COUNT", filter, timeoutMs).count
+
     /** Run one filter to EOSE. Returns whatever arrived, in relay order. */
     suspend fun req(
         filter: JsonObject,
         timeoutMs: Long = 45_000,
-    ): List<NostrEvent> {
+    ): List<NostrEvent> = run("REQ", filter, timeoutMs).snapshot()
+
+    private suspend fun run(
+        verb: String,
+        filter: JsonObject,
+        timeoutMs: Long,
+    ): Subscription {
         withTimeout(15_000) { opened.await() }
         val id = "s${nextId.incrementAndGet()}"
         val sub = Subscription()
         subs[id] = sub
         socket.send(
             buildJsonArray {
-                add(kotlinx.serialization.json.JsonPrimitive("REQ"))
+                add(kotlinx.serialization.json.JsonPrimitive(verb))
                 add(kotlinx.serialization.json.JsonPrimitive(id))
                 add(filter)
             }.toString(),
@@ -138,7 +193,7 @@ class RelayClient(
             subs.remove(id)
             runCatching { socket.send("""["CLOSE","$id"]""") }
         }
-        return sub.snapshot()
+        return sub
     }
 
     /** Run every filter concurrently down the one socket. */
