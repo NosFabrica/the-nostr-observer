@@ -2,6 +2,7 @@ package com.nosfabrica.observer.safe
 
 import com.nosfabrica.observer.corpus.Art
 import com.nosfabrica.observer.nostr.Corpus
+import com.nosfabrica.observer.nostr.values
 import org.jsoup.Jsoup
 import java.text.Normalizer
 

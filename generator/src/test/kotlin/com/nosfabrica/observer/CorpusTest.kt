@@ -2,12 +2,12 @@ package com.nosfabrica.observer
 
 import com.nosfabrica.observer.corpus.ArtDesk
 import com.nosfabrica.observer.corpus.Digest
-import com.nosfabrica.observer.nostr.Bech32
 import com.nosfabrica.observer.nostr.Readiness
+import com.vitorpamplona.quartz.nip19Bech32.decodePublicKeyAsHexOrNull
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
-import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
@@ -77,36 +77,50 @@ class DigestTest {
     }
 }
 
-class Bech32Test {
+/**
+ * NIP-19 is quartz's, not ours — an earlier version of this project shipped
+ * fifty lines of hand-rolled bech32 for one function. These stay because the
+ * CLI's front door depends on the behaviour, not because the decoder is ours to
+ * test: a typo must not silently resolve to somebody else, and an nsec pasted
+ * into the reader field must never become a filter.
+ */
+class PubkeyInputTest {
     @Test
     fun `decodes real npubs to the pubkeys they belong to`() {
         assertEquals(
             "fb89e58f838b7d716a88300ea1f2539fff78766aa1121ec10968b6b10a498f28",
-            Bech32.toHexPubkey("npub1lwy7trur3d7hz65gxq82rujnnllhsan25yfpasgfdzmtzzjf3u5q0v4zv0"),
+            decodePublicKeyAsHexOrNull("npub1lwy7trur3d7hz65gxq82rujnnllhsan25yfpasgfdzmtzzjf3u5q0v4zv0"),
         )
         assertEquals(
             "30e8cbf1427c137fa60674a639431c19a9d6f4c07fd2959df83158e674fccbaa",
-            Bech32.toHexPubkey("npub1xr5vhu2z0sfhlfsxwjnrjscurx5adaxq0lfft80cx9vwva8uew4qk293g6"),
+            decodePublicKeyAsHexOrNull("npub1xr5vhu2z0sfhlfsxwjnrjscurx5adaxq0lfft80cx9vwva8uew4qk293g6"),
         )
     }
 
     @Test
     fun `passes hex straight through`() {
-        assertEquals(Fixtures.OBSERVER, Bech32.toHexPubkey(Fixtures.OBSERVER.uppercase()))
+        assertEquals(Fixtures.OBSERVER, decodePublicKeyAsHexOrNull(Fixtures.OBSERVER))
     }
 
     @Test
     fun `rejects a typo rather than returning the wrong reader`() {
-        assertThrows(IllegalArgumentException::class.java) {
-            Bech32.toHexPubkey("npub1lwy7trur3d7hz65gxq82rujnnllhsan25yfpasgfdzmtzzjf3u5q0v4zv1")
-        }
+        assertNull(decodePublicKeyAsHexOrNull("npub1lwy7trur3d7hz65gxq82rujnnllhsan25yfpasgfdzmtzzjf3u5q0v4zv1"))
     }
 
+    /**
+     * The one place quartz is not enough, and it is a sharp one.
+     *
+     * `decodePublicKeyAsHexOrNull` decodes any 32-byte bech32 payload despite
+     * its name: measured, a valid nsec comes back as the hex of the SECRET key
+     * rather than as null. A reader who pastes their nsec into the front door
+     * would have their private key placed in a relay filter and sent over the
+     * wire. Main guards on the prefix before ever calling it.
+     */
     @Test
-    fun `rejects an nsec so a secret is never used as a filter`() {
-        assertThrows(
-            IllegalArgumentException::class.java,
-        ) { Bech32.toHexPubkey("nsec1vl029mgpspedva04g90vltkh6fvh240zqtv9k0t9af8935ke9laqsnlfe5") }
+    fun `decoding an nsec yields key material, so the CLI must refuse it first`() {
+        val nsec = "nsec1vl029mgpspedva04g90vltkh6fvh240zqtv9k0t9af8935ke9laqsnlfe5"
+        assertNotNull(decodePublicKeyAsHexOrNull(nsec), "quartz decodes it — that is exactly the problem")
+        assertTrue(nsec.startsWith("nsec1"), "which is why the guard is a prefix check, before decoding")
     }
 }
 

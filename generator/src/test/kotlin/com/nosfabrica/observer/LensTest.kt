@@ -2,6 +2,7 @@ package com.nosfabrica.observer
 
 import com.nosfabrica.observer.nostr.LensRequest
 import com.nosfabrica.observer.nostr.ReadinessProbe
+import com.nosfabrica.observer.nostr.Relays
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertThrows
@@ -17,7 +18,7 @@ import org.junit.jupiter.api.Test
  * cannot rank. Those are what these hold.
  */
 class ReadinessProbeParsingTest {
-    private val probe = ReadinessProbe(relay = FakeRelay)
+    private val probe = ReadinessProbe(Relays(), "wss://example.invalid")
     private val service = "7d7ffd720b907fe597a7f454afe02f2dc1eca440baa029e9117b1c3209839377"
 
     @Test
@@ -38,14 +39,13 @@ class ReadinessProbeParsingTest {
                         listOf("r", "wss://reads.example.com", "read"),
                     ),
             )
-        val (writes, declared) = probe.writeRelays(event)
-        assertEquals(listOf("wss://both.example.com", "wss://writes.example.com"), writes)
-        assertEquals(3, declared, "the denominator counts every declared row")
+        // quartz's AdvertisedRelayListEvent.writeRelays() owns this rule now.
+        assertEquals(listOf("wss://both.example.com", "wss://writes.example.com"), probe.writeRelays(event))
     }
 
     @Test
     fun `no relay list at all is empty rather than an exception`() {
-        assertEquals(emptyList<String>() to 0, probe.writeRelays(null))
+        assertEquals(emptyList<String>(), probe.writeRelays(null))
     }
 
     @Test
@@ -58,24 +58,43 @@ class ReadinessProbeParsingTest {
                 kind = 10002,
                 tags = listOf(listOf("r", "https://example.com"), listOf("r", "wss://ok.example.com")),
             )
-        assertEquals(listOf("wss://ok.example.com"), probe.writeRelays(event).first)
+        assertEquals(listOf("wss://ok.example.com"), probe.writeRelays(event))
+    }
+
+    @Test
+    fun `the ranked probe asks the same question the edition will`() {
+        // This one carried no `since` at first, on the reasoning that a probe is
+        // a liveness check rather than a read. Wrong twice: an unbounded NIP-50
+        // is the MOST expensive query this store answers and it timed out, so
+        // both sides came back zero, so the probe passed by testing nothing.
+        val probe = probe.rankedProbe(Fixtures.ALICE, 1_786_900_000)
+        assertEquals(1_786_900_000L, probe.since?.toLong())
+        assertEquals("observer:${Fixtures.ALICE} sort:rank", probe.search)
+
+        // The comparison is only worth anything if the two sides differ by the
+        // lens and nothing else.
+        val anon = this.probe.rankedProbe(null, 1_786_900_000)
+        assertEquals("sort:rank", anon.search)
+        assertEquals(probe.copy(search = anon.search).toJson(), anon.toJson())
     }
 
     @Test
     fun `a rank entry needs both a service and a relay hint`() {
+        // The rejections below are quartz's ServiceProviderTag.parse refusing to
+        // build a tag that is missing a field, not a local takeIf somebody could
+        // later tidy away. That is the point of using it.
         fun tenForty(vararg tags: List<String>) = Fixtures.event("s", Fixtures.ALICE, "", kind = 10040, tags = tags.toList())
 
         assertEquals(
-            service to "wss://scores.example.com",
-            probe.rankService(tenForty(listOf("30382:rank", service, "wss://scores.example.com"))),
+            service to "wss://scores.example.com/",
+            probe.rankProvider(tenForty(listOf("30382:rank", service, "wss://scores.example.com"))),
         )
 
         // Each of these resolves to nothing in the store's provider map while
         // looking, from the outside, exactly like a configured lens.
-        assertNull(probe.rankService(tenForty(listOf("30382:rank", service))).first, "hintless")
-        assertNull(probe.rankService(tenForty(listOf("30382:followers", service, "wss://x"))).first, "followers only")
-        assertNull(probe.rankService(tenForty(listOf("30382:rank", "tooshort", "wss://x"))).first, "bad key")
-        assertNull(probe.rankService(null).first, "no 10040 at all")
+        assertNull(probe.rankProvider(tenForty(listOf("30382:rank", service))), "hintless")
+        assertNull(probe.rankProvider(tenForty(listOf("30382:followers", service, "wss://x.example.com"))), "followers only")
+        assertNull(probe.rankProvider(null), "no 10040 at all")
     }
 }
 
@@ -109,8 +128,3 @@ class LensRequestTest {
             assertTrue(LensRequest.Manual.EXPLANATION.contains("operator step"))
         }
 }
-
-/** The probe's parsing does not touch the network; this exists only to construct it. */
-private val FakeRelay =
-    com.nosfabrica.observer.nostr
-        .RelayClient("ws://127.0.0.1:1")

@@ -2,7 +2,10 @@ package com.nosfabrica.observer.corpus
 
 import com.nosfabrica.observer.nostr.Corpus
 import com.nosfabrica.observer.nostr.Desk
-import com.nosfabrica.observer.nostr.NostrEvent
+import com.nosfabrica.observer.nostr.client
+import com.nosfabrica.observer.nostr.hashtags
+import com.nosfabrica.observer.nostr.value
+import com.vitorpamplona.quartz.nip01Core.core.Event
 import java.time.Instant
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
@@ -75,20 +78,20 @@ class Digest(
     private fun renderEvent(
         sb: StringBuilder,
         desk: Desk,
-        event: NostrEvent,
+        event: Event,
         corpus: Corpus,
         art: List<Art>,
     ) {
-        val profile = corpus.profiles[event.pubkey]
-        sb.append("\n--- ").append(profile?.byline() ?: event.pubkey.take(8))
+        val profile = corpus.profiles[event.pubKey]
+        sb.append("\n--- ").append(profile?.display() ?: event.pubKey.take(8))
         profile?.nip05?.let { sb.append(" <").append(it).append(">") }
         sb.append(" · ").append(stamp.format(Instant.ofEpochSecond(event.createdAt))).append("Z")
         event.client()?.let { sb.append(" · via ").append(it) }
         sb.append(" · event ").append(event.id).append("\n")
 
-        event.tag("title")?.let { sb.append("TITLE: ").append(it.take(200)).append("\n") }
-        event.tag("summary")?.let { sb.append("SUMMARY: ").append(it.take(600)).append("\n") }
-        event.tag("location")?.let { sb.append("LOCATION: ").append(it.take(120)).append("\n") }
+        event.value("title")?.let { sb.append("TITLE: ").append(it.take(200)).append("\n") }
+        event.value("summary")?.let { sb.append("SUMMARY: ").append(it.take(600)).append("\n") }
+        event.value("location")?.let { sb.append("LOCATION: ").append(it.take(120)).append("\n") }
         if (art.isNotEmpty()) {
             sb.append("ART: ").append(art.joinToString(", ") { it.id }).append("\n")
         }
@@ -110,7 +113,7 @@ class Digest(
      */
     private fun body(
         desk: Desk,
-        event: NostrEvent,
+        event: Event,
     ): String {
         val limit =
             when (desk) {
@@ -133,8 +136,8 @@ class Digest(
      */
     private fun prune(
         desk: Desk,
-        events: List<NostrEvent>,
-    ): List<NostrEvent> {
+        events: List<Event>,
+    ): List<Event> {
         val perAuthor =
             when (desk) {
                 Desk.NOTES -> 20
@@ -144,26 +147,26 @@ class Digest(
             }
         val counts = mutableMapOf<String, Int>()
         val seen = mutableSetOf<String>()
-        val out = mutableListOf<NostrEvent>()
+        val out = mutableListOf<Event>()
         for (event in events) {
-            val n = counts.getOrDefault(event.pubkey, 0)
+            val n = counts.getOrDefault(event.pubKey, 0)
             if (n >= perAuthor) continue
             val key = fingerprint(event)
             if (key.isNotEmpty() && !seen.add(key)) continue
-            counts[event.pubkey] = n + 1
+            counts[event.pubKey] = n + 1
             out.add(event)
         }
         return out
     }
 
     /** Same author, same words — whitespace, case and links normalised away. */
-    private fun fingerprint(event: NostrEvent): String {
+    private fun fingerprint(event: Event): String {
         val text =
             event.content
                 .replace(Regex("""https?://\S+"""), "")
                 .replace(Regex("""\s+"""), " ")
                 .trim()
                 .lowercase()
-        return if (text.length < 12) "" else event.pubkey + "|" + text.take(200)
+        return if (text.length < 12) "" else event.pubKey + "|" + text.take(200)
     }
 }

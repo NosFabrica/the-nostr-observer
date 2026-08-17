@@ -1,9 +1,8 @@
 package com.nosfabrica.observer.nostr
 
-import kotlinx.serialization.json.add
-import kotlinx.serialization.json.buildJsonArray
-import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.put
+import com.vitorpamplona.quartz.nip01Core.core.Event
+import com.vitorpamplona.quartz.nip01Core.relay.filters.Filter
+import com.vitorpamplona.quartz.nip02FollowList.ContactListEvent
 
 /**
  * How a reader's corpus gets chosen.
@@ -29,7 +28,10 @@ sealed interface Lens {
         val extended: Int,
         val truncated: Boolean,
     ) : Lens {
-        override val label = "provisional — $direct follows and $extended of their follows"
+        // ASCII: this label is printed to the console as well as set in the
+        // page, and the JVM's default console encoding turns an em dash into a
+        // question mark, which reads like the string is broken.
+        override val label = "provisional - $direct follows and $extended of their follows"
     }
 }
 
@@ -49,8 +51,8 @@ sealed interface Lens {
  * else's relay whatever it returns.
  */
 class Follows(
-    private val relay: RelayClient,
-    private val open: (String) -> RelayClient = { RelayClient(it) },
+    private val relays: Relays,
+    private val searchRelay: String,
     private val maxAuthors: Int = 600,
 ) {
     /**
@@ -91,7 +93,7 @@ class Follows(
         lists(hosts, sample)
             .forEach { list ->
                 list
-                    .tags("p")
+                    .values("p")
                     .mapNotNull { it.firstOrNull() }
                     .filter { it.length == 64 && it != observer && it !in direct }
                     .distinct()
@@ -124,16 +126,12 @@ class Follows(
         for (host in hosts + listOf(null)) {
             val events =
                 runCatching {
-                    if (host == null) {
-                        relay.req(followFilter(listOf(pubkey)))
-                    } else {
-                        open(host).use { it.req(followFilter(listOf(pubkey)), timeoutMs = 20_000) }
-                    }
+                    relays.fetch(host ?: searchRelay, followFilter(listOf(pubkey)), idle = 12_000)
                 }.getOrNull().orEmpty()
             val newest = events.maxByOrNull { it.createdAt } ?: continue
             val follows =
                 newest
-                    .tags("p")
+                    .values("p")
                     .mapNotNull { it.firstOrNull() }
                     .filter { it.length == 64 }
                     .distinct()
@@ -146,22 +144,16 @@ class Follows(
     private suspend fun lists(
         hosts: List<String>,
         pubkeys: List<String>,
-    ): List<NostrEvent> {
+    ): List<Event> {
         val filters = pubkeys.chunked(40).map { followFilter(it) }
-        val out = mutableListOf<NostrEvent>()
+        val out = mutableListOf<Event>()
         for (host in hosts) {
-            runCatching {
-                open(host).use { client -> out += client.reqAll(filters, timeoutMs = 25_000).flatten() }
-            }
+            runCatching { out += relays.fetch(host, filters, idle = 15_000) }
         }
         // Newest list per author: the same person answered by two relays is one
         // vote, not two, and the stale copy must not be the one that counts.
-        return out.groupBy { it.pubkey }.values.mapNotNull { copies -> copies.maxByOrNull { it.createdAt } }
+        return out.groupBy { it.pubKey }.values.mapNotNull { copies -> copies.maxByOrNull { it.createdAt } }
     }
 
-    private fun followFilter(authors: List<String>) =
-        buildJsonObject {
-            put("kinds", buildJsonArray { add(3) })
-            put("authors", buildJsonArray { authors.forEach { add(it) } })
-        }
+    private fun followFilter(authors: List<String>) = Filter(kinds = listOf(ContactListEvent.KIND), authors = authors)
 }

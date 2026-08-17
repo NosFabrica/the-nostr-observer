@@ -1,0 +1,147 @@
+package com.nosfabrica.observer.nostr
+
+import com.vitorpamplona.quartz.nip01Core.core.Event
+import com.vitorpamplona.quartz.nip01Core.relay.client.NostrClient
+import com.vitorpamplona.quartz.nip01Core.relay.client.accessories.count
+import com.vitorpamplona.quartz.nip01Core.relay.client.accessories.fetchAll
+import com.vitorpamplona.quartz.nip01Core.relay.filters.Filter
+import com.vitorpamplona.quartz.nip01Core.relay.normalizer.RelayUrlNormalizer
+import com.vitorpamplona.quartz.nip01Core.relay.sockets.okhttp.BasicOkHttpWebSocket
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.coroutineScope
+import okhttp3.OkHttpClient
+import java.io.Closeable
+import java.time.Duration
+
+/**
+ * Relay reads, through quartz.
+ *
+ * This file used to be three hundred lines of hand-rolled NIP-01: a websocket,
+ * a subscription registry, EVENT/EOSE/CLOSED/COUNT dispatch, and an AUTH frame
+ * I had to learn about by watching a COUNT come back empty. All of it already
+ * existed in quartz — `NostrClient` plus the `fetchAll` and `count`
+ * accessories — and quartz is a dependency of the relay this project reads
+ * from, so the two were always going to have to agree about event shapes.
+ *
+ * What is left is the two questions this project actually asks and the timeout
+ * policy it wants, which is the only part that was ever ours.
+ *
+ * The timeout is an IDLE window, not a deadline: quartz drains until a relay
+ * has said nothing for [idleMs], so a slow relay finishes and a silent one is
+ * given up on. Reading it as a deadline is a mistake this codebase's sibling
+ * has already paid for once.
+ */
+class Relays(
+    private val idleMs: Long = 15_000,
+) : Closeable {
+    private val scope = CoroutineScope(SupervisorJob())
+    private val okhttp = OkHttpClient.Builder().connectTimeout(Duration.ofSeconds(10)).build()
+    private val client = NostrClient(BasicOkHttpWebSocket.Builder { okhttp }, scope)
+
+    /**
+     * Everything matching, from one relay. Order is the relay's.
+     *
+     * Sent as however many REQs it takes to stay under [MAX_REQ_BYTES], run at
+     * once. See that constant for why splitting is not an optimisation.
+     */
+    suspend fun fetch(
+        url: String,
+        filters: List<Filter>,
+        idle: Long = idleMs,
+    ): List<Event> {
+        val relay = RelayUrlNormalizer.normalize(url)
+        val batches = batches(filters)
+        if (batches.size == 1) return client.fetchAll(relay, batches.first(), idle)
+        return coroutineScope {
+            batches.map { async { client.fetchAll(relay, it, idle) } }.awaitAll().flatten()
+        }
+    }
+
+    suspend fun fetch(
+        url: String,
+        filter: Filter,
+        idle: Long = idleMs,
+    ): List<Event> = fetch(url, listOf(filter), idle)
+
+    /**
+     * How many match, or null when the relay will not say.
+     *
+     * NIP-45 is optional. Null is a supported answer that callers must draw
+     * nothing from rather than estimate — a percentage computed from a guess
+     * puts a number on screen no relay ever stated.
+     */
+    suspend fun count(
+        url: String,
+        filter: Filter,
+        idle: Long = idleMs,
+    ): Long? =
+        runCatching {
+            client.count(RelayUrlNormalizer.normalize(url), filter, idle)?.count?.toLong()
+        }.getOrNull()
+
+    companion object {
+        /**
+         * How many bytes of filter one REQ may carry.
+         *
+         * `search-staging` advertises `max_message_length: 262144` in its NIP-11
+         * document, and it enforces it the way relays generally do: the oversized
+         * frame is dropped, with no NOTICE and no CLOSED. The subscription then
+         * sits open saying nothing until the idle timer expires and quartz
+         * reports what it heard, which is an empty list.
+         *
+         * That is why this is a correctness fix and not a politeness one. A
+         * provisional lens is nine desks each carrying 600 author pubkeys — about
+         * 353 KB — so the entire edition came back empty while every single-desk
+         * query answered normally (measured 2026-08-17: six desks at 235 KB
+         * answered, nine at 353 KB returned nothing).
+         *
+         * The budget is under the advertised cap because the cap is on the whole
+         * frame: subscription id, brackets and commas are ours to leave room for.
+         * It is a constant rather than a NIP-11 read because a relay that answers
+         * NIP-11 with anything unexpected must not be able to talk us INTO a
+         * larger frame.
+         */
+        const val MAX_REQ_BYTES = 240_000
+
+        /**
+         * Greedy split, in order. One filter per REQ at worst.
+         *
+         * A single filter over the budget throws rather than being sent to be
+         * silently dropped. It cannot happen from here — the provisional lens
+         * caps authors at 600, about 39 KB — so it means a caller has built
+         * something new, and the loud version of that is a stack trace at the
+         * boundary instead of a blank page an hour later.
+         */
+        internal fun batches(
+            filters: List<Filter>,
+            budget: Int = MAX_REQ_BYTES,
+        ): List<List<Filter>> {
+            val out = mutableListOf<MutableList<Filter>>()
+            var used = 0
+            filters.forEach { filter ->
+                val size = filter.toJson().length
+                require(size <= budget) {
+                    "One filter is $size bytes, over the $budget-byte REQ budget; chunk its authors or ids."
+                }
+                if (out.isEmpty() || used + size > budget) {
+                    out += mutableListOf(filter)
+                    used = size
+                } else {
+                    out.last() += filter
+                    used += size
+                }
+            }
+            return out
+        }
+    }
+
+    override fun close() {
+        scope.cancel()
+        okhttp.dispatcher.executorService.shutdown()
+        okhttp.connectionPool.evictAll()
+    }
+}

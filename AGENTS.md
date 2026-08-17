@@ -1,8 +1,10 @@
 # AGENTS.md
 
-Nothing is built yet. **[`docs/PLAN.md`](docs/PLAN.md) is the design** — read it
-before writing code; this file holds only what the plan does not: the decisions
-that are settled, the ones that are not, and the conventions to hold to.
+The headless generator (`generator/`) is built and runs against the live relay;
+sign-in and publishing are not. **[`docs/PLAN.md`](docs/PLAN.md) is the design**
+— read it before writing code; this file holds only what the plan does not: the
+decisions that are settled, the ones that are not, the readings taken off the
+live relays, and the conventions to hold to.
 
 ## What this is
 
@@ -28,6 +30,14 @@ except call the model and writes the digest instead of a page. Neither needs an
 API key. A full run reads `ANTHROPIC_API_KEY` from the environment.
 
 ## Settled — do not relitigate without a reason
+
+- **Nostr goes through quartz. All of it.** `NostrClient` + the `fetchAll` and
+  `count` accessories, `Filter`, `Event`, `AdvertisedRelayListEvent`,
+  `ServiceProviderTag`, `MetadataEvent`, NIP-19 decoding. The generator once
+  carried ~400 lines of hand-rolled bech32, websocket and NIP-01 dispatch; all
+  of it already existed in the library the relay itself is built on. What is
+  left local is in `nostr/Relays.kt` (timeout and REQ-size policy) and
+  `nostr/Tags.kt` (generic tag reads quartz has no named helper for).
 
 - **Window is 24 hours, fixed.** Not "since last login."
 - **No prompt caching**, and no shared wire/personal split. Every edition is
@@ -64,6 +74,36 @@ API key. A full run reads `ANTHROPIC_API_KEY` from the environment.
 - **Neither `nip85.nosfabrica.com` nor `scores.brainstorm.world` exposes an HTTP
   API.** Both answer NIP-11 as plain strfry relays, so minting a lens is an
   operator step, not a call.
+- **A REQ over `max_message_length` is dropped in silence.** `search-staging`
+  advertises 262144 bytes and enforces it with no NOTICE and no CLOSED: the
+  subscription stays open saying nothing, the idle timer expires, and quartz
+  reports an empty list. A provisional edition — nine desks × 600 author
+  pubkeys, ~353 KB — returned zero events this way while every one of those
+  queries answered normally on its own. Six desks at 235 KB answered; nine at
+  353 KB did not. `Relays.batches` splits under a budget now.
+- **Read NIP-11 before theorising about a relay.** `limitation` states the
+  message cap, filter count, subscription count and default limit. All of the
+  above was one `curl -H "Accept: application/nostr+json"` away.
+
+## Quartz behaviours worth knowing here
+
+- **`decodePublicKeyAsHexOrNull` decodes an nsec.** Measured: it returns the
+  hex of the SECRET key rather than null, because the payload is 32 bytes and
+  that is all it checks. `Main.kt` refuses an `nsec1` prefix *before* calling
+  it, or a reader who pastes the wrong key has it put into a relay filter and
+  sent over the wire. There is a test that pins this.
+- **`AdvertisedRelayListEvent.writeRelays()` does not vet schemes.** It returns
+  what the tag said, `https://` entries included. `ReadinessProbe` keeps a
+  `wss://`/`ws://` filter over its output.
+- **`fetchAll` merges the filters.** The hand-rolled client returned one list
+  per filter; quartz returns one list. Desks are recovered by kind, which is
+  why the anonymous control run is a separate call — it is kind 1 like the
+  notes desk, and merged in it would file spam as news. The overlap number the
+  CLI prints is the alarm for that: it belongs near zero.
+- **Quartz is Kotlin Multiplatform with Android in its graph.** It pulls
+  `androidx.sqlite`, published only to Google's Maven, so `settings.gradle.kts`
+  needs `google()`. Without it the failure names the missing AndroidX artifact
+  and not the reason, which reads like a broken JitPack pin.
 
 ## Not settled
 

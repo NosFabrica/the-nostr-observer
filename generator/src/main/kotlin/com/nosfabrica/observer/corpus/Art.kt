@@ -1,7 +1,8 @@
 package com.nosfabrica.observer.corpus
 
 import com.nosfabrica.observer.nostr.Corpus
-import com.nosfabrica.observer.nostr.NostrEvent
+import com.nosfabrica.observer.nostr.values
+import com.vitorpamplona.quartz.nip01Core.core.Event
 
 /**
  * A picture the edition may use, named by an id the generator can cite.
@@ -56,7 +57,7 @@ object ArtDesk {
         // Ranked order is the provider's order, so taking the first N is taking
         // the art from the posts this reader's own lens rated highest.
         for (event in corpus.all()) {
-            for (fields in event.tags("imeta")) {
+            for (fields in event.values("imeta")) {
                 val kv =
                     fields
                         .mapNotNull { field ->
@@ -111,10 +112,10 @@ object ArtDesk {
         w: Int?,
         h: Int?,
         alt: String?,
-        event: NostrEvent,
+        event: Event,
         corpus: Corpus,
     ): Art {
-        val byline = corpus.byline(event.pubkey)
+        val byline = corpus.byline(event.pubKey)
         // The caption the generator sees is what the poster actually wrote, with
         // the media URL stripped back out — clients paste the URL into the body
         // as well as the tag, and "look at this https://blossom…" is not a caption.
@@ -132,7 +133,7 @@ object ArtDesk {
             height = h,
             alt = alt?.takeIf { it.isNotBlank() },
             eventId = event.id,
-            pubkey = event.pubkey,
+            pubkey = event.pubKey,
             byline = byline,
             caption = body.ifBlank { alt.orEmpty() },
         )

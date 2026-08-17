@@ -139,7 +139,7 @@ class Writer(
                 .append(
                     corpus
                         .all()
-                        .map { it.pubkey }
+                        .map { it.pubKey }
                         .distinct()
                         .size,
                 ).append("\n\n")
@@ -187,7 +187,7 @@ class Writer(
         val overlap = rankedIds.intersect(controlIds).size
         val controlTop =
             corpus.control
-                .groupingBy { it.pubkey }
+                .groupingBy { it.pubKey }
                 .eachCount()
                 .maxByOrNull { it.value }
         return buildString {
@@ -196,7 +196,7 @@ class Writer(
                 .append(" notes from ")
                 .append(
                     corpus.notes
-                        .map { it.pubkey }
+                        .map { it.pubKey }
                         .distinct()
                         .size,
                 ).append(" distinct people.\n")
@@ -205,7 +205,7 @@ class Writer(
                 .append(" notes from ")
                 .append(
                     corpus.control
-                        .map { it.pubkey }
+                        .map { it.pubKey }
                         .distinct()
                         .size,
                 ).append(" accounts")

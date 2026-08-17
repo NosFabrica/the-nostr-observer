@@ -2,18 +2,18 @@ package com.nosfabrica.observer
 
 import com.nosfabrica.observer.corpus.ArtDesk
 import com.nosfabrica.observer.corpus.Digest
-import com.nosfabrica.observer.nostr.Bech32
 import com.nosfabrica.observer.nostr.Follows
 import com.nosfabrica.observer.nostr.Lens
 import com.nosfabrica.observer.nostr.LensRequest
 import com.nosfabrica.observer.nostr.Pull
 import com.nosfabrica.observer.nostr.Readiness
 import com.nosfabrica.observer.nostr.ReadinessProbe
-import com.nosfabrica.observer.nostr.RelayClient
+import com.nosfabrica.observer.nostr.Relays
 import com.nosfabrica.observer.safe.Sanitizer
 import com.nosfabrica.observer.safe.Validator
 import com.nosfabrica.observer.write.Continuity
 import com.nosfabrica.observer.write.Writer
+import com.vitorpamplona.quartz.nip19Bech32.decodePublicKeyAsHexOrNull
 import kotlinx.coroutines.runBlocking
 import java.io.File
 import java.time.Instant
@@ -82,22 +82,31 @@ fun main(args: Array<String>) =
         val until = flags["--until"]?.toLongOrNull() ?: Instant.now().epochSecond
         val since = until - WINDOW_SECONDS
 
+        // quartz owns NIP-19 decoding, but NOT this guard, and the difference
+        // matters. `decodePublicKeyAsHexOrNull` decodes ANY 32-byte bech32
+        // payload: measured, it turns a valid nsec into the hex of the SECRET
+        // key rather than returning null. Without this check a reader who
+        // pastes their nsec into the front door would have their private key
+        // put into a relay filter and sent over the wire.
+        if (args[0].startsWith("nsec1", ignoreCase = true)) {
+            System.err.println("That is a SECRET key. Paste your npub or hex public key instead.")
+            exitProcess(2)
+        }
         val observer =
-            try {
-                Bech32.toHexPubkey(args[0])
-            } catch (e: IllegalArgumentException) {
-                System.err.println("Not a usable pubkey: ${e.message}")
-                exitProcess(2)
-            }
+            decodePublicKeyAsHexOrNull(args[0])
+                ?: run {
+                    System.err.println("Not a usable npub or hex pubkey: ${args[0].take(24)}")
+                    exitProcess(2)
+                }
 
-        RelayClient(relayUrl).use { relay ->
+        Relays().use { relays ->
             step("Reading $relayUrl through $observer")
 
             // Pre-flight before anything expensive. The failure it catches is
             // silent by design: an unresolvable observer degrades to an anonymous
             // read, which on a measured window was 209 of 400 posts from one spam
             // account. Finding that out after the model call is finding it late.
-            val facts = ReadinessProbe(relay).gather(observer, since)
+            val facts = ReadinessProbe(relays, relayUrl).gather(observer, since)
             val verdict = Readiness.assess(facts)
             step("Lens: ${verdict.state} - ${Readiness.explain(verdict)}")
             verdict.chain.forEach { link ->
@@ -116,7 +125,7 @@ fun main(args: Array<String>) =
                         println()
                     }
                     step("Building a provisional lens from the follow list")
-                    Follows(relay).provisional(observer, facts.writeRelays.orEmpty()).also {
+                    Follows(relays, relayUrl).provisional(observer, facts.writeRelays.orEmpty()).also {
                         step(
                             "Provisional: ${it.direct} follows, ${it.extended} vouched-for strangers" +
                                 (if (it.truncated) ", capped at ${it.authors.size} authors" else ""),
@@ -124,14 +133,26 @@ fun main(args: Array<String>) =
                     }
                 }
 
-            val corpus = Pull(relay).corpus(lens, observer, since, until)
+            val corpus = Pull(relays, relayUrl).corpus(lens, observer, since, until)
             val voices =
                 corpus
                     .all()
-                    .map { it.pubkey }
+                    .map { it.pubKey }
                     .distinct()
                     .size
             step("Pulled ${corpus.all().size} events from $voices people, ${corpus.profiles.size} profiles")
+
+            // The product thesis as a number, printed before the model sees it.
+            // It is also the alarm for one specific bug: the control run is kind
+            // 1 like the notes desk, so anything that merges the two shows up
+            // here as an overlap near 100% instead of near zero.
+            val overlap =
+                corpus
+                    .all()
+                    .map { it.id }
+                    .intersect(corpus.control.map { it.id }.toSet())
+                    .size
+            step("Control: ${corpus.control.size} anonymous notes, $overlap of them also in the paper")
 
             if (corpus.notes.isEmpty()) {
                 System.err.println(

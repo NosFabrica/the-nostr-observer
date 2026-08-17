@@ -394,7 +394,7 @@ never reaches the client.
 | Concern | Choice | Notes |
 |---|---|---|
 | Language | Kotlin 2.4.0 / JVM | Gradle with a version catalog, spotless + ktlint, git hooks — mirror the relay's setup |
-| Nostr | Quartz | Event models, signature verification, NIP-42 AUTH, NIP-46 remote signing. Pin on JitPack and `force()` it in every module — JitPack versions are commit hashes and Gradle resolves conflicts *lexicographically* |
+| Nostr | Quartz | Event models, signature verification, relay client, filters, NIP-19, NIP-42 AUTH, NIP-46 remote signing. Pin on JitPack and `force()` it in every module — JitPack versions are commit hashes and Gradle resolves conflicts *lexicographically*. It is KMP with Android in its graph, so `settings.gradle.kts` needs `google()` |
 | HTTP + sockets | Ktor 3.5.1 | Netty engine for the app; ktor-client for Blossom `PUT`. Outbound relay sockets via Quartz's `BasicOkHttpWebSocket`, as the router already does |
 | Model | anthropic-java 2.34.0 | `AnthropicOkHttpClient.fromEnv()`; `.model("claude-opus-5")`; `.thinking(ThinkingConfigAdaptive)`; effort nests inside `OutputConfig`. **Use `createStreaming`** — a whole front page is a long generation and a blocking call will hit the HTTP timeout. Rides on okhttp, already in the graph |
 | Sanitizer | jsoup | `Cleaner` + a custom `Safelist`. Two things it will not do: it does not parse CSS, so `@import` and `url()` need their own pass; and `<style>` plus the `style` attribute must be added to the safelist deliberately |
@@ -511,3 +511,38 @@ four are in `AGENTS.md` with their date.
 
 The provisional lens works: a reader with no `kind 10040` at all now gets 1,015
 follows and 7,449 vouched-for strangers, capped to 600 authors, and a real paper.
+
+---
+
+## Postscript: the quartz migration
+
+The table above names Quartz for "event models, signature verification, NIP-42
+AUTH, NIP-46 remote signing", and Phase 1 shipped without it — roughly 400 lines
+of hand-rolled bech32, websocket plumbing and NIP-01 dispatch, including an AUTH
+frame learned the hard way by watching a COUNT come back empty. Quartz was in the
+version catalog and in nobody's imports. `Bech32.kt`, `RelayClient.kt` and
+`Event.kt` are gone; `nostr/Relays.kt` and `nostr/Tags.kt` are what was actually
+ours.
+
+The migration paid for itself immediately by surfacing a bug the hand-rolled
+client had been hiding. It returned one list per filter; `fetchAll` returns one
+merged list, so desks are recovered by kind — and the anonymous control run is
+kind 1 exactly like the notes desk. Merged, the 400-post control run was being
+filed as news. The instrument panel's whole claim is the difference between those
+two sets, and the CLI now prints the overlap on every run so a regression is
+visible before the model is called. Measured after the fix, for the prototype
+observer: 744 events from 244 people, and **1 of the 400 anonymous notes also in
+the paper** — the same figure the prototype edition was built on.
+
+The second find was a REQ 353 KB long. Nine desks each carrying 600 author
+pubkeys exceeds the 262144-byte `max_message_length` the relay advertises, and an
+oversized frame is dropped with no NOTICE and no CLOSED, so a provisional edition
+came back with zero events while every one of those queries answered normally on
+its own. `Relays.batches` splits a filter list under a budget and throws on a
+single filter too big to send, because the alternative to a stack trace here is a
+blank page an hour later.
+
+Two quartz behaviours needed local guards rather than trust, both pinned by tests
+and recorded in `AGENTS.md`: `decodePublicKeyAsHexOrNull` decodes an nsec into
+the hex of the secret key, and `AdvertisedRelayListEvent.writeRelays()` returns
+whatever scheme the tag carried.
