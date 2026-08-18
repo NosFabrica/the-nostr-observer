@@ -85,7 +85,12 @@ fun main(args: Array<String>) =
                 }
 
         Relays().use { relays ->
-            val press = Press(relays, relayUrl, effort(flags["--effort"]))
+            // A Chromium process outlives the run otherwise -- the proof
+            // render starts one lazily and nothing else would stop it.
+            val press =
+                Press(relays, relayUrl, effort(flags["--effort"])).also { p ->
+                    Runtime.getRuntime().addShutdownHook(Thread { p.close() })
+                }
 
             if (flags.containsKey("--check")) {
                 val (facts, verdict) = press.readiness(observer, until - WINDOW_SECONDS)
@@ -122,6 +127,12 @@ fun main(args: Array<String>) =
                     System.err.println("\nThis edition would NOT be offered for publication.")
                     exitProcess(4)
                 }
+            } catch (api: com.anthropic.errors.AnthropicServiceException) {
+                // A bad key used to print forty lines of coroutine stack at
+                // somebody who typed one command. The API's own sentence is the
+                // useful half; the trace belongs in a log nobody has yet.
+                System.err.println("\nThe model API refused: ${api.message?.lines()?.firstOrNull() ?: "no reason given"}")
+                exitProcess(5)
             } catch (refused: Press.Refused) {
                 // NO_LENS is already on screen: `report` printed the whole chain
                 // and the sentence explaining the first unmet link. Repeating the
@@ -180,6 +191,19 @@ private fun show(progress: Press.Step) {
         is Press.Step.Checked -> {
             step("Validator: ${progress.report.summary()}")
             progress.report.violations.forEach { println("    ! ${it.kind}: ${it.detail} -- \"${it.excerpt}\"") }
+        }
+
+        is Press.Step.Proofed -> {
+            val how =
+                if (progress.fellBack) {
+                    " (house layout)"
+                } else if (progress.attempt > 1) {
+                    " (second attempt)"
+                } else {
+                    ""
+                }
+            step("Render$how: ${progress.report.summary()}")
+            progress.report.findings.forEach { println("    ! ${it.what}: ${it.detail}") }
         }
     }
 }

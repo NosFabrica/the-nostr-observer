@@ -76,13 +76,32 @@ class Sanitizer(
         val clean: Boolean get() = removed.isEmpty()
     }
 
-    fun sanitize(rawHtml: String): Result {
+    fun sanitize(
+        rawHtml: String,
+        /**
+         * The house layout as a last resort.
+         *
+         * A page that fails to READ is almost always the author's stylesheet's
+         * doing — the markup underneath it is the same markup that reads fine
+         * with nothing but the house sheet. Dropping it is the fallback the
+         * plan names for a page that will not render: plain and legible beats
+         * styled and broken, and it costs no second generation.
+         *
+         * Nothing about safety changes here. The author's CSS was already
+         * cleaned; this is an editorial retreat, not a security one.
+         */
+        keepAuthorCss: Boolean = true,
+    ): Result {
         val removed = mutableListOf<String>()
         val doc = Jsoup.parse(rawHtml)
         doc.outputSettings().prettyPrint(false)
 
         val title = doc.title().ifBlank { "Edition" }
-        val css = extractCss(doc, removed)
+        val authored = extractCss(doc, removed)
+        val css = if (keepAuthorCss) authored else ""
+        if (!keepAuthorCss && authored.isNotBlank()) {
+            removed.add("the author's stylesheet, ${authored.length} chars — fell back to the house layout")
+        }
         // Ours, and it goes through the same pass anyway. The day somebody adds
         // a webfont to the house sheet is the day every published edition calls
         // a third party on open, and "we wrote it" is not a property the reader

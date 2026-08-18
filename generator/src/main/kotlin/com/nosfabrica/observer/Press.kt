@@ -8,10 +8,12 @@ import com.nosfabrica.observer.nostr.Corpus
 import com.nosfabrica.observer.nostr.Readiness
 import com.nosfabrica.observer.nostr.ReadinessProbe
 import com.nosfabrica.observer.nostr.Relays
+import com.nosfabrica.observer.safe.Proof
 import com.nosfabrica.observer.safe.Sanitizer
 import com.nosfabrica.observer.safe.Validator
 import com.nosfabrica.observer.write.Continuity
 import com.nosfabrica.observer.write.Writer
+import java.io.Closeable
 
 /** 24 hours, fixed. Settled in the plan; not a knob. */
 const val WINDOW_SECONDS = 24L * 60 * 60
@@ -29,7 +31,7 @@ class Press(
     private val relays: Relays,
     private val searchRelay: String,
     private val effort: OutputConfig.Effort = OutputConfig.Effort.HIGH,
-) {
+) : Closeable {
     /**
      * One writer, not one per edition.
      *
@@ -39,6 +41,20 @@ class Press(
      * server does.
      */
     private val writer by lazy { Writer(effort = effort) }
+
+    /**
+     * One browser, not one per edition.
+     *
+     * Same reasoning as [writer] and a heavier object: a Chromium process per
+     * edition is a process leak a CLI run never notices and a server does.
+     * Building it lazily also means a deployment that never generates never
+     * starts a browser.
+     */
+    private val proofer by lazy { Proof() }
+
+    override fun close() {
+        runCatching { proofer.close() }
+    }
 
     /**
      * Progress, as it happens.
@@ -91,6 +107,20 @@ class Press(
         data class Checked(
             val report: Validator.Report,
         ) : Step
+
+        /**
+         * The page, opened in a browser.
+         *
+         * [attempt] is what makes this worth reporting: a second attempt means
+         * an edition was paid for twice, and a reader watching a progress bar
+         * that says "writing" for the second time deserves the reason.
+         */
+        data class Proofed(
+            val report: Proof.Report,
+            val attempt: Int,
+            /** True once the author's stylesheet has been dropped for the house one. */
+            val fellBack: Boolean = false,
+        ) : Step
     }
 
     /** Why an edition did not happen. Each one is a different thing to tell a reader. */
@@ -138,6 +168,17 @@ class Press(
         val usage: Writer.Draft,
         val removed: List<String>,
         val report: Validator.Report,
+        /**
+         * Whether it renders, and what went wrong if not.
+         *
+         * Not a gate. A page that fails the proof after both retries has
+         * already been reduced to the house layout, which is the strongest
+         * remedy available -- refusing it as well would throw away a truthful
+         * edition over a rendering opinion. It is reported so an operator can
+         * see it; `ran = false` means no browser was available and is not a
+         * failure of the page.
+         */
+        val proof: Proof.Report,
     ) {
         /** A page that fails the check is never offered for publication. */
         val publishable: Boolean get() = report.ok
@@ -256,12 +297,49 @@ class Press(
     ): Edition {
         val (corpus, art, digest) = gather(observer, until, onStep)
 
-        onStep(Step.Writing)
-        val draft = writer.write(corpus, digest, art, continuity)
-        onStep(Step.Written(draft.html.length, draft.inputTokens, draft.outputTokens, draft.costUsd()))
+        val sanitizer = Sanitizer(art, corpus.all().map { it.id }.toSet())
 
-        val sanitized = Sanitizer(art, corpus.all().map { it.id }.toSet()).sanitize(draft.html)
+        // WRITE, THEN OPEN IT.
+        //
+        // The sanitizer proves the page cannot misbehave and the validator
+        // proves it does not lie. Neither of them looks at it, and the first
+        // real edition shipped as 33KB of correct, verified, unreadable HTML
+        // with no stylesheet at all. Every one of a hundred and thirty tests
+        // passed, because they all check what comes OUT of the sanitizer.
+        //
+        // The ladder is the plan's: render it, regenerate ONCE if it does not
+        // read, and if the second one does not either, drop the author's
+        // stylesheet for the house layout. Each rung is cheaper to be wrong
+        // about than the one below: a second generation costs a dollar, the
+        // fallback costs the day's typography, and the reader gets a page.
+        onStep(Step.Writing)
+        var draft = writer.write(corpus, digest, art, continuity)
+        onStep(Step.Written(draft.html.length, draft.inputTokens, draft.outputTokens, draft.costUsd()))
+        var sanitized = sanitizer.sanitize(draft.html)
         onStep(Step.Cleaned(sanitized.removed))
+        var proof = proofer.check(sanitized.html)
+        onStep(Step.Proofed(proof, attempt = 1))
+
+        if (!proof.ok) {
+            onStep(Step.Writing)
+            draft = writer.write(corpus, digest, art, continuity)
+            onStep(Step.Written(draft.html.length, draft.inputTokens, draft.outputTokens, draft.costUsd()))
+            sanitized = sanitizer.sanitize(draft.html)
+            onStep(Step.Cleaned(sanitized.removed))
+            proof = proofer.check(sanitized.html)
+            onStep(Step.Proofed(proof, attempt = 2))
+        }
+
+        if (!proof.ok) {
+            // Same words, same pictures, our typography. A third generation
+            // would be a third roll of the same dice; this changes the one
+            // thing that is actually different between a page that reads and
+            // one that does not.
+            sanitized = sanitizer.sanitize(draft.html, keepAuthorCss = false)
+            onStep(Step.Cleaned(sanitized.removed))
+            proof = proofer.check(sanitized.html)
+            onStep(Step.Proofed(proof, attempt = 2, fellBack = true))
+        }
 
         val report = Validator(corpus, art).validate(sanitized.html)
         onStep(Step.Checked(report))
@@ -278,6 +356,7 @@ class Press(
             usage = draft,
             removed = sanitized.removed,
             report = report,
+            proof = proof,
         )
     }
 }

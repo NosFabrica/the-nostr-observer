@@ -105,6 +105,9 @@ class App(
 
     fun close() {
         scope.cancel()
+        // The press owns a lazily-started browser for the proof render, so it
+        // closes before the things it does not own.
+        press.close()
         relays.close()
         db.close()
     }

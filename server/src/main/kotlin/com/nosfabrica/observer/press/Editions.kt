@@ -197,6 +197,19 @@ class Editions(
             is Press.Step.Checked -> {
                 pair("Checked every quote", step.report.summary())
             }
+
+            is Press.Step.Proofed -> {
+                // The reader is watching a progress line, not reading a report.
+                // What they need to know is whether their page is being written
+                // a second time and why, because that is the only step here
+                // that costs them a wait they did not expect.
+                when {
+                    step.fellBack -> pair("Fell back to the house layout", step.report.summary())
+                    step.report.ok -> pair("Opened it in a browser", step.report.summary())
+                    step.attempt == 1 -> pair("It did not read; writing it again", step.report.summary())
+                    else -> pair("It still did not read", step.report.summary())
+                }
+            }
         }
 }
 
