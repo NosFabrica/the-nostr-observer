@@ -316,7 +316,14 @@ class Pull(
         // them the digest can only credit the excerpt to a hex prefix, which is
         // the same as not crediting it.
         val quoted = ranked[Desk.HIGHLIGHTS].orEmpty().mapNotNull { it.value("p") }.filter { it.length == 64 }
-        val keys = ((ranked.values.flatten() + control).map { it.pubKey } + quoted).distinct()
+
+        // AND THE READER, who is in none of the above BECAUSE of the rule that
+        // keeps them out of their own paper: their events are dropped from every
+        // desk, so their key is in no author list, so their `kind 0` was never
+        // asked for. The page names them -- "Ranked as …" -- and with no profile
+        // that line came out as an npub. Caught by a real run, and it is exactly
+        // the shape of bug two correct changes make together.
+        val keys = ((ranked.values.flatten() + control).map { it.pubKey } + quoted + observer).distinct()
         return Corpus(observer, since, until, ranked, control, dayNotes, profiles(keys))
     }
 

@@ -97,6 +97,9 @@ runs to a sentence wraps and takes the row with it.
   front page says what day it is, and a reader opening yesterday's edition
   should be able to tell at a glance.
 - **The window is a stamp, not a sentence.** "24h to 22:04".
+- **The dateline's middle span is `N of M events`.** Those exact words: a real
+  edition wrote "562 of 14,793 surfaced", which reads as a verb doing a noun's
+  job and leaves the reader guessing what was surfaced.
 - **The date and the closing time are the READER's, and they are given to you
   formatted.** Print them as handed over. Never convert a time yourself and
   never print UTC: you cannot know what offset was in force on the day, and the
