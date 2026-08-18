@@ -126,6 +126,18 @@ class Db(
                     PRIMARY KEY (pubkey, day)
                 )
                 """,
+                // The archive moved to where it belonged all along: the
+                // reader's own kind 35128, on the reader's own relays, which
+                // already carried every path and outlives this deployment.
+                // Keeping a copy here made our database the record of somebody
+                // else's back catalogue -- and a replaceable event rebuilt from
+                // a record we might not have is how a back catalogue vanishes.
+                //
+                // Appended rather than edited above, because the migration list
+                // is append-only: an installation that ran migration 1 needs a
+                // statement that drops the table, not a version of migration 1
+                // that never made it.
+                """DROP TABLE IF EXISTS published""",
             )
     }
 }

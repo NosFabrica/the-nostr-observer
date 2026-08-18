@@ -62,7 +62,23 @@ class Relays(
         url: String,
         filters: List<Filter>,
         idle: Long = idleMs,
-    ): List<Event> {
+    ): List<Event> = fetchOrNull(url, filters, idle) ?: emptyList()
+
+    /**
+     * The same read, but able to say that nobody answered.
+     *
+     * An empty list means two different things — "the relay says there is
+     * nothing" and "the relay said nothing at all" — and for most reads the
+     * difference does not matter, which is why [fetch] flattens them. It
+     * matters exactly once: before REPLACING a reader's site manifest, where
+     * treating silence as "you have published nothing" deletes their archive.
+     * Null is that case, and a caller that gets it must not proceed.
+     */
+    suspend fun fetchOrNull(
+        url: String,
+        filters: List<Filter>,
+        idle: Long = idleMs,
+    ): List<Event>? {
         val relay = RelayUrlNormalizer.normalize(url)
         val batches = batches(filters)
         return deadline(idle) {
@@ -73,7 +89,7 @@ class Relays(
                     batches.map { async { client.fetchAll(relay, it, idle) } }.awaitAll().flatten()
                 }
             }
-        } ?: emptyList()
+        }
     }
 
     suspend fun fetch(

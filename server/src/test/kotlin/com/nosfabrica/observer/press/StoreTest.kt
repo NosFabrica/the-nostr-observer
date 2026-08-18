@@ -6,7 +6,6 @@ import com.nosfabrica.observer.press.publish.Templates
 import com.nosfabrica.observer.press.store.Continuities
 import com.nosfabrica.observer.press.store.Db
 import com.nosfabrica.observer.press.store.Drafts
-import com.nosfabrica.observer.press.store.Published
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
@@ -109,35 +108,6 @@ class ContinuityTest {
         val reader = "e".repeat(64)
         continuities.remember(reader, "m", "s", emptyList(), (1..50).map { "headline $it" })
         assertTrue(continuities.of(reader).recentHeadlines.size <= 12)
-    }
-}
-
-class ArchiveTest {
-    @Test
-    fun `the archive is what the next manifest must carry`(
-        @TempDir dir: Path,
-    ) {
-        val published = Published(Db(dir.resolve("p.db").toString()))
-        val reader = "9".repeat(64)
-        published.record(reader, "2026-08-17", "a".repeat(64), "35128:x:observer", listOf("https://b.example.com"))
-        published.record(reader, "2026-08-18", "b".repeat(64), "35128:x:observer", listOf("https://b.example.com"))
-
-        // Newest first, and both days present: a kind 35128 replaces, so the
-        // day this returns only today is the day the archive is deleted.
-        assertEquals(listOf("/2026-08-18" to "b".repeat(64), "/2026-08-17" to "a".repeat(64)), published.paths(reader))
-    }
-
-    @Test
-    fun `republishing a day corrects it rather than duplicating it`(
-        @TempDir dir: Path,
-    ) {
-        val published = Published(Db(dir.resolve("p.db").toString()))
-        val reader = "8".repeat(64)
-        published.record(reader, "2026-08-18", "a".repeat(64), "n", listOf("https://one.example.com"))
-        published.record(reader, "2026-08-18", "b".repeat(64), "n", listOf("https://two.example.com"))
-
-        assertEquals(1, published.of(reader).size)
-        assertEquals("b".repeat(64), published.of(reader).first().sha256)
     }
 }
 

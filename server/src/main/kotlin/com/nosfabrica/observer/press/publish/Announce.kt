@@ -60,37 +60,95 @@ class Announce(
         val message: String,
     )
 
-    /** Does this reader already have a site under our `d` tag, and what is in it? */
+    /**
+     * The reader's site, and whether we actually got to look.
+     *
+     * THE WHOLE ARCHIVE IS THIS EVENT. A `kind 35128` carries every path the
+     * reader has published — `/index.html`, `/2026-08-18`, and every day before
+     * it — and it REPLACES on publish. So the difference between "you have no
+     * site" and "we could not read your site" is the difference between a first
+     * publish and deleting somebody's back catalogue, and it cannot be a
+     * guess: [Missing] is a relay saying there is nothing, and [Unreadable] is
+     * a relay saying nothing.
+     */
+    sealed interface Site {
+        /** They have one, with every path it names. */
+        data class Found(
+            val site: NamedSiteEvent,
+        ) : Site
+
+        /** Relays answered, and there is no site yet. A first publish. */
+        data object Missing : Site
+
+        /** Nobody answered. We do not know, so nothing may be replaced. */
+        data object Unreadable : Site
+    }
+
     suspend fun existing(
         pubkey: String,
         hosts: List<String>,
-    ): NamedSiteEvent? {
-        val events =
-            anyOf(
-                hosts,
-                Filter(
-                    kinds = listOf(NamedSiteEvent.KIND),
-                    authors = listOf(pubkey),
-                    tags = mapOf("d" to listOf(Templates.SITE)),
-                ),
+    ): Site {
+        // ASKED WITH A CANARY, because an unreachable relay is indistinguishable
+        // from an empty one.
+        //
+        // The first version of this read the manifest alone and called silence
+        // `Unreadable`. It does not work, and a test caught it: quartz answers a
+        // host it cannot reach with an empty list rather than an error, so a
+        // dead relay and a reader who has never published produce byte-identical
+        // results. Timeouts, refused connections and bad DNS all arrive as
+        // "nothing here".
+        //
+        // So the read also asks for the small replaceable events every Nostr
+        // account has — profile, relay list, server list. One of them coming
+        // back proves the host is answering, and an absent manifest beside a
+        // present profile is a real absence. Nothing at all, from any of their
+        // relays, means we are talking to nobody.
+        val mine = hosts.take(3).distinct()
+        val filter =
+            Filter(
+                kinds = listOf(NamedSiteEvent.KIND, BlossomServersEvent.KIND, RELAY_LIST, PROFILE),
+                authors = listOf(pubkey),
             )
-        val newest = events.maxByOrNull { it.createdAt } ?: return null
-        return NamedSiteEvent(newest.id, newest.pubKey, newest.createdAt, newest.tags, newest.content, newest.sig)
+
+        // THEIR hosts are the witnesses, not ours. Our search relay is always up
+        // and holds a profile for anybody in the corpus, so letting it vouch
+        // would make the canary sing no matter what.
+        val theirs = eachOf(mine, filter)
+        if (theirs.isEmpty() || theirs.all { it.isEmpty() }) return Site.Unreadable
+
+        // Ours is still worth reading for the manifest itself — it may hold a
+        // copy theirs has dropped — but only now that the question is known to
+        // be answerable.
+        val ours = runCatching { relays.fetch(readRelay, filter, idle = 10_000) }.getOrDefault(emptyList())
+        val newest =
+            (theirs.flatten() + ours)
+                .filter { it.kind == NamedSiteEvent.KIND && named(it) }
+                .maxByOrNull { it.createdAt }
+                ?: return Site.Missing
+        return Site.Found(NamedSiteEvent(newest.id, newest.pubKey, newest.createdAt, newest.tags, newest.content, newest.sig))
     }
 
-    // The reader's own relays and ours, asked together: a 10063 lives where they
-    // put it and the search relay mirrors only the kinds it was asked to, so we
-    // need every answer anyway. Asked in series, four hosts meant four idle
-    // windows -- forty seconds to read one small event.
-    private suspend fun anyOf(
+    /** Our site, and not another nsite the reader happens to keep. */
+    private fun named(event: Event) = event.tags.any { it.size > 1 && it[0] == "d" && it[1] == Templates.SITE }
+
+    /**
+     * One list per host, so a caller can tell which of them said anything.
+     *
+     * Asked at once: these are independent hosts and three of them in series is
+     * three idle windows, thirty seconds to read one small event.
+     */
+    private suspend fun eachOf(
         hosts: List<String>,
         filter: Filter,
-    ): List<Event> =
+    ): List<List<Event>> =
         coroutineScope {
-            (hosts.take(3) + readRelay)
-                .distinct()
+            hosts
                 .map { host -> async { runCatching { relays.fetch(host, filter, idle = 10_000) }.getOrDefault(emptyList()) } }
                 .awaitAll()
-                .flatten()
         }
+
+    private companion object {
+        const val RELAY_LIST = 10002
+        const val PROFILE = 0
+    }
 }

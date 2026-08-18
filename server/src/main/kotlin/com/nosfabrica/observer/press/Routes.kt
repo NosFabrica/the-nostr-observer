@@ -5,6 +5,7 @@ import com.nosfabrica.observer.nostr.Names
 import com.nosfabrica.observer.nostr.Readiness
 import com.nosfabrica.observer.press.auth.Sessions
 import com.nosfabrica.observer.press.auth.SignIn
+import com.nosfabrica.observer.press.publish.Announce
 import com.nosfabrica.observer.press.publish.Countersign
 import com.nosfabrica.observer.press.publish.Pendings
 import com.nosfabrica.observer.press.publish.Templates
@@ -244,7 +245,15 @@ fun Application.routes(app: App) {
                 app.press.storage(
                     session.pubkey,
                     facts.writeRelays.orEmpty(),
-                    publishedBefore = app.published.of(session.pubkey).isNotEmpty(),
+                    // From their own site event. Null when we could not read
+                    // it, which is honestly "we do not know" and draws the same
+                    // chain as a reader who has never published.
+                    publishedBefore =
+                        when (app.announce.existing(session.pubkey, facts.writeRelays.orEmpty())) {
+                            is Announce.Site.Found -> true
+                            Announce.Site.Missing -> false
+                            Announce.Site.Unreadable -> null
+                        },
                 )
             call.respond(
                 Preflight(
@@ -353,23 +362,38 @@ fun Application.routes(app: App) {
             val sha = draft.sha256 ?: return@post call.respond(HttpStatusCode.Conflict, Problem("draft has no hash"))
             val now = Instant.now().epochSecond
             val day = DAY.format(Instant.ofEpochSecond(now).atOffset(ZoneOffset.UTC))
-            // The archive, from THEIR copy as well as ours.
+            // THE ARCHIVE IS THEIRS, AND IT IS THE ONLY COPY.
             //
-            // A kind 35128 replaces, so the manifest must carry every day the
-            // reader has ever published. Rebuilding it from our index alone made
-            // our database the sole record of their archive: lose it, or move
-            // them to another deployment, and the next publish silently deletes
-            // every earlier edition. Their own site event is the durable copy,
-            // so it is merged in and ours only fills the gaps.
-            val theirs =
-                app.announce
-                    .existing(session.pubkey, writeRelays)
+            // A kind 35128 replaces rather than appends, so the manifest we
+            // build has to carry every day the reader has ever published. That
+            // list used to be rebuilt from a table of our own, which made this
+            // deployment's database the record of somebody else's archive:
+            // lose it, or move them to another instance, and the next publish
+            // silently deleted every earlier edition. Their own site event
+            // already carries all of it, so the table is gone and this is the
+            // source.
+            //
+            // Which makes the read a precondition rather than an enrichment.
+            // Silence from every relay is NOT an empty archive, and treating it
+            // as one is exactly how the back catalogue disappears — so we stop.
+            val theirs = app.announce.existing(session.pubkey, writeRelays)
+            if (theirs is Announce.Site.Unreadable) {
+                return@post call.respond(
+                    HttpStatusCode.ServiceUnavailable,
+                    Problem(
+                        "We could not reach your relays to see what you have already published. Publishing " +
+                            "now would replace your whole archive with today's paper, so nothing has been " +
+                            "sent. Try again in a moment.",
+                    ),
+                )
+            }
+            val already =
+                (theirs as? Announce.Site.Found)
+                    ?.site
                     ?.paths()
                     ?.map { it.path to it.hash }
                     .orEmpty()
-            val paths =
-                (listOf("/index.html" to sha, "/$day" to sha) + app.published.paths(session.pubkey) + theirs)
-                    .distinctBy { it.first }
+            val paths = (listOf("/index.html" to sha, "/$day" to sha) + already).distinctBy { it.first }
 
             val upload = Templates.uploadAuth(sha, blob.size.toLong(), now, now + 600)
             val manifest =
@@ -442,10 +466,9 @@ fun Application.routes(app: App) {
             // Stored as the `a`-tag coordinate, which is what it is; shown as
             // `naddr1…`, which is what a person can paste. Neither is hex on a
             // screen.
+            // Nothing is recorded. The manifest we just published IS the record,
+            // it is on the reader's own relays, and it outlives this server.
             val naddr = "35128:${session.pubkey}:${Templates.SITE}"
-            if (announced.any { it.ok }) {
-                app.published.record(session.pubkey, pending.day, pending.sha, naddr, pending.servers)
-            }
             app.pending.remove(draft.id)
 
             call.respond(

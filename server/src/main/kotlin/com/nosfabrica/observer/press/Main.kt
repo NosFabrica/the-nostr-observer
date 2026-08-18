@@ -12,7 +12,6 @@ import com.nosfabrica.observer.press.publish.Pendings
 import com.nosfabrica.observer.press.store.Continuities
 import com.nosfabrica.observer.press.store.Db
 import com.nosfabrica.observer.press.store.Drafts
-import com.nosfabrica.observer.press.store.Published
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.netty.Netty
 import kotlinx.coroutines.CoroutineScope
@@ -75,7 +74,6 @@ class App(
     val signIn = SignIn()
     val drafts = Drafts(db)
     val continuities = Continuities(db)
-    val published = Published(db)
     val blossom = Blossom()
     val press = Press(relays, config.searchRelay, effort(config.effort))
     val announce = Announce(relays, config.searchRelay, press)
