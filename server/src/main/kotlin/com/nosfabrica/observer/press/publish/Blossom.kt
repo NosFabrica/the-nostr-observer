@@ -2,6 +2,7 @@ package com.nosfabrica.observer.press.publish
 
 import com.vitorpamplona.quartz.nip01Core.core.Event
 import com.vitorpamplona.quartz.nipB7Blossom.BlossomAuthorizationEvent
+import com.vitorpamplona.quartz.nipB7Blossom.BlossomPaymentRequired
 import com.vitorpamplona.quartz.nipB7Blossom.BlossomServerUrl
 import com.vitorpamplona.quartz.nipB7Blossom.BlossomUploadResult
 import kotlinx.coroutines.Dispatchers
@@ -96,7 +97,7 @@ class Blossom(
         val request =
             Request
                 .Builder()
-                .url(base + BlossomServerUrl.UPLOAD_PATH)
+                .url(BlossomServerUrl.upload(base))
                 .put(blob.toRequestBody("text/html".toMediaType()))
                 .header("Authorization", header)
                 .build()
@@ -105,13 +106,33 @@ class Blossom(
             http.newCall(request).execute().use { response ->
                 val body = response.body?.string().orEmpty()
                 if (!response.isSuccessful) {
-                    // A Blossom server that refuses says why in the body, and
-                    // that sentence is the only thing that will tell a reader
-                    // whether they need a different server or a bigger plan.
+                    // WHY IT REFUSED, from where a Blossom server actually puts
+                    // it. This read the body only, and said in a comment that
+                    // the server's own sentence is the thing that tells a reader
+                    // whether they need a different server or a bigger plan --
+                    // while a refusing server puts that sentence in the
+                    // `X-Reason` HEADER and is entitled to send an empty body.
+                    // The promise was in the comment and not in the code.
+                    val reason = response.header(BlossomServerUrl.REASON_HEADER)?.takeIf { it.isNotBlank() }
+
+                    // BUD-07: a paid server answers 402 with its terms in the
+                    // headers. "HTTP 402" tells a reader nothing they can act
+                    // on; "this server wants paying" tells them to use another.
+                    if (response.code == 402) {
+                        val wants = BlossomPaymentRequired.fromHeaders { response.header(it) }
+                        return@use Upload(
+                            server = server,
+                            ok = false,
+                            detail =
+                                "wants payment before it will store anything" +
+                                    (wants.sanitizedReason(120)?.let { ": $it" } ?: reason?.let { ": $it" } ?: ""),
+                        )
+                    }
+
                     return@use Upload(
                         server = server,
                         ok = false,
-                        detail = "HTTP ${response.code}: ${body.take(200).ifBlank { "no reason given" }}",
+                        detail = "HTTP ${response.code}: ${reason ?: body.take(200).ifBlank { "no reason given" }}",
                     )
                 }
 

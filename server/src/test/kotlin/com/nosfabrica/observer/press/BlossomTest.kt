@@ -48,6 +48,7 @@ class BlossomTest {
 
     private fun serve(
         seen: Seen,
+        headers: Map<String, String> = emptyMap(),
         answer: (Seen) -> Pair<Int, String>,
     ): HttpServer =
         HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0).apply {
@@ -56,6 +57,7 @@ class BlossomTest {
                 seen.contentType = exchange.requestHeaders.getFirst("Content-Type")
                 seen.body = exchange.requestBody.readBytes()
                 val (code, text) = answer(seen)
+                headers.forEach { (name, value) -> exchange.responseHeaders.add(name, value) }
                 exchange.sendResponseHeaders(code, text.toByteArray().size.toLong())
                 exchange.responseBody.use { it.write(text.toByteArray()) }
             }
@@ -93,7 +95,7 @@ class BlossomTest {
     fun `a real server accepts what we send it`() =
         runTest {
             val seen = Seen()
-            val server = serve(seen, ::accept)
+            val server = serve(seen, answer = ::accept)
             try {
                 val blob = "<main>today's paper</main>".toByteArray()
                 val results = Blossom().upload(listOf(url(server)), blob, authFor(blob))
@@ -116,7 +118,7 @@ class BlossomTest {
             // one blob with another blob's body, a correct server would refuse and
             // we would want to have known.
             val seen = Seen()
-            val server = serve(seen, ::accept)
+            val server = serve(seen, answer = ::accept)
             try {
                 val signed = authFor("one page".toByteArray())
                 val results = Blossom().upload(listOf(url(server)), "a different page".toByteArray(), signed)
@@ -135,7 +137,7 @@ class BlossomTest {
             // other two go away.
             val good = Seen()
             val bad = Seen()
-            val ok = serve(good, ::accept)
+            val ok = serve(good, answer = ::accept)
             val broken = serve(bad) { 507 to "Insufficient Storage" }
             try {
                 val blob = "<main>today</main>".toByteArray()
@@ -212,6 +214,47 @@ class BlossomTest {
                 val result = Blossom().upload(listOf(url(server)), blob, authFor(blob)).single()
                 assertTrue(result.ok, result.detail)
                 assertNull(result.url)
+            } finally {
+                server.stop(0)
+            }
+        }
+
+    @Test
+    fun `a refusal in the X-Reason header is the reason we report`() =
+        runTest {
+            // Where a Blossom server actually puts it. This code read the body
+            // only, and claimed in a comment to be reporting "the server's own
+            // words" -- while a refusing server is entitled to send an empty
+            // body and put the sentence in this header.
+            val seen = Seen()
+            val server = serve(seen, mapOf("X-Reason" to "file too large for the free plan")) { 413 to "" }
+            try {
+                val blob = "<main>today</main>".toByteArray()
+                val result = Blossom().upload(listOf(url(server)), blob, authFor(blob)).single()
+                assertFalse(result.ok)
+                assertTrue(result.detail.contains("file too large for the free plan"), result.detail)
+            } finally {
+                server.stop(0)
+            }
+        }
+
+    @Test
+    fun `a paid server says so, rather than saying 402`() =
+        runTest {
+            // BUD-07. "HTTP 402" tells a reader nothing they can act on; that
+            // the server wants paying tells them to publish somewhere else.
+            val seen = Seen()
+            val server =
+                serve(
+                    seen,
+                    mapOf("X-Reason" to "1000 sats per upload", "X-Lightning" to "lnbc10u1p..."),
+                ) { 402 to "" }
+            try {
+                val blob = "<main>today</main>".toByteArray()
+                val result = Blossom().upload(listOf(url(server)), blob, authFor(blob)).single()
+                assertFalse(result.ok)
+                assertTrue(result.detail.contains("wants payment"), result.detail)
+                assertTrue(result.detail.contains("1000 sats"), result.detail)
             } finally {
                 server.stop(0)
             }
