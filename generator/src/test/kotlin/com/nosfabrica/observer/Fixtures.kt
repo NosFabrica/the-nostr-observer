@@ -80,9 +80,6 @@ object Fixtures {
                 MALLORY to Byline(MALLORY, 1, "Mallory", null),
             )
         return Corpus(
-            lens =
-                com.nosfabrica.observer.nostr.Lens
-                    .Trusted(OBSERVER),
             observer = OBSERVER,
             since = 1_786_800_000,
             until = 1_786_900_000,

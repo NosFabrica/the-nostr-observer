@@ -10,11 +10,16 @@ import org.junit.jupiter.api.Test
 /**
  * The REQ that was too big to answer.
  *
- * A provisional edition asks nine desks for the same 600 authors, which is
- * about 353 KB of filter in one frame. `search-staging` advertises a 262144
- * byte cap and enforces it by dropping the frame in silence — no NOTICE, no
- * CLOSED — so the whole edition came back empty while every one of those
- * queries answered fine on its own. Nothing about the symptom pointed at size.
+ * An edition once asked nine desks for the same 600 authors, which is about
+ * 353 KB of filter in one frame. `search-staging` advertises a 262144 byte cap
+ * and enforces it by dropping the frame in silence — no NOTICE, no CLOSED — so
+ * the whole edition came back empty while every one of those queries answered
+ * fine on its own. Nothing about the symptom pointed at size.
+ *
+ * That caller was the provisional lens and it has been removed, so these tests
+ * are now the ONLY thing exercising the split. They are kept for that reason:
+ * the relay's limit did not go away with the caller, and the next filter big
+ * enough to hit it would fail exactly as silently.
  */
 class RelaysTest {
     private fun authors(n: Int) = (0 until n).map { "%064x".format(it) }
@@ -26,7 +31,7 @@ class RelaysTest {
     }
 
     @Test
-    fun `a provisional edition does not fit in one frame`() {
+    fun `a large author filter does not fit in one frame`() {
         // The exact shape that failed: nine desks, 600 authors each.
         val filters = List(9) { Filter(kinds = listOf(it), since = 1, limit = 50, authors = authors(600)) }
         val batches = Relays.batches(filters)

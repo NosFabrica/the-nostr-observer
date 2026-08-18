@@ -41,6 +41,17 @@ API key. A full run reads `ANTHROPIC_API_KEY` from the environment.
 
 ## Settled — do not relitigate without a reason
 
+- **There is no fallback lens.** A reader without a resolvable `kind 10040` gets
+  the readiness chain and a wait, not a paper. The provisional lens — follows
+  plus follows-of-follows, ranked by recency — was built for the 4.5% finding
+  and removed on 2026-08-18: it showed a first-time reader the one version of
+  the product that cannot demonstrate what the product is for (measured overlap
+  with the unranked control: 0 of 400, where a real lens gives 1 of 400), and it
+  read up to 120 strangers' follow lists off other people's relays to do it.
+  `observer:<pk> sort:rank` with an unresolvable token does not error — it
+  silently becomes the anonymous ranking — so the readiness chain is the gate,
+  and `Press` refuses with `NO_LENS` rather than building a corpus another way.
+
 - **Nostr goes through quartz. All of it.** `NostrClient` + the `fetchAll` and
   `count` accessories, `Filter`, `Event`, `AdvertisedRelayListEvent`,
   `ServiceProviderTag`, `MetadataEvent`, NIP-19 decoding. The generator once
@@ -97,10 +108,12 @@ API key. A full run reads `ANTHROPIC_API_KEY` from the environment.
 - **A REQ over `max_message_length` is dropped in silence.** `search-staging`
   advertises 262144 bytes and enforces it with no NOTICE and no CLOSED: the
   subscription stays open saying nothing, the idle timer expires, and quartz
-  reports an empty list. A provisional edition — nine desks × 600 author
-  pubkeys, ~353 KB — returned zero events this way while every one of those
+  reports an empty list. An edition built from a 600-pubkey author list across
+  nine desks — ~353 KB — returned zero events this way while every one of those
   queries answered normally on its own. Six desks at 235 KB answered; nine at
-  353 KB did not. `Relays.batches` splits under a budget now.
+  353 KB did not. `Relays.batches` splits under a budget. That caller has since
+  been removed with the provisional lens, so the split is now a guard nothing
+  exercises in production.
 - **Read NIP-11 before theorising about a relay.** `limitation` states the
   message cap, filter count, subscription count and default limit. All of the
   above was one `curl -H "Accept: application/nostr+json"` away.

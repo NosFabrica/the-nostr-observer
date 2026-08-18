@@ -102,9 +102,15 @@ async function readiness() {
     chain.append(li);
   }
   panel.append(chain);
-  // Without a lens the ranked paper is not available, so the provisional box is
-  // the only thing that can produce an edition -- tick it for them.
-  if (!v.ranks) $("provisional").checked = true;
+  // No lens, no ranked paper. The button says so rather than producing
+  // something built a different way and calling it the reader's paper.
+  $("generate").disabled = !v.ranks;
+  if (!v.ranks) {
+    const waiting = document.createElement("p");
+    waiting.className = "waiting";
+    waiting.textContent = "We will tell you as soon as your lens is ready.";
+    panel.append(waiting);
+  }
 }
 
 // ------------------------------------------------------------- generating
@@ -113,8 +119,7 @@ async function generate() {
   $("generate").disabled = true;
   $("result").hidden = true;
   $("progress").innerHTML = "";
-  const provisional = $("provisional").checked ? "?provisional=true" : "";
-  const res = await fetch("/api/editions" + provisional, { method: "POST" });
+  const res = await fetch("/api/editions", { method: "POST" });
   const data = await res.json();
   if (!res.ok) {
     $("generate").disabled = false;
@@ -182,7 +187,7 @@ function showEdition(summary) {
 
   const stat = document.createElement("p");
   stat.textContent =
-    `${summary.events} posts from ${summary.voices} people, through your ${summary.lens}. ` +
+    `${summary.events} posts from ${summary.voices} people, through your web of trust. ` +
     `Of the ${summary.control} posts an unranked read returned for the same window, ${summary.overlap} made it in.`;
   panel.append(stat);
 

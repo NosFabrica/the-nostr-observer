@@ -162,7 +162,7 @@ it sets, so on the published copy the sanitizer is the only protection there is.
 
 | Stage | What it does | Status |
 |---|---|---|
-| Pre-flight | The lens readiness chain, gathered live and decided by the port. Falls back to a provisional lens rather than an empty page | built |
+| Pre-flight | The lens readiness chain, gathered live and decided by the port. No lens, no edition — the chain says which link is unmet | built |
 | Pull | One websocket, `REQ` per kind, `since` = 24h, `search: "observer:<pk> sort:rank"`. Kinds 1, 20, 1063, 9802, 30023, 30402, 30818, 31923, 32267 | proven |
 | Identify | Batch `kind 0` for every author seen, 100 per REQ, newest wins | proven |
 | Control run | Same query, observer token removed — the "Instrument" panel. A relay query, not a model call | proven |
@@ -421,9 +421,9 @@ image id — asserted to produce a clean page.
 dependency. Port `readiness.js`; build the onboarding that mints a provider
 identity on the NosFabrica scoring service, has the user sign a `10040` naming
 it, and then waits. Scoring is asynchronous, so design for the wait: a progress
-panel driven by the readiness state machine, and a **provisional edition** built
-from the reader's `kind 3` follows and follows-of-follows, labelled as
-provisional. Nobody should ever see an empty paper.
+panel driven by the readiness state machine. *(A **provisional edition** built
+from the reader's `kind 3` follows was built here and later removed — see the
+Phase 3 postscript for why.)*
 
 **Phase 3 — Sign in, generate, publish.** NIP-07 and NIP-46 sign-in, the private
 preview, the masthead continuity record, and the publish flow: 24242 upload,
@@ -440,7 +440,7 @@ through normal clients as well as the nsite.
 
 | Sev | Risk | Response |
 |---|---|---|
-| 1 | Lens provisioning does not scale. One provider key per observer means onboarding is real compute, not a signature. | Establish the true cost and latency of scoring one new observer *before* Phase 3. Provisional editions cover the wait. |
+| 1 | Lens provisioning does not scale. One provider key per observer means onboarding is real compute, not a signature. | **Open, and now the only thing between a new reader and a paper** — the provisional fallback that used to cover the wait has been removed. Establish the true cost and latency of scoring one new observer. |
 | 2 | A published page carries a fabricated quote or injected headline under a real person's name — signed by the reader, on their server, unretractable. | Validator gates the publish button, not just the render. Adversarial fixture in CI from Phase 1. |
 | 3 | Signing friction kills the loop. Login is mandatory and publishing needs two more signatures; the NIP-46 mobile path is known-awkward. | Prototype the full mobile signer path in Phase 3 before building on it. Generate-then-publish, never publish-to-see. |
 | 4 | No shareable editions exist at launch, so a stranger has nothing to look at. | Seed real editions from consenting accounts. The shared paper is the only demo now. |
@@ -493,11 +493,12 @@ the old shape.
 Building the readiness probe corrected four things this plan had guessed at. All
 four are in `AGENTS.md` with their date.
 
-1. **The search relay holds no kind 3.** A provisional lens built against it
+1. **The search relay holds no kind 3.** A follow-list lens built against it
    degrades to "just the reader" for everybody, silently — it did exactly that on
-   the first live run and looked like a reader with no friends. Follow lists come
-   from the reader's own write relays instead, discovered through the kind 10002
-   the store *does* mirror.
+   the first live run and looked like a reader with no friends. Follow lists had
+   to come from the reader's own write relays, discovered through the kind 10002
+   the store *does* mirror. *(Moot now: that lens has been removed. Kept as a
+   measured fact about the store, which is still true.)*
 2. **NIP-45 COUNT answers** on both the search relay and the provider relay, so
    link 3's import percentage is measured rather than guessed. For the prototype
    observer: 149,171 of 149,266 cards, 99.9%.
@@ -511,6 +512,7 @@ four are in `AGENTS.md` with their date.
 
 The provisional lens works: a reader with no `kind 10040` at all now gets 1,015
 follows and 7,449 vouched-for strangers, capped to 600 authors, and a real paper.
+*(Removed in Phase 3 — see the last postscript.)*
 
 ---
 
@@ -536,7 +538,7 @@ the paper** — the same figure the prototype edition was built on.
 
 The second find was a REQ 353 KB long. Nine desks each carrying 600 author
 pubkeys exceeds the 262144-byte `max_message_length` the relay advertises, and an
-oversized frame is dropped with no NOTICE and no CLOSED, so a provisional edition
+oversized frame is dropped with no NOTICE and no CLOSED, so that edition
 came back with zero events while every one of those queries answered normally on
 its own. `Relays.batches` splits a filter list under a budget and throws on a
 single filter too big to send, because the alternative to a stack trace here is a
@@ -592,3 +594,45 @@ from Anthropic, cleanly, as a FAILED draft. Everything before it is verified
 live — a fresh key signs in, the readiness chain answers `no-relay-list` for it,
 and a job for the prototype observer read 742 posts from 247 people with 1 of
 400 control notes overlapping.
+
+---
+
+## Postscript: removing the provisional lens
+
+Built in Phase 2 for the 11-of-244 finding, removed on 18 August 2026. Written
+down because the reasoning that justified it was sound and what changed was the
+product around it, not the measurement.
+
+**Login was decided after it.** The provisional lens was designed when anyone
+could request any npub's paper, so a stranger with no lens could arrive cold and
+had to see *something*. That person no longer exists: generation requires a
+sign-in, and since minting a lens is an operator step anyway, a reader without
+one is already someone a human is about to onboard.
+
+**It showed the wrong product first.** It was recency over follows and
+follows-of-follows, and its own KDoc said it was "worse and honest about it".
+The thesis of this project is the gap between the ranked view and the unranked
+one — 1 of 400 events overlapping. The one measurement taken of the provisional
+path put that overlap at **0 of 400**: not a weaker version of the claim, just
+not the claim. A first-time reader would have formed their impression from the
+one edition that cannot show what the product is for.
+
+**It was the most expensive thing in the tree per unit of value.** It brought
+`Follows` and its two-hop vouching, the `authors` branch in `Pull`, a CLI flag,
+a checkbox, a refusal state, and the REQ-size splitting in `Relays` — nine desks
+× 600 pubkeys was the only thing here that ever built a 353 KB frame. It also
+read up to 120 strangers' follow lists off other people's relays, which is the
+cost this project is otherwise most careful about.
+
+What replaces it is what was already there: the readiness chain says which link
+is unmet, in a sentence written for a person, and `Press` refuses with
+`NO_LENS`. The console disables the button and says we will tell them when the
+lens is ready.
+
+`Relays.batches` was kept. The relay's 262144-byte cap is real and exceeding it
+fails silently, so the guard outlives the caller that found it — but nothing on
+a live path now approaches it, and its tests are the only thing exercising it.
+
+This makes open question #1 — whether `nip85.nosfabrica.com` can onboard
+observers on demand — the whole critical path. There is no longer anything
+between a new reader and an empty screen except that service.

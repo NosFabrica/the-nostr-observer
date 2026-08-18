@@ -31,7 +31,6 @@ data class Line(
 
 @Serializable
 data class Summary(
-    val lens: String,
     val events: Int,
     val voices: Int,
     val control: Int,
@@ -58,10 +57,7 @@ class Editions(
     private val json = Json { encodeDefaults = true }
     private val running = java.util.concurrent.ConcurrentHashMap<String, String>()
 
-    fun start(
-        pubkey: String,
-        forceProvisional: Boolean,
-    ): String {
+    fun start(pubkey: String): String {
         var started: String? = null
 
         // compute(), not get-then-put. Check-then-act here is a race between two
@@ -80,14 +76,13 @@ class Editions(
         // Launched outside compute: the mapping function must be short and must
         // not call back into the map, and a coroutine that finishes fast enough
         // to call running.remove() from inside it would deadlock.
-        started?.let { fresh -> scope.launch(Dispatchers.IO) { run(fresh, pubkey, forceProvisional) } }
+        started?.let { fresh -> scope.launch(Dispatchers.IO) { run(fresh, pubkey) } }
         return id
     }
 
     private suspend fun run(
         id: String,
         pubkey: String,
-        forceProvisional: Boolean,
     ) {
         val lines = mutableListOf<Line>()
 
@@ -105,7 +100,6 @@ class Editions(
                     observer = pubkey,
                     until = Instant.now().epochSecond,
                     continuity = continuities.of(pubkey),
-                    forceProvisional = forceProvisional,
                 ) { step ->
                     val (text, detail) = describe(step)
                     say(text, detail)
@@ -114,7 +108,6 @@ class Editions(
             val blob = edition.html.toByteArray()
             val summary =
                 Summary(
-                    lens = edition.lens.label,
                     events = edition.corpus.all().size,
                     voices =
                         edition.corpus
@@ -171,13 +164,6 @@ class Editions(
 
             is Press.Step.Lensed -> {
                 pair("Lens: ${step.verdict.state}", Readiness.explain(step.verdict))
-            }
-
-            is Press.Step.Provisional -> {
-                pair(
-                    "Building a provisional lens",
-                    "${step.lens.direct} follows and ${step.lens.extended} vouched-for strangers",
-                )
             }
 
             is Press.Step.Pulled -> {

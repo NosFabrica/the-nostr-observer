@@ -5,8 +5,6 @@ import com.nosfabrica.observer.corpus.Art
 import com.nosfabrica.observer.corpus.ArtDesk
 import com.nosfabrica.observer.corpus.Digest
 import com.nosfabrica.observer.nostr.Corpus
-import com.nosfabrica.observer.nostr.Follows
-import com.nosfabrica.observer.nostr.Lens
 import com.nosfabrica.observer.nostr.Readiness
 import com.nosfabrica.observer.nostr.ReadinessProbe
 import com.nosfabrica.observer.nostr.Relays
@@ -60,10 +58,6 @@ class Press(
             val verdict: Readiness.Verdict,
         ) : Step
 
-        data class Provisional(
-            val lens: Lens.Provisional,
-        ) : Step
-
         data class Pulled(
             val events: Int,
             val voices: Int,
@@ -106,14 +100,24 @@ class Press(
             /** The window held nothing. A real answer, and not a paper. */
             QUIET,
 
-            /** No lens and no follows either: there is nothing to rank and nothing to list. */
-            NO_SOURCE,
+            /**
+             * No usable lens, so there is no ranked paper to print.
+             *
+             * There used to be a fallback here: a provisional edition built from
+             * the reader's follows and follows-of-follows. It was removed. It
+             * produced a RECENCY feed and presented it as the product, so a
+             * first-time reader's first impression was the one version that
+             * cannot show what the product is for -- measured, an overlap of 0
+             * of 400 with the unranked control where a real lens gives 1. The
+             * readiness chain already says exactly which link is unmet, and that
+             * is a better answer than a paper that misrepresents itself.
+             */
+            NO_LENS,
         }
     }
 
     data class Edition(
         val observer: String,
-        val lens: Lens,
         val since: Long,
         val until: Long,
         val html: String,
@@ -158,7 +162,6 @@ class Press(
     suspend fun gather(
         observer: String,
         until: Long,
-        forceProvisional: Boolean = false,
         onStep: (Step) -> Unit = {},
     ): Triple<Corpus, List<Art>, Digest.Rendered> {
         val since = until - WINDOW_SECONDS
@@ -168,28 +171,20 @@ class Press(
         // silent by design: an unresolvable observer degrades to an anonymous
         // read, which on a measured window was 209 of 400 posts from one spam
         // account. Finding that out after the model call is finding it late.
-        val (facts, verdict) = readiness(observer, since)
+        val (_, verdict) = readiness(observer, since)
         onStep(Step.Lensed(verdict))
 
-        val lens =
-            if (verdict.ranks && !forceProvisional) {
-                Lens.Trusted(observer)
-            } else {
-                Follows(relays, searchRelay)
-                    .provisional(observer, facts.writeRelays.orEmpty())
-                    .also { onStep(Step.Provisional(it)) }
-            }
-        if (lens is Lens.Provisional && lens.direct == 0) {
-            throw Refused(
-                Refused.Reason.NO_SOURCE,
-                "No scoring service and no follow list either, so there is nobody to read.",
-            )
-        }
+        // The lens is a precondition, not a preference. Every filter this then
+        // sends carries `observer:<pk> sort:rank`, and that token resolving to
+        // nothing does not error -- it quietly becomes the anonymous ranking. So
+        // the chain is the gate, and a reader who has not cleared it is told
+        // which link is unmet rather than handed a paper built some other way.
+        if (!verdict.ranks) throw Refused(Refused.Reason.NO_LENS, Readiness.explain(verdict))
 
         val corpus =
             com.nosfabrica.observer.nostr
                 .Pull(relays, searchRelay)
-                .corpus(lens, observer, since, until)
+                .corpus(observer, since, until)
         onStep(
             Step.Pulled(
                 events = corpus.all().size,
@@ -216,7 +211,7 @@ class Press(
         if (corpus.notes.isEmpty()) {
             throw Refused(
                 Refused.Reason.QUIET,
-                "Nothing came back for this window through ${lens.label}. A quiet day is a real " +
+                "Nothing came back for this window through your web of trust. A quiet day is a real " +
                     "answer and a thin paper is the right response to it, but with zero notes there " +
                     "is no paper at all.",
             )
@@ -232,10 +227,9 @@ class Press(
         observer: String,
         until: Long,
         continuity: Continuity = Continuity(),
-        forceProvisional: Boolean = false,
         onStep: (Step) -> Unit = {},
     ): Edition {
-        val (corpus, art, digest) = gather(observer, until, forceProvisional, onStep)
+        val (corpus, art, digest) = gather(observer, until, onStep)
 
         onStep(Step.Writing)
         val draft = writer.write(corpus, digest, art, continuity)
@@ -249,7 +243,6 @@ class Press(
 
         return Edition(
             observer = observer,
-            lens = corpus.lens,
             since = corpus.since,
             until = corpus.until,
             html = sanitized.html,

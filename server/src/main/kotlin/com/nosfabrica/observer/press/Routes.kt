@@ -213,8 +213,7 @@ fun Application.routes(app: App) {
 
         post("/api/editions") {
             val session = signedIn(app) ?: return@post call.respond(HttpStatusCode.Unauthorized, Problem("not signed in"))
-            val provisional = call.request.queryParameters["provisional"] == "true"
-            call.respond(Started(app.editions.start(session.pubkey, provisional)))
+            call.respond(Started(app.editions.start(session.pubkey)))
         }
 
         get("/api/editions/{id}") {

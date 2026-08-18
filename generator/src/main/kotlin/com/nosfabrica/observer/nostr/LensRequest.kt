@@ -100,7 +100,7 @@ object LensRequest {
         const val EXPLANATION: String =
             "Minting a lens needs the scoring service to compute this reader's web of trust and publish " +
                 "kind 30382 cards for it. Neither nip85.nosfabrica.com nor scores.brainstorm.world exposes " +
-                "an API for that yet, so it is an operator step. Meanwhile the reader gets a provisional " +
-                "edition built from their own follow list."
+                "an API for that yet, so it is an operator step. Until it is done there is no ranked " +
+                "paper to print, and the readiness chain above says which link is unmet."
     }
 }

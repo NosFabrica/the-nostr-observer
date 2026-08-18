@@ -136,11 +136,20 @@ class Relays(
          * sits open saying nothing until the idle timer expires and quartz
          * reports what it heard, which is an empty list.
          *
-         * That is why this is a correctness fix and not a politeness one. A
-         * provisional lens is nine desks each carrying 600 author pubkeys — about
-         * 353 KB — so the entire edition came back empty while every single-desk
-         * query answered normally (measured 2026-08-17: six desks at 235 KB
-         * answered, nine at 353 KB returned nothing).
+         * That is why this is a correctness fix and not a politeness one. It
+         * was found the hard way: an edition built from a 600-pubkey author
+         * list across nine desks came to about 353 KB and returned zero events,
+         * while every one of those queries answered normally on its own
+         * (measured 2026-08-17: six desks at 235 KB answered, nine at 353 KB
+         * returned nothing).
+         *
+         * NOTE, 2026-08-18: that caller is gone. The provisional lens it
+         * belonged to was removed, and nothing on a live path now builds a
+         * frame anywhere near the cap — the largest is a profile fetch at
+         * roughly 27 KB. This is kept as a GUARD rather than deleted with it,
+         * because the limit is real, it is the relay's and not ours, and
+         * exceeding it fails silently. It is no longer exercised by use, so do
+         * not assume it is proven by anything except its own test.
          *
          * The budget is under the advertised cap because the cap is on the whole
          * frame: subscription id, brackets and commas are ours to leave room for.
@@ -154,10 +163,10 @@ class Relays(
          * Greedy split, in order. One filter per REQ at worst.
          *
          * A single filter over the budget throws rather than being sent to be
-         * silently dropped. It cannot happen from here — the provisional lens
-         * caps authors at 600, about 39 KB — so it means a caller has built
-         * something new, and the loud version of that is a stack trace at the
-         * boundary instead of a blank page an hour later.
+         * silently dropped. No caller in this codebase can currently reach that
+         * size, so it firing means somebody has built something new — and the
+         * loud version of that is a stack trace at the boundary instead of a
+         * blank page an hour later.
          */
         internal fun batches(
             filters: List<Filter>,

@@ -56,7 +56,6 @@ data class Byline(
 
 /** Everything one edition is written from. */
 data class Corpus(
-    val lens: Lens,
     val observer: String,
     val since: Long,
     val until: Long,
@@ -87,29 +86,22 @@ class Pull(
         kind: Int,
         since: Long,
         limit: Int,
-        lens: Lens?,
+        observer: String?,
     ): Filter =
-        when (lens) {
-            is Lens.Trusted -> {
-                Filter(kinds = listOf(kind), since = since, limit = limit, search = "observer:${lens.observer} sort:rank")
-            }
-
-            // No `search` at all on the provisional path. `sort:rank` without a
-            // resolvable observer is the failure this project exists to avoid:
-            // it degrades silently to the anonymous ranking, which on a measured
-            // window was 209 of 400 posts from one spam account. An authors
-            // filter asks a different question and gets an answer.
-            is Lens.Provisional -> {
-                Filter(kinds = listOf(kind), since = since, limit = limit, authors = lens.authors)
-            }
-
-            null -> {
-                Filter(kinds = listOf(kind), since = since, limit = limit, search = "sort:rank")
-            }
-        }
+        Filter(
+            kinds = listOf(kind),
+            since = since,
+            limit = limit,
+            // Null is the control run, and the difference between these two
+            // strings is the entire product. `sort:rank` without a resolvable
+            // observer does not fail: it silently becomes the anonymous
+            // ranking, which on a measured window was 209 of 400 posts from one
+            // spam account. That is why nothing gets here without a lens the
+            // readiness chain has already confirmed.
+            search = if (observer == null) "sort:rank" else "observer:$observer sort:rank",
+        )
 
     suspend fun corpus(
-        lens: Lens,
         observer: String,
         since: Long,
         until: Long,
@@ -126,7 +118,8 @@ class Pull(
         // series it added a whole idle window to every edition.
         val (all, control) =
             coroutineScope {
-                val desksAsked = async { relays.fetch(searchRelay, desks.map { filter(it.kind, since, it.limit, lens) }, idle = 25_000) }
+                val desksAsked =
+                    async { relays.fetch(searchRelay, desks.map { filter(it.kind, since, it.limit, observer) }, idle = 25_000) }
                 val controlAsked = async { controlRun(since) }
                 desksAsked.await() to controlAsked.await()
             }
@@ -137,7 +130,7 @@ class Pull(
         // names -- the Instrument panel prints the spammer's own text, and a hex
         // string there would hide what makes the comparison land.
         val keys = (all + control).map { it.pubKey }.distinct()
-        return Corpus(lens, observer, since, until, ranked, control, profiles(keys))
+        return Corpus(observer, since, until, ranked, control, profiles(keys))
     }
 
     /**

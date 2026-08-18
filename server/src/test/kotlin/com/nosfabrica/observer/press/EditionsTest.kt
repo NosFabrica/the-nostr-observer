@@ -51,7 +51,7 @@ class EditionsTest {
                 pool.submit<String> {
                     ready.countDown()
                     go.await()
-                    editions.start(reader, false)
+                    editions.start(reader)
                 }
             }
         ready.await()

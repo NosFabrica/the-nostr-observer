@@ -1,6 +1,5 @@
 package com.nosfabrica.observer
 
-import com.nosfabrica.observer.nostr.Lens
 import com.nosfabrica.observer.nostr.LensRequest
 import com.nosfabrica.observer.nostr.Readiness
 import com.nosfabrica.observer.nostr.Relays
@@ -13,11 +12,11 @@ import kotlin.system.exitProcess
 private const val DEFAULT_RELAY = "wss://search-staging.brainstorm.world"
 
 /** Flags that take no value. Everything else consumes the next argument. */
-private val BOOLEAN_FLAGS = setOf("--dry-run", "--check", "--provisional")
+private val BOOLEAN_FLAGS = setOf("--dry-run", "--check")
 
 private val USAGE =
     """
-    observer-press — print one edition
+    observer-press - print one edition
 
       observer-press <npub-or-hex> [options]
 
@@ -27,7 +26,6 @@ private val USAGE =
       --effort <lvl>   low | medium | high | xhigh | max (default high)
       --dry-run        pull, prune and shortlist, but do not call the model
       --check          report the readiness chain and stop
-      --provisional    skip the lens and build from the follow list instead
 
     Reads ANTHROPIC_API_KEY from the environment.
     """.trimIndent()
@@ -99,14 +97,13 @@ fun main(args: Array<String>) =
 
             try {
                 if (flags.containsKey("--dry-run")) {
-                    val (_, _, digest) =
-                        press.gather(observer, until, flags.containsKey("--provisional"), ::show)
+                    val (_, _, digest) = press.gather(observer, until, ::show)
                     out.writeText(digest.text)
                     step("Dry run - digest written to ${out.path}")
                     return@use
                 }
 
-                val edition = press.edition(observer, until, forceProvisional = flags.containsKey("--provisional"), onStep = ::show)
+                val edition = press.edition(observer, until, onStep = ::show)
                 out.writeText(edition.html)
                 step("Wrote ${out.path} (${edition.html.length} bytes)")
 
@@ -118,7 +115,12 @@ fun main(args: Array<String>) =
                     exitProcess(4)
                 }
             } catch (refused: Press.Refused) {
-                System.err.println("\n${refused.message}")
+                // NO_LENS is already on screen: `report` printed the whole chain
+                // and the sentence explaining the first unmet link. Repeating the
+                // message here said the same thing twice in different words.
+                if (refused.reason != Press.Refused.Reason.NO_LENS) {
+                    System.err.println("\n${refused.message}")
+                }
                 exitProcess(3)
             }
         }
@@ -132,15 +134,6 @@ private fun show(progress: Press.Step) {
 
         is Press.Step.Lensed -> {
             report(progress.verdict)
-        }
-
-        is Press.Step.Provisional -> {
-            val lens = progress.lens
-            if (lens.direct == 0) return
-            step(
-                "Provisional: ${lens.direct} follows, ${lens.extended} vouched-for strangers" +
-                    (if (lens.truncated) ", capped at ${lens.authors.size} authors" else ""),
-            )
         }
 
         is Press.Step.Pulled -> {
