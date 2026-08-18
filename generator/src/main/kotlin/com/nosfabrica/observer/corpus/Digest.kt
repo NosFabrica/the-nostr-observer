@@ -8,6 +8,7 @@ import com.nosfabrica.observer.nostr.value
 import com.nosfabrica.observer.nostr.values
 import com.vitorpamplona.quartz.nip01Core.core.Event
 import java.time.Instant
+import java.time.ZoneId
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 
@@ -146,6 +147,8 @@ class Digest(
         if (desk == Desk.HIGHLIGHTS) highlight(sb, event, corpus)
         if (desk == Desk.LIVE) live(sb, event)
         if (desk == Desk.POLLS) poll(sb, event)
+        if (desk == Desk.CALENDAR) calendar(sb, event)
+        if (desk == Desk.CLASSIFIEDS) classified(sb, event)
         event.value("location")?.let { sb.append("LOCATION: ").append(it.take(120)).append("\n") }
         // Length is most of what a reader needs to decide about a video, and
         // it is the one fact the body text never carries.
@@ -236,6 +239,95 @@ class Digest(
     }
 
     /**
+     * When it actually happens, which is the only reason a listing exists.
+     *
+     * THE BUG THIS FIXES: a calendar entry was rendered with its title, its
+     * location and its body and NO DATE. The one timestamp on the block was
+     * `created_at` — the moment somebody posted the listing — so the writer
+     * either dropped the entry or would have had to invent a day for it. Two
+     * real editions printed zero of twenty-eight calendar events between them,
+     * which was the right call on the text they were handed: "Lexington
+     * bitcoin meetup, at the Cellar Bar" is not news until it has a day.
+     *
+     * Measured 2026-08-18 over 100 real entries: 100 carried `start`, 100
+     * `start_tzid`, 97 `end`. All of it was being discarded.
+     *
+     * The time is printed in the ORGANISER's zone, not ours. A meetup at seven
+     * in the evening in Kentucky is not a meetup at 23:00, and the tzid is
+     * there precisely so nobody has to guess.
+     */
+    private fun calendar(
+        sb: StringBuilder,
+        event: Event,
+    ) {
+        val zone = runCatching { ZoneId.of(event.value("start_tzid") ?: "UTC") }.getOrElse { ZoneOffset.UTC }
+        val starts = event.value("start")?.let { moment(it, zone) }
+        if (starts == null) {
+            // Silence here is what lets the posting time stand in for the
+            // event time, so the absence is stated rather than left blank.
+            sb.append("WHEN: not stated — this listing has no date, do not give it one\n")
+            return
+        }
+        sb.append("WHEN: ").append(starts)
+        event.value("end")?.let { moment(it, zone) }?.let { sb.append(" until ").append(it) }
+        sb.append("\n")
+    }
+
+    /**
+     * A NIP-52 timestamp, in both shapes it comes in.
+     *
+     * Kind 31923 dates a moment in unix seconds; kind 31922 is the all-day
+     * half and writes a bare `YYYY-MM-DD` with no time and no zone. They share
+     * a desk, so reading only the first would drop every all-day entry while
+     * looking like it worked.
+     */
+    private fun moment(
+        raw: String,
+        zone: ZoneId,
+    ): String? =
+        raw.toLongOrNull()?.let { WHEN.format(Instant.ofEpochSecond(it).atZone(zone)) + " " + zone.id }
+            ?: raw.takeIf { DATE.matches(it) }?.plus(" (all day)")
+
+    /**
+     * What it costs, and whether it is still for sale.
+     *
+     * A classified is an OFFER and the offer was being dropped: price, status
+     * and condition are all tags, so the digest rendered a title, a body and no
+     * number. The one listing that reached a real edition was described as
+     * "super rare vintage" with no price attached, because there was no price
+     * to attach.
+     *
+     * NIP-99 writes `["price", "210000", "SATS"]`, with an optional fourth
+     * field naming a frequency for things rented rather than sold. Measured
+     * 2026-08-18 over 15 real listings: 18 price tags, 6 statuses, 3
+     * conditions.
+     */
+    private fun classified(
+        sb: StringBuilder,
+        event: Event,
+    ) {
+        event.values("price").firstOrNull()?.let { price ->
+            val amount = price.getOrNull(0)?.trim()?.takeIf { it.isNotBlank() } ?: return@let
+            sb.append("PRICE: ").append(amount.take(20))
+            price
+                .getOrNull(1)
+                ?.trim()
+                ?.takeIf { it.isNotBlank() }
+                ?.let { sb.append(" ").append(it.take(12)) }
+            price
+                .getOrNull(2)
+                ?.trim()
+                ?.takeIf { it.isNotBlank() }
+                ?.let { sb.append(" per ").append(it.take(12)) }
+            sb.append("\n")
+        }
+        // `sold` is the one that changes what may be written: a page that
+        // advertises a sold item sends readers after something that is gone.
+        event.value("status")?.takeIf { it.isNotBlank() }?.let { sb.append("STATUS: ").append(it.take(20)).append("\n") }
+        event.value("condition")?.takeIf { it.isNotBlank() }?.let { sb.append("CONDITION: ").append(it.take(20)).append("\n") }
+    }
+
+    /**
      * How much of an event's text the generator needs to judge it.
      *
      * Long-form is the case that matters: a 12,000-word essay contributes exactly
@@ -302,6 +394,12 @@ class Digest(
     // and Regex(...) inside the loop recompiles the pattern every time.
     private companion object {
         val BLANK_LINES = Regex("\n{3,}")
+
+        /** Day of week included: for a meetup that is most of what a reader wants. */
+        val WHEN: DateTimeFormatter = DateTimeFormatter.ofPattern("EEE yyyy-MM-dd HH:mm")
+
+        /** The all-day shape, and nothing looser -- a partial date is not a date. */
+        val DATE = Regex("""\d{4}-\d{2}-\d{2}""")
         val URL = Regex("""https?://\S+""")
         val WHITESPACE = Regex("""\s+""")
     }

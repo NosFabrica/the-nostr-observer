@@ -548,3 +548,112 @@ class BelongsTest {
         assertTrue(pull.belongs(Desk.LIVE, Fixtures.OBSERVER, listOf(mineLive)).isEmpty(), "my own stream is still mine")
     }
 }
+
+/**
+ * The two desks whose whole point is a fact stored in a tag.
+ *
+ * A calendar entry is a date and a classified is a price. Both were rendered
+ * with their title, their location and their body, and neither with the thing a
+ * reader would act on — so two real editions printed zero of twenty-eight
+ * calendar events between them, and described the one listing that made it as
+ * "super rare vintage" with no number attached.
+ *
+ * These tests all fail against that renderer, which is the only reason to
+ * believe they test anything.
+ */
+class ListingTest {
+    private fun render(
+        desk: Desk,
+        event: com.vitorpamplona.quartz.nip01Core.core.Event,
+    ) = Digest().render(Fixtures.corpus(listOf(event), desk), emptyList()).text
+
+    @Test
+    fun `a timed calendar entry says when, in the organiser's timezone`() {
+        // 1792105200 is 19:00 in New York and 23:00 UTC. Printing ours turns a
+        // seven-o'clock meetup into an eleven-o'clock one, and anything after
+        // eight moves to the following day outright.
+        val meetup =
+            Fixtures.event(
+                "c1",
+                Fixtures.ALICE,
+                "Come along",
+                kind = 31923,
+                tags =
+                    listOf(
+                        listOf("title", "Jersey City Bitcoin"),
+                        listOf("start", "1792105200"),
+                        listOf("start_tzid", "America/New_York"),
+                        listOf("end", "1792112400"),
+                    ),
+            )
+        val text = render(Desk.CALENDAR, meetup)
+        assertTrue(text.contains("WHEN: Thu 2026-10-15 19:00 America/New_York"), text)
+        assertTrue(text.contains("until Thu 2026-10-15 21:00"), "an end time is half of an evening: $text")
+    }
+
+    @Test
+    fun `an all-day entry keeps its date instead of vanishing`() {
+        // Kind 31922 writes a bare `YYYY-MM-DD`. Reading only unix seconds
+        // would drop every one of them while the timed half kept working.
+        val allDay =
+            Fixtures.event(
+                "c2",
+                Fixtures.ALICE,
+                "All weekend",
+                kind = 31922,
+                tags = listOf(listOf("title", "Nostrasia"), listOf("start", "2026-11-01")),
+            )
+        val text = render(Desk.CALENDAR, allDay)
+        assertTrue(text.contains("WHEN: 2026-11-01 (all day)"), text)
+    }
+
+    @Test
+    fun `a dateless entry says so, so the posting time cannot stand in for it`() {
+        val undated = Fixtures.event("c3", Fixtures.ALICE, "soon", kind = 31923, tags = listOf(listOf("title", "TBD")))
+        val text = render(Desk.CALENDAR, undated)
+        assertTrue(text.contains("WHEN: not stated"), text)
+    }
+
+    @Test
+    fun `a classified carries its price`() {
+        val listing =
+            Fixtures.event(
+                "s1",
+                Fixtures.ALICE,
+                "Two modules, boxed.",
+                kind = 30402,
+                tags =
+                    listOf(
+                        listOf("title", "Super rare Micron memory modules"),
+                        listOf("price", "210000", "SATS"),
+                        listOf("status", "active"),
+                        listOf("condition", "used"),
+                    ),
+            )
+        val text = render(Desk.CLASSIFIEDS, listing)
+        assertTrue(text.contains("PRICE: 210000 SATS"), text)
+        assertTrue(text.contains("STATUS: active"), text)
+        assertTrue(text.contains("CONDITION: used"), text)
+    }
+
+    @Test
+    fun `a rental says what the price is per`() {
+        val rental =
+            Fixtures.event(
+                "s2",
+                Fixtures.ALICE,
+                "Desk space",
+                kind = 30402,
+                tags = listOf(listOf("title", "Hot desk"), listOf("price", "50", "EUR", "day")),
+            )
+        assertTrue(render(Desk.CLASSIFIEDS, rental).contains("PRICE: 50 EUR per day"))
+    }
+
+    @Test
+    fun `a note is not given a date it does not have`() {
+        // The renderers are dispatched by desk. If that dispatch ever widened,
+        // an ordinary post carrying a stray `start` tag would grow a diary line.
+        val note = Fixtures.event("n1", Fixtures.ALICE, "hello", tags = listOf(listOf("start", "1792105200")))
+        assertFalse(render(Desk.NOTES, note).contains("WHEN:"))
+    }
+}

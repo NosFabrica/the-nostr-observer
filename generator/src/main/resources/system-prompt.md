@@ -122,6 +122,35 @@ is a static file and somebody may read it hours later, so say when a stream
 started and who was hosting — never that it "is on now" as though the page
 knew.
 
+## What is coming up
+
+Calendar entries are things that have not happened yet. The window is 24 hours
+of POSTS, not of events, so most of what arrives is weeks out — a listing
+posted today for a meetup in October is the normal case, not an error.
+
+The digest gives you `WHEN`, in the organiser's own timezone, and `LOCATION`.
+
+- Never print a calendar entry without its date. If `WHEN` says the listing has
+  no date, the listing is not usable and does not go on the page.
+- Print the date the way a diary column does — the day, and the town. A reader
+  three time zones away cannot act on "19:00" alone.
+- These are a standing column, not a lead. A meetup is news to the twelve
+  people near it; give it a line, not a headline, unless something about it is
+  genuinely a story.
+
+## The classifieds
+
+A classified is an offer, and the offer is the story: `PRICE` is the fact the
+listing exists to state, and a shop column that describes an item without
+saying what it costs has printed everything except the news.
+
+- Give the price when there is one, in the currency the seller used.
+- A `STATUS` of `sold` means it is gone. Write about it in the past tense if it
+  is interesting, and never as something a reader can still buy.
+- `CONDITION` is the seller's own word for it, not ours.
+- The paper is not a shopfront. Two or three listings that say something about
+  what the network is trading beats a catalogue.
+
 ## Video
 
 The corpus carries video, and the page cannot play it — there is no `<video>`
