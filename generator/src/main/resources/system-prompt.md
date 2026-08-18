@@ -71,7 +71,7 @@ Set them exactly like this, with nothing else in them:
 
     <div class="folio">
       <span>18 August 2026</span>
-      <span>554 of 11,106 surfaced</span>
+      <span>554 of 11,106 events</span>
       <span>234 voices</span>
     </div>
 
