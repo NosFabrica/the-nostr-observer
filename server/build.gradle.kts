@@ -55,3 +55,24 @@ tasks.test {
         showStandardStreams = true
     }
 }
+
+// The publish path against the real network, started by a person on purpose.
+// See LiveRun.kt: it writes to somebody else's relay and somebody else's media
+// server, so it is a main() in the test source set rather than a @Test -- out
+// of the shipped jar, and out of `./gradlew test`.
+tasks.register<JavaExec>("liveRun") {
+    group = "verification"
+    description = "Publish one already-generated page end to end, as a throwaway key."
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass.set("com.nosfabrica.observer.press.LiveRunKt")
+    args = ((project.findProperty("liveArgs") as String?) ?: "").split(" ").filter { it.isNotBlank() }
+}
+
+// Ask one media server whether it will take an edition. See BlossomProbe.kt.
+tasks.register<JavaExec>("blossomProbe") {
+    group = "verification"
+    description = "Ask a Blossom server which Content-Type it will accept for a page."
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass.set("com.nosfabrica.observer.press.BlossomProbeKt")
+    args = ((project.findProperty("liveArgs") as String?) ?: "").split(" ").filter { it.isNotBlank() }
+}

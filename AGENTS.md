@@ -148,9 +148,11 @@ API key. A full run reads `ANTHROPIC_API_KEY` from the environment.
   signature. Building the template server-side is what makes that check possible
   at all; a flow that just relays whatever the client invented has nothing to
   compare against.
-- **`kind 35128` replaces.** Every publish rebuilds the manifest from the full
-  archive in our own index. A manifest carrying only today is a manifest that
-  deleted every other day.
+- **`kind 35128` replaces — which is why each edition is its own site.** A `d`
+  of `observer-<date>` means a new day replaces nothing, so no publish has to
+  first read the archive and merge into it. That hazard (a read that came back
+  empty for the wrong reason deleting the back catalogue) is gone along with the
+  canary and the fail-closed refusal it needed.
 - **The manifest goes out only after a Blossom server has the blob.** A manifest
   pointing at a hash nobody stores is a 404 with a signature on it.
 - **NIP-46 runs on the server, NIP-07 in the browser.** A browser NIP-46 client
@@ -167,6 +169,31 @@ API key. A full run reads `ANTHROPIC_API_KEY` from the environment.
 - **An empty `kind 10063` is a hard stop, not a default.** Substituting a server
   of our own would make us the host of a page whose whole promise is that the
   reader hosts it.
+- **Half the Blossom servers a reader is likely to list will not host HTML**,
+  and that is policy rather than a bug: HTML served from their domain is script
+  on their domain. Measured 2026-08-18 with a throwaway key, uploading a real
+  36 KB edition (`./gradlew :server:blossomProbe`):
+
+  | server | answer |
+  | --- | --- |
+  | `blossom.primal.net` | 200, and the URL comes back with `.html` on the end |
+  | `nostr.download` | 201 |
+  | `nostr.build`, `blossom.band` | 415 `File type not allowed` — same backend, same refusal |
+  | `blossom.f7z.io` | 401 `Pubkey not authorized by any storage rule` |
+  | `cdn.satellite.earth` | no answer inside 60s |
+
+  `nostr.build` answers `text/html` with a 400 whose sentence is nonsense
+  ("expected application/json"); send `application/octet-stream` and it gives
+  the honest 415. Both arrive in `X-Reason`, which is why that header is read.
+- **`blossom.primal.net` appends `.html` to the URL it returns.** Concrete proof
+  that `server + "/" + hash` was a guess: the hash alone also resolves there
+  today, but nothing requires it to. Take the URL from the descriptor.
+- **The whole path has been run against the real network**, once, end to end:
+  `./gradlew :server:liveRun`. It mints a throwaway key, publishes its `10002`
+  and `10063`, then goes through `writeRelaysOf` -> `servers` -> upload ->
+  `Countersign` -> `Announce.publish` -> `editions` and checks that the archive
+  names the page that was uploaded. It is a `main()` in the test source set with
+  no `@Test`, because it writes to other people's machines.
 
 ## Found by audit (2026-08-18) — do not reintroduce
 
