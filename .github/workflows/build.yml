@@ -13,14 +13,17 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      # Node 20 is gone from the runners; every action here is pinned to a
+      # major that ships a node24 entry point, so nothing has to be forced onto
+      # a runtime it was not built for.
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           java-version: '21'
           distribution: temurin
 
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v6
 
       # `build` is compile + test + spotlessCheck, so formatting alone fails
       # here exactly as it does in the pre-commit hook.
@@ -30,10 +33,16 @@ jobs:
       # Nothing in this job talks to a relay or to the model API. Every test is
       # meant to pass with no network at all, and a test that quietly needed one
       # would stop running the first week CI was busy.
+      #
+      # `warn`, not `error`: the step runs on failure so a red test still hands
+      # back its report, and when the build dies before `test` there is nothing
+      # to upload. Failing here in that case only buries the real error under a
+      # louder one about a missing file, which is how the wrapper jar being
+      # absent first showed up.
       - name: Publish test results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: test-results
           path: '**/build/test-results/test/*.xml'
-          if-no-files-found: error
+          if-no-files-found: warn
