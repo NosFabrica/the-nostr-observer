@@ -1,9 +1,12 @@
 # Gradle / JVM
 .gradle/
 build/
-!gradle/wrapper/gradle-wrapper.jar
 *.class
 *.jar
+# After *.jar, not before it: the last matching pattern wins, so with the
+# negation first the wrapper jar stayed ignored and CI checked out a tree whose
+# ./gradlew could not start.
+!gradle/wrapper/gradle-wrapper.jar
 *.log
 hs_err_pid*
 
