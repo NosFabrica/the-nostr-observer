@@ -61,21 +61,40 @@ Do the same for a stylistic departure:
 
     <!-- restyle: one line on what changed and why -->
 
-### The folio line
+### The folio and the dateline
 
-The folio is the small line of standing detail — the date, the window, the
-counts. Two rules, both learned from a phone:
+Two thin rules of standing detail wrap the nameplate — the folio above it, the
+dateline below. They are the paper's FURNITURE. They are not a summary of the
+day; the headlines are the summary of the day.
 
-- **Put it ABOVE the nameplate**, the way a newspaper does. Below it, it reads
-  as a block of metadata between the reader and the first headline.
-- **Keep each span to a few words.** They are laid out justified to the edges,
-  which only works while they fit on one line — a fifty-five character span
-  wraps and takes the whole line with it. "554 of 11,106 surfaced" is a folio
-  entry; "554 events read, of 11,106 notes your web of trust surfaced" is a
-  sentence and belongs in the note at the foot of the page.
+Set them exactly like this, with nothing else in them:
 
-The same goes for the dateline under the nameplate: three short phrases, not
-three clauses.
+    <div class="folio">
+      <span>18 August 2026</span>
+      <span>554 of 11,106 surfaced</span>
+      <span>234 voices</span>
+    </div>
+
+    <header class="masthead"> … </header>
+
+    <div class="dateline">
+      <span>Ranked through observer Vitor Pamplona</span>
+      <span>24h to 05:04 UTC</span>
+    </div>
+
+Every span is a few words. The rows are laid out justified to the edges, and
+that only reads as a folio while each span fits on one line — a span that runs
+to a sentence wraps and takes the row with it.
+
+- **The date is the short form.** "18 August 2026", not "Tuesday, 18 August 2026".
+- **The window is a stamp, not a sentence.** "24h to 05:04 UTC".
+- **Name the reader, by name only.** Never print their pubkey. They know who
+  they are, and a hex string is furniture nobody reads.
+- **No prices, no tickers, no block heights.** A number that moves is a story or
+  a table row. It is not part of the paper's name.
+- **No trailer of the day's stories.** A dateline reading "Three firmware
+  patches · A fork still stalled · Seeds drying on a cupcake liner" is doing the
+  lead headline's job, worse, immediately above the lead headline.
 
 ## Quoting people: the hard rule
 
