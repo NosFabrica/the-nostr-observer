@@ -74,33 +74,18 @@ object LensRequest {
     }
 
     /**
-     * Asking an operator to score a reader they have never scored.
+     * Why a reader is waiting, in words for a person.
      *
-     * An interface rather than an implementation on purpose. When the scoring
-     * service grows a way to be asked, this is the one place that changes; until
-     * then [Manual] is the honest implementation, and it is honest because it
-     * tells the reader a person is involved rather than pretending to queue
-     * something.
+     * There used to be a `Provisioner` interface here with one implementation
+     * that returned null, as a seam for the day the scoring service grows an
+     * API. It was removed: an interface with a single no-op implementation, for
+     * an endpoint whose very existence is this project's open question #1, is a
+     * guess about a shape nobody has seen. The seam to add then is the seam the
+     * real API suggests, not the one imagined before it.
      */
-    interface Provisioner {
-        /** The service pubkey and relay a new observer should name, or null if it cannot be arranged. */
-        suspend fun mint(observer: String): Assignment?
-
-        data class Assignment(
-            val service: String,
-            val relay: String,
-            val readyEstimate: String,
-        )
-    }
-
-    /** No API exists yet, so say so rather than fake a queue. */
-    object Manual : Provisioner {
-        override suspend fun mint(observer: String): Provisioner.Assignment? = null
-
-        const val EXPLANATION: String =
-            "Minting a lens needs the scoring service to compute this reader's web of trust and publish " +
-                "kind 30382 cards for it. Neither nip85.nosfabrica.com nor scores.brainstorm.world exposes " +
-                "an API for that yet, so it is an operator step. Until it is done there is no ranked " +
-                "paper to print, and the readiness chain above says which link is unmet."
-    }
+    const val EXPLANATION: String =
+        "Minting a lens needs the scoring service to compute this reader's web of trust and publish " +
+            "kind 30382 cards for it. Neither nip85.nosfabrica.com nor scores.brainstorm.world exposes " +
+            "an API for that yet, so it is an operator step. Until it is done there is no ranked " +
+            "paper to print, and the readiness chain above says which link is unmet."
 }

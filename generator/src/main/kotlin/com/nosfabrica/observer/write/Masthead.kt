@@ -29,9 +29,13 @@ import org.jsoup.nodes.Document
 object Masthead {
     /** A name is a few words. Anything longer is not a name and is not stored. */
     const val MAX_MASTHEAD = 60
+
+    /** A standing line is a phrase. "All the Notes Fit to Rank" is 24 characters. */
+    const val MAX_MOTTO = 80
     const val MAX_HEADLINE = 140
 
-    private val ANNOUNCEMENT = Regex("""^\s*masthead\s*:\s*(.+)$""", RegexOption.IGNORE_CASE)
+    private val MASTHEAD = Regex("""^\s*masthead\s*:\s*(.+)$""", RegexOption.IGNORE_CASE)
+    private val MOTTO = Regex("""^\s*motto\s*:\s*(.+)$""", RegexOption.IGNORE_CASE)
 
     fun next(
         rawHtml: String,
@@ -39,23 +43,40 @@ object Masthead {
     ): Continuity {
         val document = Jsoup.parse(rawHtml)
         return Continuity(
-            masthead = announced(document)?.let(::clean)?.takeIf { it.isNotBlank() } ?: previous.masthead,
-            motto = previous.motto,
+            masthead = announced(document, MASTHEAD, MAX_MASTHEAD) ?: previous.masthead,
+            // The motto used to be copied from `previous` unconditionally, which
+            // made it a stored value that could never change: a column, a field
+            // and a line of prompt, all frozen. The brief was that the standing
+            // phrases stay softly in place and MAY move for a big enough day, and
+            // only half of that was built.
+            motto = announced(document, MOTTO, MAX_MOTTO) ?: previous.motto,
             sections = sections(document).ifEmpty { previous.sections },
             recentHeadlines = headlines(document),
         )
     }
 
-    /** The `<!-- masthead: ... -->` announcement, if the writer made one. */
-    private fun announced(document: Document): String? =
+    /**
+     * An announcement comment at the top of the body, if the writer made one.
+     *
+     * Same bounded, single-line, plain-text treatment for every one of them:
+     * whatever is stored here goes into TOMORROW's prompt, so each is a channel
+     * from today's corpus to tomorrow's instructions and each gets its own cap.
+     */
+    private fun announced(
+        document: Document,
+        pattern: Regex,
+        limit: Int,
+    ): String? =
         document
             .body()
             .childNodes()
             .filterIsInstance<Comment>()
-            .firstNotNullOfOrNull { ANNOUNCEMENT.find(it.data)?.groupValues?.get(1) }
+            .firstNotNullOfOrNull { pattern.find(it.data)?.groupValues?.get(1) }
             // Everything after the pipe is the writer's reason, addressed to a
-            // person reading the source. The name is the part before it.
+            // person reading the source. The value is the part before it.
             ?.substringBefore('|')
+            ?.let { clean(it, limit) }
+            ?.takeIf { it.isNotBlank() }
 
     private fun sections(document: Document): List<String> =
         document

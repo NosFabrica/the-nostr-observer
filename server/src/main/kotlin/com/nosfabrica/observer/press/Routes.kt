@@ -394,14 +394,12 @@ fun Application.routes(app: App) {
             )
         }
 
-        get("/api/archive") {
-            val session = signedIn(app) ?: return@get call.respond(HttpStatusCode.Unauthorized, Problem("not signed in"))
-            call.respond(
-                app.published.of(session.pubkey).map {
-                    Outcome("${it.day} ${it.naddr}", true, it.sha256)
-                },
-            )
-        }
+        // No archive endpoint. There was one, and nothing called it: the console
+        // never asked, so it was an untested route answering in a borrowed type
+        // -- `Outcome` is a publish RESULT, and it was carrying archive rows with
+        // the day and the address crushed into one string and `ok` hardcoded
+        // true. `Published.of` still holds the data, and the day the console
+        // grows an archive view, the endpoint can be written to fit it.
     }
 }
 

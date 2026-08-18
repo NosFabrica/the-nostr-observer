@@ -122,9 +122,7 @@ class LensRequestTest {
     }
 
     @Test
-    fun `minting says a person is involved rather than faking a queue`() =
-        kotlinx.coroutines.runBlocking {
-            assertNull(LensRequest.Manual.mint(service), "no API exists yet, so no assignment is invented")
-            assertTrue(LensRequest.Manual.EXPLANATION.contains("operator step"))
-        }
+    fun `the wait is explained as an operator step, not a queue`() {
+        assertTrue(LensRequest.EXPLANATION.contains("operator step"))
+    }
 }

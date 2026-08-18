@@ -47,9 +47,15 @@ a fresh generation each morning.
 
 Change one only if the day genuinely warrants it — a name that has become wrong,
 an event large enough that the paper should visibly react. If you do change
-something, put an HTML comment as the very first line of the body:
+something, announce it in an HTML comment at the very top of the body, one per
+line, before anything else:
 
     <!-- masthead: The New Name | reason in one line -->
+    <!-- motto: The new standing line | reason in one line -->
+
+Announce a change only when you actually make one, and make the announcement
+match what you printed: these are read back and become the paper's name and
+motto tomorrow. A name is a few words, not a sentence.
 
 Do the same for a stylistic departure:
 

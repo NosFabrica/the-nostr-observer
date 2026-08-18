@@ -636,3 +636,35 @@ a live path now approaches it, and its tests are the only thing exercising it.
 This makes open question #1 — whether `nip85.nosfabrica.com` can onboard
 observers on demand — the whole critical path. There is no longer anything
 between a new reader and an empty screen except that service.
+
+---
+
+## Postscript: what came out after the provisional lens
+
+Three smaller removals, plus one thing that turned out to be half-built rather
+than dead.
+
+**`GET /api/archive`** had no consumer. The console never called it, and it
+answered in a borrowed type — `Outcome` is a publish RESULT, and it was carrying
+archive rows with the day and the address crushed into one string and `ok`
+hardcoded to true. `Published.of` still holds the data; the endpoint can be
+written to fit the archive view on the day that view exists.
+
+**`LensRequest.Provisioner`** was an interface with a single implementation that
+returned null, exercised only by a test. It was a seam for the day the scoring
+service grows an API — an API whose existence is this plan's open question #1.
+A guess about a shape nobody has seen is not a seam. `LensRequest.EXPLANATION`
+survives, because a reader waiting on an operator deserves a sentence.
+`template()` survives too: it encodes the `kind 10040` shape, which is real
+knowledge the onboarding flow will need.
+
+**The motto could never change.** It was a database column, a `Continuity`
+field, a line of prompt and a `remember()` parameter — and `Masthead.next`
+copied it from yesterday unconditionally, while the system prompt defined a
+`<!-- masthead: -->` announcement with no motto equivalent. The brief in §5 was
+that the standing phrases stay softly in place and MAY move for a large enough
+day; only the first half was built. The prompt now documents
+`<!-- motto: ... -->` alongside the masthead, and `Masthead` reads it back under
+the same bounds — capped to a phrase, flattened to one line, stripped of markup,
+because it is the same one-day-latency channel from today's corpus into
+tomorrow's instructions.

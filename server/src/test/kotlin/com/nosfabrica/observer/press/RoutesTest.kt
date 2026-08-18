@@ -79,7 +79,6 @@ class RoutesTest {
             assertEquals(HttpStatusCode.Unauthorized, client.get("/api/editions/anything").status)
             assertEquals(HttpStatusCode.Unauthorized, client.post("/api/editions/anything/prepare").status)
             assertEquals(HttpStatusCode.Unauthorized, client.post("/api/editions/anything/publish").status)
-            assertEquals(HttpStatusCode.Unauthorized, client.get("/api/archive").status)
             assertEquals(HttpStatusCode.Unauthorized, client.get("/draft/anything").status)
         }
     }

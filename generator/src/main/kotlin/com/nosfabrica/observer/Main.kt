@@ -181,7 +181,7 @@ private fun report(verdict: Readiness.Verdict) {
     if (!verdict.ranks) {
         println()
         println("  No usable lens, so there is no ranked paper to print.")
-        println("  " + LensRequest.Manual.EXPLANATION)
+        println("  " + LensRequest.EXPLANATION)
         println()
     }
 }
