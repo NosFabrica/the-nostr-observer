@@ -655,8 +655,13 @@ returned null, exercised only by a test. It was a seam for the day the scoring
 service grows an API — an API whose existence is this plan's open question #1.
 A guess about a shape nobody has seen is not a seam. `LensRequest.EXPLANATION`
 survives, because a reader waiting on an operator deserves a sentence.
-`template()` survives too: it encodes the `kind 10040` shape, which is real
-knowledge the onboarding flow will need.
+`template()` went the same way a commit later, and with it `DIMENSIONS`, its
+only other user. The argument for keeping it was that it encoded the `kind
+10040` shape — but an unsigned event builder that no flow calls is a guess about
+the onboarding flow too, and NIP-85 will still be there to read when somebody
+writes one. What was left of the file was a single sentence explaining the wait,
+which moved to `Readiness`, where the rest of the reader-facing copy already
+lived.
 
 **The motto could never change.** It was a database column, a `Continuity`
 field, a line of prompt and a `remember()` parameter — and `Masthead.next`

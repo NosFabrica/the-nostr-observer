@@ -1,6 +1,5 @@
 package com.nosfabrica.observer
 
-import com.nosfabrica.observer.nostr.LensRequest
 import com.nosfabrica.observer.nostr.Readiness
 import com.nosfabrica.observer.nostr.Relays
 import com.vitorpamplona.quartz.nip19Bech32.decodePublicKeyAsHexOrNull
@@ -181,7 +180,7 @@ private fun report(verdict: Readiness.Verdict) {
     if (!verdict.ranks) {
         println()
         println("  No usable lens, so there is no ranked paper to print.")
-        println("  " + LensRequest.EXPLANATION)
+        println("  " + Readiness.NO_LENS_YET)
         println()
     }
 }

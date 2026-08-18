@@ -1,6 +1,5 @@
 package com.nosfabrica.observer
 
-import com.nosfabrica.observer.nostr.LensRequest
 import com.nosfabrica.observer.nostr.ReadinessProbe
 import com.nosfabrica.observer.nostr.Relays
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -95,34 +94,5 @@ class ReadinessProbeParsingTest {
         assertNull(probe.rankProvider(tenForty(listOf("30382:rank", service))), "hintless")
         assertNull(probe.rankProvider(tenForty(listOf("30382:followers", service, "wss://x.example.com"))), "followers only")
         assertNull(probe.rankProvider(null), "no 10040 at all")
-    }
-}
-
-class LensRequestTest {
-    private val service = "a".repeat(64)
-
-    @Test
-    fun `the template names every dimension publicly and with a hint`() {
-        val json = LensRequest.template(service, "wss://scores.example.com", 1_786_900_000)
-        assertTrue(json.contains("\"kind\":10040"))
-        LensRequest.DIMENSIONS.forEach { assertTrue(json.contains(it), "$it missing") }
-        // Two dimensions plus the client tag, each carrying service and hint.
-        assertEquals(2, Regex(Regex.escape("wss://scores.example.com")).findAll(json).count())
-        assertTrue(json.contains("the-nostr-observer"))
-    }
-
-    @Test
-    fun `refuses to build something the store cannot resolve`() {
-        assertThrows(IllegalArgumentException::class.java) {
-            LensRequest.template("short", "wss://x.example.com", 1)
-        }
-        assertThrows(IllegalArgumentException::class.java) {
-            LensRequest.template(service, "https://x.example.com", 1)
-        }
-    }
-
-    @Test
-    fun `the wait is explained as an operator step, not a queue`() {
-        assertTrue(LensRequest.EXPLANATION.contains("operator step"))
     }
 }

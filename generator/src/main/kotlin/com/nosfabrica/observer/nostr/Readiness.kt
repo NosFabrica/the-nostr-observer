@@ -184,6 +184,26 @@ object Readiness {
         return Verdict("ready", Tone.OK, null, chain.toList())
     }
 
+    /**
+     * Why a reader with no lens is waiting on a person.
+     *
+     * Lives here because this is where the rest of the reader-facing copy
+     * lives. It arrived from a `LensRequest` object that also held an unsigned
+     * kind-10040 builder and an interface for a provisioning API — none of
+     * which anything called, so all of it went and this sentence moved to the
+     * one file that was already talking to the reader.
+     *
+     * The facts in it were measured on 2026-08-17: ~302 usable lenses network
+     * wide, 276 distinct provider keys (one identity per observer, so minting
+     * is real compute rather than a signature), and neither scoring host
+     * answers anything but NIP-11. They are in AGENTS.md too. Re-measure.
+     */
+    const val NO_LENS_YET: String =
+        "Minting a lens needs the scoring service to compute this reader's web of trust and publish " +
+            "kind 30382 cards for it. Neither nip85.nosfabrica.com nor scores.brainstorm.world exposes " +
+            "an API for that yet, so it is an operator step. Until it is done there is no ranked " +
+            "paper to print, and the readiness chain above says which link is unmet."
+
     /** What to tell the reader. The decision above holds the ordering; this holds only words. */
     fun explain(v: Verdict): String =
         when (v.state) {
