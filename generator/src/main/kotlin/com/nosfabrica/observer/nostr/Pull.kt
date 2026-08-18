@@ -108,28 +108,36 @@ class Pull(
     ): Corpus {
         val desks = Desk.entries
 
-        // Every desk in one call. quartz returns them merged rather than one
-        // list per filter, so the desks are recovered by kind -- which is why
-        // the control run is NOT in this batch: it is kind 1 too, and merged in
-        // here its anonymous results would land in the ranked notes. On a
-        // measured window that would have been 209 spam posts filed as news.
-        // The control run goes out at the same time, on its own subscription:
-        // it is a separate query for a separate reason, not a slower one. Run in
-        // series it added a whole idle window to every edition.
-        val (all, control) =
+        // ONE REQ PER DESK, all at once, plus the control run.
+        //
+        // The obvious shape is one REQ carrying all nine filters, and that is
+        // what this did. It costs nothing in wall-clock -- these are ten
+        // subscriptions on one socket against a relay advertising a limit of
+        // fifty -- and it buys back the thing the quartz migration lost.
+        //
+        // quartz's `fetchAll` returns the filters MERGED, so a batched call has
+        // to recover each desk by kind. That works until two filters share a
+        // kind, and two of them do: the control run is kind 1 exactly like the
+        // notes desk. Merged, its anonymous results landed in the ranked notes
+        // and the Instrument panel's overlap went to ~100%, which is the one
+        // number this whole product exists to report. Asking separately means
+        // each answer arrives already attributed and no future desk can collide
+        // with another by sharing a kind.
+        val (ranked, control) =
             coroutineScope {
-                val desksAsked =
-                    async { relays.fetch(searchRelay, desks.map { filter(it.kind, since, it.limit, observer) }, idle = 25_000) }
+                val asked =
+                    desks.map { desk ->
+                        desk to
+                            async { relays.fetch(searchRelay, filter(desk.kind, since, desk.limit, observer), idle = 25_000) }
+                    }
                 val controlAsked = async { controlRun(since) }
-                desksAsked.await() to controlAsked.await()
+                asked.associate { (desk, job) -> desk to job.await().take(desk.limit) } to controlAsked.await()
             }
-        val byKind = all.groupBy { it.kind }
-        val ranked = desks.associateWith { desk -> byKind[desk.kind].orEmpty().take(desk.limit) }
 
         // Every author we are about to print, plus everyone the control run
         // names -- the Instrument panel prints the spammer's own text, and a hex
         // string there would hide what makes the comparison land.
-        val keys = (all + control).map { it.pubKey }.distinct()
+        val keys = (ranked.values.flatten() + control).map { it.pubKey }.distinct()
         return Corpus(observer, since, until, ranked, control, profiles(keys))
     }
 
