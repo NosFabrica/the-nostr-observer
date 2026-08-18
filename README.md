@@ -35,9 +35,16 @@ nobody else.
 
 ## Status
 
-Early. Nothing is running yet — the design is written up in
-[`docs/PLAN.md`](docs/PLAN.md), and the working prototype it is based on lives in
-this project's history.
+Early, but it runs. You can sign in with an extension or a remote signer, and the
+Observer will read your web of trust, print a page, show it to you privately and
+publish it to your media servers when you say so.
+
+Two things are not finished. Setting up a web-of-trust lens for a brand new
+reader still needs a person at our end, so the Observer builds you a provisional
+paper from your follows in the meantime and says so on the page. And editions are
+made on demand — a paper that arrives every morning without you asking is next.
+
+The design is written up in [`docs/PLAN.md`](docs/PLAN.md).
 
 ---
 

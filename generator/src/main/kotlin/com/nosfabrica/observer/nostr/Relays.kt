@@ -4,6 +4,7 @@ import com.vitorpamplona.quartz.nip01Core.core.Event
 import com.vitorpamplona.quartz.nip01Core.relay.client.NostrClient
 import com.vitorpamplona.quartz.nip01Core.relay.client.accessories.count
 import com.vitorpamplona.quartz.nip01Core.relay.client.accessories.fetchAll
+import com.vitorpamplona.quartz.nip01Core.relay.client.accessories.publishAndCollectResults
 import com.vitorpamplona.quartz.nip01Core.relay.filters.Filter
 import com.vitorpamplona.quartz.nip01Core.relay.normalizer.RelayUrlNormalizer
 import com.vitorpamplona.quartz.nip01Core.relay.sockets.okhttp.BasicOkHttpWebSocket
@@ -40,7 +41,15 @@ class Relays(
 ) : Closeable {
     private val scope = CoroutineScope(SupervisorJob())
     private val okhttp = OkHttpClient.Builder().connectTimeout(Duration.ofSeconds(10)).build()
-    private val client = NostrClient(BasicOkHttpWebSocket.Builder { okhttp }, scope)
+
+    /**
+     * Exposed because a NIP-46 signer needs to talk on the same sockets.
+     *
+     * A second client would mean a second connection to relays this process is
+     * already connected to, and quartz's remote signer is built to be handed
+     * one rather than to own one.
+     */
+    val client = NostrClient(BasicOkHttpWebSocket.Builder { okhttp }, scope)
 
     /**
      * Everything matching, from one relay. Order is the relay's.
@@ -66,6 +75,34 @@ class Relays(
         filter: Filter,
         idle: Long = idleMs,
     ): List<Event> = fetch(url, listOf(filter), idle)
+
+    /**
+     * Send one event to several relays and wait for each to answer.
+     *
+     * Fire-and-forget is the wrong shape for the only thing this project
+     * publishes. A manifest that reached none of a reader's relays, but that we
+     * hold in our own database, resolves perfectly for us and for nobody else:
+     * the reader would see their paper and no one else would, which is the
+     * failure this whole design exists to avoid. So the OK frame is waited for
+     * and the relay's own sentence is carried back.
+     */
+    suspend fun publish(
+        event: Event,
+        urls: List<String>,
+        idle: Long = idleMs,
+    ): List<Triple<String, Boolean, String>> {
+        val targets = urls.map { RelayUrlNormalizer.normalize(it) }.toSet()
+        val results = client.publishAndCollectResults(event, targets, idle)
+        return targets.map { relay ->
+            val result = results[relay]
+            Triple(
+                relay.url,
+                result?.accepted ?: false,
+                result?.message?.ifBlank { if (result.accepted) "accepted" else "rejected without a reason" }
+                    ?: "no answer",
+            )
+        }
+    }
 
     /**
      * How many match, or null when the relay will not say.

@@ -1,0 +1,441 @@
+package com.nosfabrica.observer.press
+
+import com.nosfabrica.observer.WINDOW_SECONDS
+import com.nosfabrica.observer.nostr.Readiness
+import com.nosfabrica.observer.press.auth.Sessions
+import com.nosfabrica.observer.press.auth.SignIn
+import com.nosfabrica.observer.press.publish.Countersign
+import com.nosfabrica.observer.press.publish.Templates
+import com.nosfabrica.observer.press.store.Drafts
+import com.vitorpamplona.quartz.nip01Core.core.Event
+import io.ktor.http.ContentType
+import io.ktor.http.Cookie
+import io.ktor.http.HttpStatusCode
+import io.ktor.serialization.kotlinx.json.json
+import io.ktor.server.application.Application
+import io.ktor.server.application.ApplicationCall
+import io.ktor.server.application.install
+import io.ktor.server.application.log
+import io.ktor.server.http.content.staticResources
+import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
+import io.ktor.server.plugins.statuspages.StatusPages
+import io.ktor.server.request.receiveText
+import io.ktor.server.request.uri
+import io.ktor.server.response.respond
+import io.ktor.server.response.respondText
+import io.ktor.server.routing.RoutingContext
+import io.ktor.server.routing.get
+import io.ktor.server.routing.post
+import io.ktor.server.routing.routing
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import java.time.Instant
+import java.time.ZoneOffset
+import java.time.format.DateTimeFormatter
+
+private const val COOKIE = "observer_session"
+private val json = Json { ignoreUnknownKeys = true }
+
+@Serializable
+private data class Who(
+    val pubkey: String,
+    val signer: String,
+)
+
+@Serializable
+private data class Started(
+    val draft: String,
+)
+
+@Serializable
+private data class Status(
+    val state: String,
+    val progress: String,
+    val summary: String? = null,
+    val error: String? = null,
+    val sha256: String? = null,
+)
+
+@Serializable
+private data class ChainLink(
+    val key: String,
+    val status: String,
+    val detail: String? = null,
+)
+
+@Serializable
+private data class Verdict(
+    val state: String,
+    val explanation: String,
+    val ranks: Boolean,
+    val chain: List<ChainLink>,
+)
+
+@Serializable
+private data class ToSign(
+    val upload: String,
+    val manifest: String,
+    val servers: List<String>,
+    val relays: List<String>,
+    val sha256: String,
+)
+
+@Serializable
+private data class Signed(
+    val upload: String,
+    val manifest: String,
+)
+
+@Serializable
+private data class PublishReport(
+    val ok: Boolean,
+    val day: String,
+    val naddr: String,
+    val uploads: List<Outcome>,
+    val relays: List<Outcome>,
+)
+
+@Serializable
+private data class Outcome(
+    val target: String,
+    val ok: Boolean,
+    val detail: String,
+)
+
+@Serializable
+private data class Problem(
+    val error: String,
+)
+
+fun Application.routes(app: App) {
+    install(ContentNegotiation) { json(Json { encodeDefaults = true }) }
+    install(StatusPages) {
+        exception<Throwable> { call, cause ->
+            // The reader gets a sentence, the log gets the trace. An HTML error
+            // page from a JSON endpoint is the version that wastes an afternoon.
+            this@routes.log.error("unhandled", cause)
+            call.respond(HttpStatusCode.InternalServerError, Problem(cause.message ?: "something broke"))
+        }
+    }
+
+    routing {
+        // The console. Three files, no build step: this page's whole job is to
+        // sign in, poll a job and hand two events to a signer.
+        staticResources("/", "web") { default("index.html") }
+
+        // Sign in by signing this request.
+        //
+        // Identical for a browser extension and a remote signer: both produce a
+        // NIP-98 event over this URL and method. The awkward part of NIP-46
+        // stays in the browser where the transport is, instead of becoming a
+        // second sign-in protocol here.
+        post("/api/session") {
+            val body = call.receiveText()
+            val signer =
+                runCatching { json.decodeFromString<JsonObject>(body)["signer"]?.jsonPrimitive?.content }
+                    .getOrNull()
+                    ?.uppercase()
+            when (
+                val result =
+                    app.signIn.verify(
+                        header = call.request.headers["Authorization"],
+                        url = call.fullUrl(),
+                        method = "POST",
+                        body = body.toByteArray(),
+                    )
+            ) {
+                is SignIn.Result.No -> {
+                    call.respond(HttpStatusCode.Unauthorized, Problem(result.reason))
+                }
+
+                is SignIn.Result.Ok -> {
+                    val kind = if (signer == "NIP46") Sessions.Signer.NIP46 else Sessions.Signer.NIP07
+                    val token = app.sessions.open(result.pubkey, kind)
+                    call.response.cookies.append(sessionCookie(app, token))
+                    call.respond(Who(result.pubkey, kind.name))
+                }
+            }
+        }
+
+        // Sign in by connecting a remote signer.
+        //
+        // The reader pastes a `bunker://` address; we connect, ask the signer
+        // who it speaks for, and open the session for that pubkey. There is no
+        // signature to verify here because the connection IS the proof: only
+        // the reader's signer holds the secret in that URI.
+        post("/api/session/bunker") {
+            val uri =
+                runCatching { json.decodeFromString<JsonObject>(call.receiveText())["uri"]?.jsonPrimitive?.content }
+                    .getOrNull()
+                    ?: return@post call.respond(HttpStatusCode.BadRequest, Problem("no bunker:// address"))
+
+            app.bunkers
+                .connect(uri)
+                .onSuccess { connected ->
+                    val token = app.sessions.open(connected.pubkey, Sessions.Signer.NIP46)
+                    app.bunkers.adopt(token, connected)
+                    call.response.cookies.append(sessionCookie(app, token))
+                    call.respond(Who(connected.pubkey, Sessions.Signer.NIP46.name))
+                }.onFailure {
+                    call.respond(HttpStatusCode.BadGateway, Problem(it.message ?: "could not reach that signer"))
+                }
+        }
+
+        get("/api/session") {
+            val session = signedIn(app) ?: return@get call.respond(HttpStatusCode.Unauthorized, Problem("not signed in"))
+            call.respond(Who(session.pubkey, session.signer))
+        }
+
+        post("/api/session/end") {
+            // The bunker connection first: a session that is gone can no longer
+            // name the signer it left connected.
+            call.request.cookies[COOKIE]?.let(app.bunkers::close)
+            app.sessions.close(call.request.cookies[COOKIE])
+            call.respond(HttpStatusCode.OK, Problem("signed out"))
+        }
+
+        // The readiness chain, for the panel that explains why there is no lens yet.
+        get("/api/readiness") {
+            val session = signedIn(app) ?: return@get call.respond(HttpStatusCode.Unauthorized, Problem("not signed in"))
+            val (_, verdict) = app.press.readiness(session.pubkey, Instant.now().epochSecond - WINDOW_SECONDS)
+            call.respond(
+                Verdict(
+                    state = verdict.state,
+                    explanation = Readiness.explain(verdict),
+                    ranks = verdict.ranks,
+                    chain = verdict.chain.map { ChainLink(it.key, it.status.name, it.detail) },
+                ),
+            )
+        }
+
+        post("/api/editions") {
+            val session = signedIn(app) ?: return@post call.respond(HttpStatusCode.Unauthorized, Problem("not signed in"))
+            val provisional = call.request.queryParameters["provisional"] == "true"
+            call.respond(Started(app.editions.start(session.pubkey, provisional)))
+        }
+
+        get("/api/editions/{id}") {
+            val session = signedIn(app) ?: return@get call.respond(HttpStatusCode.Unauthorized, Problem("not signed in"))
+            val draft = draftOf(app, session.pubkey) ?: return@get call.respond(HttpStatusCode.NotFound, Problem("no such draft"))
+            call.respond(
+                Status(
+                    state = draft.state.name,
+                    progress = draft.progress,
+                    summary = draft.summary,
+                    error = draft.error,
+                    sha256 = draft.sha256,
+                ),
+            )
+        }
+
+        // The private preview.
+        //
+        // Served from our own origin, to the owner only, before anything is
+        // signed. Generate-then-publish: nobody should have to publish a page to
+        // find out what it says.
+        get("/draft/{id}") {
+            val session = signedIn(app) ?: return@get call.respondText("Sign in first.", status = HttpStatusCode.Unauthorized)
+            val draft =
+                draftOf(app, session.pubkey)
+                    ?: return@get call.respondText("No such draft.", status = HttpStatusCode.NotFound)
+            val html = draft.html ?: return@get call.respondText("Not finished yet.", status = HttpStatusCode.Accepted)
+            // The page is sanitized, and it is still not trusted enough to run
+            // beside a session cookie. These two headers are what make an
+            // unexpected script tag inert rather than merely unlikely.
+            call.response.headers.append("Content-Security-Policy", CSP)
+            call.response.headers.append("X-Content-Type-Options", "nosniff")
+            call.respondText(html, ContentType.Text.Html)
+        }
+
+        // What the reader is about to sign, built here so it can be checked here.
+        //
+        // Two events, and the reader will see two prompts. The manifest carries
+        // every day they have ever published, not just today: `kind 35128` is
+        // replaceable, so a manifest with one path is a manifest that deleted
+        // the archive.
+        post("/api/editions/{id}/prepare") {
+            val session = signedIn(app) ?: return@post call.respond(HttpStatusCode.Unauthorized, Problem("not signed in"))
+            val draft =
+                draftOf(app, session.pubkey)
+                    ?: return@post call.respond(HttpStatusCode.NotFound, Problem("no such draft"))
+            val html = draft.html ?: return@post call.respond(HttpStatusCode.Conflict, Problem("that edition is not finished"))
+            val summary = draft.summary?.let { runCatching { json.decodeFromString<Summary>(it) }.getOrNull() }
+            if (summary?.publishable == false) {
+                return@post call.respond(
+                    HttpStatusCode.Conflict,
+                    Problem("this edition failed its own checks and is not offered for publication"),
+                )
+            }
+
+            // Their relays, from their own kind 10002, asked again rather than
+            // remembered: this is where the manifest is going, and a stale copy
+            // publishes the paper to an address they have moved away from.
+            val (facts, _) = app.press.readiness(session.pubkey, Instant.now().epochSecond - WINDOW_SECONDS)
+            val writeRelays = facts.writeRelays.orEmpty()
+            val servers = app.announce.servers(session.pubkey, writeRelays)
+            if (servers.isEmpty()) {
+                return@post call.respond(
+                    HttpStatusCode.Conflict,
+                    Problem(
+                        "You have no Blossom servers listed (kind 10063). The paper is published to your " +
+                            "servers, so there is nowhere to put it yet.",
+                    ),
+                )
+            }
+
+            val blob = html.toByteArray()
+            val sha = draft.sha256 ?: return@post call.respond(HttpStatusCode.Conflict, Problem("draft has no hash"))
+            val now = Instant.now().epochSecond
+            val day = DAY.format(Instant.ofEpochSecond(now).atOffset(ZoneOffset.UTC))
+            val paths = (listOf("/index.html" to sha, "/$day" to sha) + app.published.paths(session.pubkey)).distinctBy { it.first }
+
+            val upload = Templates.uploadAuth(sha, blob.size.toLong(), now, now + 600)
+            val manifest =
+                Templates.manifest(paths, servers, app.continuities.of(session.pubkey).masthead, now)
+            app.pending[draft.id] = Pending(upload, manifest, servers, writeRelays, sha, day)
+            call.respond(ToSign(upload.toJson(), manifest.toJson(), servers, writeRelays, sha))
+        }
+
+        post("/api/editions/{id}/publish") {
+            val session = signedIn(app) ?: return@post call.respond(HttpStatusCode.Unauthorized, Problem("not signed in"))
+            val draft =
+                draftOf(app, session.pubkey)
+                    ?: return@post call.respond(HttpStatusCode.NotFound, Problem("no such draft"))
+            val pending =
+                app.pending[draft.id]
+                    ?: return@post call.respond(HttpStatusCode.Conflict, Problem("nothing prepared for this edition"))
+            // Two signers, one publish. An extension signs in the page and posts
+            // the results back; a remote signer is connected to THIS process, so
+            // the two prompts go to the reader's phone from here. Everything
+            // after this point is identical, deliberately: the checks below do
+            // not care where a signature came from, and must not.
+            val body = call.receiveText()
+            val offered = runCatching { json.decodeFromString<Signed>(body) }.getOrNull()
+            val token = call.request.cookies[COOKIE]
+            val auth: Event?
+            val manifest: Event?
+            if (offered != null && offered.upload.isNotBlank()) {
+                auth = Event.fromJsonOrNull(offered.upload)
+                manifest = Event.fromJsonOrNull(offered.manifest)
+            } else if (token != null && app.bunkers.has(token)) {
+                val signedUpload = app.bunkers.sign(token, pending.upload)
+                val signedManifest = app.bunkers.sign(token, pending.manifest)
+                val failure = listOf(signedUpload, signedManifest).firstNotNullOfOrNull { it.exceptionOrNull() }
+                if (failure != null) {
+                    return@post call.respond(
+                        HttpStatusCode.GatewayTimeout,
+                        Problem(
+                            "your signer did not answer: ${failure.message ?: "timed out"}" +
+                                (app.bunkers.authUrl(token)?.let { " (it may be asking you to visit $it)" } ?: ""),
+                        ),
+                    )
+                }
+                auth = signedUpload.getOrNull()
+                manifest = signedManifest.getOrNull()
+            } else {
+                return@post call.respond(HttpStatusCode.BadRequest, Problem("no signatures, and no signer connected"))
+            }
+            if (auth == null || manifest == null) {
+                return@post call.respond(HttpStatusCode.BadRequest, Problem("that is not a signed event"))
+            }
+            listOf(
+                Countersign.check(auth, pending.upload, session.pubkey),
+                Countersign.check(manifest, pending.manifest, session.pubkey),
+            ).filterIsInstance<Countersign.Result.No>().firstOrNull()?.let {
+                return@post call.respond(HttpStatusCode.BadRequest, Problem("signature rejected: ${it.reason}"))
+            }
+
+            val html = draft.html ?: return@post call.respond(HttpStatusCode.Conflict, Problem("draft has no page"))
+            val uploads = app.blossom.upload(pending.servers, html.toByteArray(), auth)
+            if (uploads.none { it.ok }) {
+                return@post call.respond(
+                    HttpStatusCode.BadGateway,
+                    Problem("no server accepted the upload: " + uploads.joinToString("; ") { "${it.server} ${it.detail}" }),
+                )
+            }
+
+            // Only after a server actually holds the blob. A manifest pointing at
+            // a hash nobody stores is a 404 with a signature on it.
+            val announced = app.announce.publish(manifest, pending.relays)
+            val naddr = "35128:${session.pubkey}:${Templates.SITE}"
+            if (announced.any { it.ok }) {
+                app.published.record(session.pubkey, pending.day, pending.sha, naddr, pending.servers)
+            }
+            app.pending.remove(draft.id)
+
+            call.respond(
+                PublishReport(
+                    ok = announced.any { it.ok },
+                    day = pending.day,
+                    naddr = naddr,
+                    uploads = uploads.map { Outcome(it.server, it.ok, it.detail) },
+                    relays = announced.map { Outcome(it.relay, it.ok, it.message) },
+                ),
+            )
+        }
+
+        get("/api/archive") {
+            val session = signedIn(app) ?: return@get call.respond(HttpStatusCode.Unauthorized, Problem("not signed in"))
+            call.respond(
+                app.published.of(session.pubkey).map {
+                    Outcome("${it.day} ${it.naddr}", true, it.sha256)
+                },
+            )
+        }
+    }
+}
+
+/** Held between prepare and publish so the signed events have something to be checked against. */
+data class Pending(
+    val upload: com.vitorpamplona.quartz.nip01Core.signers.EventTemplate<Event>,
+    val manifest: com.vitorpamplona.quartz.nip01Core.signers.EventTemplate<Event>,
+    val servers: List<String>,
+    val relays: List<String>,
+    val sha: String,
+    val day: String,
+)
+
+private val DAY = DateTimeFormatter.ofPattern("yyyy-MM-dd")
+
+private fun sessionCookie(
+    app: App,
+    token: String,
+) = Cookie(
+    name = COOKIE,
+    value = token,
+    httpOnly = true,
+    // Defaults to demanding HTTPS; a deployment that terminates TLS elsewhere
+    // has to say so out loud rather than getting it by accident.
+    secure = !app.config.insecureCookies,
+    path = "/",
+    extensions = mapOf("SameSite" to "Lax"),
+)
+
+/** The cookie, resolved to a reader, or null. Every route that writes anything calls this first. */
+private fun RoutingContext.signedIn(app: App): Sessions.Entry? = app.sessions.of(call.request.cookies[COOKIE])
+
+// The draft named in the path, but only if this reader owns it.
+//
+// The pubkey is passed down into the store rather than compared here: a check
+// the caller performs is a check some future route forgets to perform.
+private fun RoutingContext.draftOf(
+    app: App,
+    pubkey: String,
+): Drafts.Draft? = call.parameters["id"]?.let { app.drafts.of(it, pubkey) }
+
+// The preview's own leash.
+//
+// `default-src 'none'` with images allowed anywhere is exactly the shape of the
+// page: it hotlinks art from whatever host published it and does nothing else.
+// No scripts, no frames, no form posts, no connections.
+private const val CSP =
+    "default-src 'none'; img-src https: data:; style-src 'unsafe-inline'; " +
+        "font-src https:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+
+private fun ApplicationCall.fullUrl(): String {
+    val scheme = request.headers["X-Forwarded-Proto"] ?: request.local.scheme
+    val host = request.headers["X-Forwarded-Host"] ?: request.headers["Host"] ?: request.local.serverHost
+    return "$scheme://$host${request.uri}"
+}

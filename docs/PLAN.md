@@ -469,7 +469,7 @@ and the image-storage question (we no longer store images).
 - **What happens on a day with nothing in it?** A fixed 24-hour window makes quiet
   days possible. The paper should say so — a thin single-column edition is honest,
   and four columns of filler is the one thing that would make it feel generated.
-- **License.** Not chosen yet.
+- ~~**License.**~~ MIT, in `LICENSE`.
 
 ---
 
@@ -546,3 +546,49 @@ Two quartz behaviours needed local guards rather than trust, both pinned by test
 and recorded in `AGENTS.md`: `decodePublicKeyAsHexOrNull` decodes an nsec into
 the hex of the secret key, and `AdvertisedRelayListEvent.writeRelays()` returns
 whatever scheme the tag carried.
+
+
+---
+
+## Postscript: what Phase 3 built
+
+The web app is in `server/`: a Ktor app, a SQLite file, and three static files
+of console. The generation pipeline moved into `Press` in the generator module
+so the CLI and the web app run the SAME steps in the same order — anything else
+means a `--dry-run` verifies something a reader never gets.
+
+**Sign-in is NIP-98, for both signers.** A signed event over this exact request,
+verified by quartz. It is deliberately the same shape whether a browser
+extension or a phone signed it, which keeps the awkward part of NIP-46 in the
+transport rather than in a second sign-in protocol.
+
+**NIP-46 runs on the server.** This was the plan's open risk and it needed a
+decision rather than a prototype. A browser implementation needs secp256k1 ECDH
+that WebCrypto does not provide, and the failure mode the corpus itself
+describes — mobile browsers dropping websockets when the tab is backgrounded —
+happens precisely while the reader is switching to their signer app. A
+connection held by the server does not get backgrounded, and holding one is what
+Phase 4 needs regardless. The cost is real and is written down where it happens:
+for the life of a session, this process can ask the reader's signer to sign the
+three kinds it asked permission for.
+
+**The server holds no key.** It builds the two events a publish needs and checks
+what comes back. `Countersign` rejects three separate things, and only the first
+is obvious: an invalid signature, a valid signature from somebody else, and — the
+one that matters — a valid signature from the right reader over different tags.
+Without that third check the template would be decoration, and a client could
+have us upload a blob we never saw under a signature we did verify.
+
+**The masthead loop is closed.** `Masthead` reads the `<!-- masthead: ... -->`
+announcement out of the model's raw output (the sanitizer drops comments, so by
+the time the page is safe to serve the announcement is gone) and stores it for
+tomorrow. That makes it the one path from today's corpus to tomorrow's prompt —
+a one-day-latency injection channel — so what is stored is capped to a name,
+flattened to a single line, and stripped of markup.
+
+Still not exercised: the model call. There is no `ANTHROPIC_API_KEY` in the dev
+container, so a live run reaches "Writing your front page" and fails with a 401
+from Anthropic, cleanly, as a FAILED draft. Everything before it is verified
+live — a fresh key signs in, the readiness chain answers `no-relay-list` for it,
+and a job for the prototype observer read 742 posts from 247 people with 1 of
+400 control notes overlapping.

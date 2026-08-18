@@ -1,6 +1,7 @@
 rootProject.name = "the-nostr-observer"
 
 include(":generator")
+include(":server")
 
 dependencyResolutionManagement {
     repositories {

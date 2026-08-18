@@ -1,0 +1,194 @@
+/* The console for the paper, not the paper. Deliberately plain: the generated
+   edition is the thing with a design, and a busy shell around it competes. */
+
+:root {
+  --ink: #14110d;
+  --paper: #f7f4ed;
+  --rule: #d6cfc0;
+  --quiet: #6b6355;
+  --ok: #2f6b3a;
+  --waiting: #8a5a1b;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ink: #ece7dc;
+    --paper: #16150f;
+    --rule: #39352c;
+    --quiet: #9d9484;
+    --ok: #8ec79a;
+    --waiting: #d6a45e;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0 auto;
+  padding: 2rem 1.25rem 4rem;
+  max-width: 46rem;
+  background: var(--paper);
+  color: var(--ink);
+  font: 16px/1.55 Georgia, "Iowan Old Style", "Times New Roman", serif;
+}
+
+header {
+  border-bottom: 3px double var(--rule);
+  padding-bottom: 1rem;
+  margin-bottom: 2rem;
+}
+
+h1 {
+  margin: 0;
+  font-size: clamp(2rem, 7vw, 3.2rem);
+  letter-spacing: -0.02em;
+}
+
+h2 {
+  font-size: 1.1rem;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  border-bottom: 1px solid var(--rule);
+  padding-bottom: 0.35rem;
+}
+
+.motto,
+.note,
+.who,
+footer {
+  color: var(--quiet);
+  font-size: 0.9rem;
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  align-items: center;
+  margin: 1rem 0;
+}
+
+button,
+.button {
+  font: inherit;
+  padding: 0.5rem 1rem;
+  border: 1px solid var(--ink);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-decoration: none;
+  display: inline-block;
+}
+
+button:hover:not(:disabled),
+.button:hover {
+  background: var(--ink);
+  color: var(--paper);
+}
+
+button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+button.link {
+  border: 0;
+  padding: 0;
+  text-decoration: underline;
+  font-size: inherit;
+}
+
+input[type="text"] {
+  font: inherit;
+  padding: 0.5rem;
+  flex: 1 1 18rem;
+  border: 1px solid var(--rule);
+  background: transparent;
+  color: inherit;
+}
+
+.or {
+  color: var(--quiet);
+}
+
+.panel {
+  border: 1px solid var(--rule);
+  padding: 1rem;
+  margin: 1rem 0;
+}
+
+.ok {
+  color: var(--ok);
+}
+
+.waiting {
+  color: var(--waiting);
+}
+
+.chain,
+.panel ul {
+  list-style: none;
+  padding: 0;
+  margin: 0.5rem 0 0;
+  font-size: 0.85rem;
+}
+
+.chain li,
+.panel ul li {
+  padding-left: 1.6rem;
+  position: relative;
+}
+
+/* The readiness chain reads as a chain: one link stops it, and which one is
+   the entire message. Symbols rather than colour alone. */
+.chain li::before,
+.panel ul li::before {
+  position: absolute;
+  left: 0;
+  color: var(--quiet);
+  content: "·";
+}
+
+li[data-status="OK"]::before {
+  content: "✓";
+  color: var(--ok);
+}
+
+li[data-status="BROKEN"]::before {
+  content: "✕";
+  color: var(--waiting);
+}
+
+li[data-status="WAITING"]::before {
+  content: "…";
+}
+
+li[data-status="PARTIAL"]::before {
+  content: "◐";
+}
+
+li[data-status="ASIDE"]::before {
+  content: "→";
+}
+
+.progress {
+  padding-left: 1.2rem;
+  font-size: 0.9rem;
+}
+
+.progress li {
+  margin-bottom: 0.35rem;
+}
+
+.progress small {
+  display: block;
+  color: var(--quiet);
+}
+
+footer {
+  margin-top: 3rem;
+  border-top: 1px solid var(--rule);
+  padding-top: 1rem;
+}

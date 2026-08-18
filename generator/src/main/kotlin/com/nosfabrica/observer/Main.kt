@@ -1,18 +1,9 @@
 package com.nosfabrica.observer
 
-import com.nosfabrica.observer.corpus.ArtDesk
-import com.nosfabrica.observer.corpus.Digest
-import com.nosfabrica.observer.nostr.Follows
 import com.nosfabrica.observer.nostr.Lens
 import com.nosfabrica.observer.nostr.LensRequest
-import com.nosfabrica.observer.nostr.Pull
 import com.nosfabrica.observer.nostr.Readiness
-import com.nosfabrica.observer.nostr.ReadinessProbe
 import com.nosfabrica.observer.nostr.Relays
-import com.nosfabrica.observer.safe.Sanitizer
-import com.nosfabrica.observer.safe.Validator
-import com.nosfabrica.observer.write.Continuity
-import com.nosfabrica.observer.write.Writer
 import com.vitorpamplona.quartz.nip19Bech32.decodePublicKeyAsHexOrNull
 import kotlinx.coroutines.runBlocking
 import java.io.File
@@ -20,7 +11,6 @@ import java.time.Instant
 import kotlin.system.exitProcess
 
 private const val DEFAULT_RELAY = "wss://search-staging.brainstorm.world"
-private const val WINDOW_SECONDS = 24L * 60 * 60
 
 /** Flags that take no value. Everything else consumes the next argument. */
 private val BOOLEAN_FLAGS = setOf("--dry-run", "--check", "--provisional")
@@ -76,11 +66,9 @@ fun main(args: Array<String>) =
             }
             i++
         }
-        val dryRun = flags.containsKey("--dry-run")
         val relayUrl = flags["--relay"] ?: DEFAULT_RELAY
         val out = File(flags["--out"] ?: "edition.html")
         val until = flags["--until"]?.toLongOrNull() ?: Instant.now().epochSecond
-        val since = until - WINDOW_SECONDS
 
         // quartz owns NIP-19 decoding, but NOT this guard, and the difference
         // matters. `decodePublicKeyAsHexOrNull` decodes ANY 32-byte bech32
@@ -100,112 +88,110 @@ fun main(args: Array<String>) =
                 }
 
         Relays().use { relays ->
-            step("Reading $relayUrl through $observer")
+            val press = Press(relays, relayUrl, effort(flags["--effort"]))
 
-            // Pre-flight before anything expensive. The failure it catches is
-            // silent by design: an unresolvable observer degrades to an anonymous
-            // read, which on a measured window was 209 of 400 posts from one spam
-            // account. Finding that out after the model call is finding it late.
-            val facts = ReadinessProbe(relays, relayUrl).gather(observer, since)
-            val verdict = Readiness.assess(facts)
-            step("Lens: ${verdict.state} - ${Readiness.explain(verdict)}")
-            verdict.chain.forEach { link ->
-                println("    ${symbol(link.status)} ${link.key}${link.detail?.let { " ($it)" } ?: ""}")
-            }
-            if (flags.containsKey("--check")) return@use
-
-            val lens =
-                if (verdict.ranks && !flags.containsKey("--provisional")) {
-                    Lens.Trusted(observer)
-                } else {
-                    if (!verdict.ranks) {
-                        println()
-                        println("  No usable lens, so there is no ranked paper to print.")
-                        println("  " + LensRequest.Manual.EXPLANATION)
-                        println()
-                    }
-                    step("Building a provisional lens from the follow list")
-                    Follows(relays, relayUrl).provisional(observer, facts.writeRelays.orEmpty()).also {
-                        step(
-                            "Provisional: ${it.direct} follows, ${it.extended} vouched-for strangers" +
-                                (if (it.truncated) ", capped at ${it.authors.size} authors" else ""),
-                        )
-                    }
-                }
-
-            val corpus = Pull(relays, relayUrl).corpus(lens, observer, since, until)
-            val voices =
-                corpus
-                    .all()
-                    .map { it.pubKey }
-                    .distinct()
-                    .size
-            step("Pulled ${corpus.all().size} events from $voices people, ${corpus.profiles.size} profiles")
-
-            // The product thesis as a number, printed before the model sees it.
-            // It is also the alarm for one specific bug: the control run is kind
-            // 1 like the notes desk, so anything that merges the two shows up
-            // here as an overlap near 100% instead of near zero.
-            val overlap =
-                corpus
-                    .all()
-                    .map { it.id }
-                    .intersect(corpus.control.map { it.id }.toSet())
-                    .size
-            step("Control: ${corpus.control.size} anonymous notes, $overlap of them also in the paper")
-
-            if (corpus.notes.isEmpty()) {
-                System.err.println(
-                    "\nNothing came back for this window through ${lens.label}. A quiet day is a real\n" +
-                        "answer and a thin paper is the right response to it -- but with zero notes\n" +
-                        "there is no paper to print at all.",
-                )
-                exitProcess(3)
-            }
-
-            val art = ArtDesk.shortlist(corpus)
-            val digest = Digest().render(corpus, art)
-            step("Digest: ${digest.kept} kept, ${digest.dropped} pruned, ~${digest.approxTokens} tokens")
-            step("Art: ${art.size} candidates, hotlinked (nothing fetched)")
-
-            if (dryRun) {
-                out.writeText(digest.text)
-                step("Dry run - digest written to ${out.path}")
+            if (flags.containsKey("--check")) {
+                val (_, verdict) = press.readiness(observer, until - WINDOW_SECONDS)
+                step("Reading $relayUrl through $observer")
+                report(verdict)
                 return@use
             }
 
-            val effort = effort(flags["--effort"])
-            step("Writing the page...")
-            val draft = Writer(effort = effort).write(corpus, digest, art, Continuity())
-            step(
-                "Model returned ${draft.html.length} chars - ${draft.inputTokens} in, " +
-                    "${draft.outputTokens} out, $${"%.2f".format(draft.costUsd())}",
-            )
+            try {
+                if (flags.containsKey("--dry-run")) {
+                    val (_, _, digest) =
+                        press.gather(observer, until, flags.containsKey("--provisional"), ::show)
+                    out.writeText(digest.text)
+                    step("Dry run - digest written to ${out.path}")
+                    return@use
+                }
 
-            val sanitized = Sanitizer(art).sanitize(draft.html)
-            if (sanitized.removed.isEmpty()) {
-                step("Sanitizer: clean")
-            } else {
-                step("Sanitizer removed ${sanitized.removed.size} thing(s):")
-                sanitized.removed.forEach { println("    - $it") }
-            }
+                val edition = press.edition(observer, until, forceProvisional = flags.containsKey("--provisional"), onStep = ::show)
+                out.writeText(edition.html)
+                step("Wrote ${out.path} (${edition.html.length} bytes)")
 
-            val report = Validator(corpus, art).validate(sanitized.html)
-            step("Validator: ${report.summary()}")
-            report.violations.forEach { println("    ! ${it.kind}: ${it.detail} -- \"${it.excerpt}\"") }
-
-            out.writeText(sanitized.html)
-            step("Wrote ${out.path} (${sanitized.html.length} bytes)")
-
-            // A page that fails the check is not an edition. Exiting non-zero is
-            // how the caller - a person now, a publish button later - is stopped
-            // from treating it as one.
-            if (!report.ok) {
-                System.err.println("\nThis edition would NOT be offered for publication.")
-                exitProcess(4)
+                // A page that fails the check is not an edition. Exiting non-zero
+                // is how the caller - a person now, a publish button later - is
+                // stopped from treating it as one.
+                if (!edition.publishable) {
+                    System.err.println("\nThis edition would NOT be offered for publication.")
+                    exitProcess(4)
+                }
+            } catch (refused: Press.Refused) {
+                System.err.println("\n${refused.message}")
+                exitProcess(3)
             }
         }
     }
+
+private fun show(progress: Press.Step) {
+    when (progress) {
+        is Press.Step.Reading -> {
+            step("Reading ${progress.relay} through ${progress.observer}")
+        }
+
+        is Press.Step.Lensed -> {
+            report(progress.verdict)
+        }
+
+        is Press.Step.Provisional -> {
+            val lens = progress.lens
+            if (lens.direct == 0) return
+            step(
+                "Provisional: ${lens.direct} follows, ${lens.extended} vouched-for strangers" +
+                    (if (lens.truncated) ", capped at ${lens.authors.size} authors" else ""),
+            )
+        }
+
+        is Press.Step.Pulled -> {
+            step("Pulled ${progress.events} events from ${progress.voices} people, ${progress.profiles} profiles")
+            step("Control: ${progress.control} anonymous notes, ${progress.overlap} of them also in the paper")
+        }
+
+        is Press.Step.Digested -> {
+            step("Digest: ${progress.kept} kept, ${progress.dropped} pruned, ~${progress.approxTokens} tokens")
+            step("Art: ${progress.art} candidates, hotlinked (nothing fetched)")
+        }
+
+        Press.Step.Writing -> {
+            step("Writing the page...")
+        }
+
+        is Press.Step.Written -> {
+            step(
+                "Model returned ${progress.chars} chars - ${progress.inputTokens} in, " +
+                    "${progress.outputTokens} out, $${"%.2f".format(progress.costUsd)}",
+            )
+        }
+
+        is Press.Step.Cleaned -> {
+            if (progress.removed.isEmpty()) {
+                step("Sanitizer: clean")
+            } else {
+                step("Sanitizer removed ${progress.removed.size} thing(s):")
+                progress.removed.forEach { println("    - $it") }
+            }
+        }
+
+        is Press.Step.Checked -> {
+            step("Validator: ${progress.report.summary()}")
+            progress.report.violations.forEach { println("    ! ${it.kind}: ${it.detail} -- \"${it.excerpt}\"") }
+        }
+    }
+}
+
+private fun report(verdict: Readiness.Verdict) {
+    step("Lens: ${verdict.state} - ${Readiness.explain(verdict)}")
+    verdict.chain.forEach { link ->
+        println("    ${symbol(link.status)} ${link.key}${link.detail?.let { " ($it)" } ?: ""}")
+    }
+    if (!verdict.ranks) {
+        println()
+        println("  No usable lens, so there is no ranked paper to print.")
+        println("  " + LensRequest.Manual.EXPLANATION)
+        println()
+    }
+}
 
 private fun effort(name: String?) =
     when (name?.lowercase()) {

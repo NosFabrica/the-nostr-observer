@@ -1,0 +1,17 @@
+<configuration>
+    <!-- Netty and OkHttp are chatty at DEBUG, and the root logger defaults to
+         DEBUG when a config is absent: starting the server printed forty lines
+         of allocator settings before the one line that says it is listening. -->
+    <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>%d{HH:mm:ss} %-5level %logger{24} - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <root level="INFO">
+        <appender-ref ref="STDOUT" />
+    </root>
+
+    <logger name="io.netty" level="WARN" />
+    <logger name="okhttp3" level="WARN" />
+</configuration>

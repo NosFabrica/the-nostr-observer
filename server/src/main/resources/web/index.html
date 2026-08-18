@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>The Nostr Observer</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <header>
+      <h1>The Nostr Observer</h1>
+      <p class="motto">Your web of trust, as a front page.</p>
+    </header>
+
+    <main>
+      <section id="signin" hidden>
+        <h2>Sign in</h2>
+        <p>
+          You can only make your own paper. That is the whole abuse story: nobody
+          can mint an edition about somebody else, so there is no crawlable pile
+          of other people's editions to protect.
+        </p>
+        <div class="row">
+          <button id="nip07">Use my extension</button>
+          <span class="or">or</span>
+          <input id="bunker" type="text" placeholder="bunker://… from your signer app" spellcheck="false" />
+          <button id="nip46">Connect signer</button>
+        </div>
+        <p class="note" id="signin-note"></p>
+      </section>
+
+      <section id="desk" hidden>
+        <h2>Today's edition</h2>
+        <p class="who">Signed in as <span id="me"></span> <button id="signout" class="link">sign out</button></p>
+
+        <div id="readiness" class="panel"></div>
+
+        <div class="row">
+          <button id="generate">Print today's paper</button>
+          <label><input type="checkbox" id="provisional" /> build from my follows instead</label>
+        </div>
+
+        <ol id="progress" class="progress"></ol>
+        <div id="result" class="panel" hidden></div>
+      </section>
+    </main>
+
+    <footer>
+      <p>
+        Reads the last 24 hours through your own web of trust. Publishes to your
+        own Blossom servers, under your own key. We keep the address and the
+        hash.
+      </p>
+    </footer>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

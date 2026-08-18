@@ -1,7 +1,9 @@
 # AGENTS.md
 
-The headless generator (`generator/`) is built and runs against the live relay;
-sign-in and publishing are not. **[`docs/PLAN.md`](docs/PLAN.md) is the design**
+The headless generator (`generator/`) and the web app (`server/`) are both
+built and run against the live relay. What has never run is the model call
+itself: there is no `ANTHROPIC_API_KEY` in the dev container, so everything from
+`Writer.write` onward is untested against the real API. **[`docs/PLAN.md`](docs/PLAN.md) is the design**
 — read it before writing code; this file holds only what the plan does not: the
 decisions that are settled, the ones that are not, the readings taken off the
 live relays, and the conventions to hold to.
@@ -24,6 +26,14 @@ reading — the commenting conventions, the JitPack pinning trap, and the
     ./gradlew :generator:installDist
     generator/build/install/generator/bin/generator <npub> --check
     generator/build/install/generator/bin/generator <npub> --dry-run
+
+    ./gradlew :server:installDist
+    OBSERVER_INSECURE_COOKIES=true PORT=8099 server/build/install/server/bin/server
+
+`OBSERVER_DB`, `OBSERVER_RELAY`, `OBSERVER_EFFORT`, `PORT`, `HOST` and
+`OBSERVER_INSECURE_COOKIES` configure the server. The last one lets the session
+cookie travel over plain HTTP and is for local work only — a deployment that
+sets it is asserting that TLS terminates somewhere in front of it.
 
 `--check` reports the readiness chain and stops. `--dry-run` does everything
 except call the model and writes the digest instead of a page. Neither needs an
@@ -84,6 +94,34 @@ API key. A full run reads `ANTHROPIC_API_KEY` from the environment.
 - **Read NIP-11 before theorising about a relay.** `limitation` states the
   message cap, filter count, subscription count and default limit. All of the
   above was one `curl -H "Accept: application/nostr+json"` away.
+
+## The publish path (Phase 3)
+
+- **The server holds no key and can sign nothing.** It builds the two events a
+  publish needs (`24242` upload auth, `35128` manifest), hands them to a signer,
+  and checks what comes back with `Countersign` — same author, same tags, valid
+  signature. Building the template server-side is what makes that check possible
+  at all; a flow that just relays whatever the client invented has nothing to
+  compare against.
+- **`kind 35128` replaces.** Every publish rebuilds the manifest from the full
+  archive in our own index. A manifest carrying only today is a manifest that
+  deleted every other day.
+- **The manifest goes out only after a Blossom server has the blob.** A manifest
+  pointing at a hash nobody stores is a 404 with a signature on it.
+- **NIP-46 runs on the server, NIP-07 in the browser.** A browser NIP-46 client
+  needs secp256k1 ECDH, which WebCrypto does not have; and mobile browsers drop
+  websockets when the tab is backgrounded, which is exactly when the reader is
+  in their signer app. A server-held connection does not get backgrounded, and
+  it is what Phase 4's scheduled runs need anyway. The cost is stated in
+  `Bunkers`: while a session is open, this process can ask the reader's signer
+  to sign the three kinds it asked permission for.
+- **`Nip98AuthVerifier.verify` takes `(header, METHOD, URL, body)`.** All four
+  are `String`s, so swapping the middle two compiles and fails at runtime with
+  "method mismatch: expected http://.../api/session, got POST". It fails closed;
+  a test caught it.
+- **An empty `kind 10063` is a hard stop, not a default.** Substituting a server
+  of our own would make us the host of a page whose whole promise is that the
+  reader hosts it.
 
 ## Quartz behaviours worth knowing here
 
