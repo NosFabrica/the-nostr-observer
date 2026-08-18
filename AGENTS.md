@@ -196,6 +196,48 @@ API key. A full run reads `ANTHROPIC_API_KEY` from the environment.
   to another deployment — no longer silently deletes every earlier edition on
   the next publish.
 
+## Highlights are somebody else's words (2026-08-18)
+
+A `kind 9802` highlight's content is a verbatim excerpt of another person's
+writing. The digest rendered it exactly like a post — byline of the
+highlighter, no source, no author — so a model reading it writes *"Gigi wrote:
+…"* when Gigi only marked the passage. A real quote, under the wrong name,
+signed by the reader.
+
+**The validator cannot catch this.** It checks that quoted text appears
+verbatim in a source event, and it does — in the highlight. Text fidelity and
+correct attribution are different properties, and only the first was ever
+checked. Anywhere the corpus carries one person's words under another person's
+signature, the same hole opens.
+
+Measured over 31 highlights in one window: 11 carry a `p` naming the author, 20
+an `r` source URL, 7 an `a` long-form address, 18 a `context` with the
+surrounding passage. All of it was being discarded. The digest now prints
+`HIGHLIGHTED BY`, an explicit EXCERPT warning, `AUTHOR` (resolved to a name, or
+"not named" — silence invites the writer to fall back on the byline), `SOURCE`
+and `CONTEXT` marked as unquotable. Quoted authors are added to the profile
+fetch, since they signed nothing in the window and would otherwise be hex.
+
+## Content added 2026-08-18
+
+- **`30311` live, and only while live.** Replaceable events keep the record of a
+  finished stream in the window: 11 `live` against 7 `ended` in one measured
+  day. `Desk.keeps` drops the ended ones. "Now" means generation time — the page
+  is static, so the prompt tells the writer to say when a stream started rather
+  than promise it is still running.
+- **`1068` polls.** Options arrive as `["option", id, label]` in two id shapes
+  (`"0"` and `"Bu2a9f"`), so the label is always the second field.
+- **`30617` git repositories.** Uses `name`/`description` where everything else
+  uses `title`/`summary`.
+- **`31922` joined the calendar desk** — the all-day half of NIP-52 to 31923's
+  timed half. Zero in the measured window, which is how the gap stayed
+  invisible.
+- **Rejected with numbers:** `1111` comments are the biggest untapped pool by
+  people (266 events, 124 authors) but only 15 of 263 point at anything in our
+  corpus, so a desk of them is context-free replies. `9735` zap receipts are the
+  highest-volume unread kind (407) and are a SIGNAL, not a desk — 22 of 580
+  corpus events were zapped in-window, top post 5 times.
+
 ## Video (2026-08-18)
 
 - **The current NIP-71 kinds are empty; the deprecated ones carry the video.**

@@ -28,6 +28,26 @@ enum class Desk(
     PICTURES(listOf(20), "picture posts", 60),
 
     /**
+     * Streams that are on the air RIGHT NOW, and only those.
+     *
+     * A `kind 30311` is replaceable and carries a `status`, so the record of a
+     * finished stream sits in the window looking exactly like a running one.
+     * Measured 2026-08-18: of 18 in a 24-hour window, 11 were `live` and 7 had
+     * already `ended`. Listings for something that finished this morning are
+     * not listings, so the ended ones are dropped here rather than left for the
+     * writer to notice.
+     *
+     * Honest limit: "now" is generation time. The page is a static file, so a
+     * stream can end between the edition being written and somebody reading it.
+     * The prompt tells the writer to say when it started rather than to promise
+     * it is still running.
+     */
+    LIVE(listOf(30311), "live now", 30) {
+        override fun keeps(event: Event) = event.value("status").equals("live", ignoreCase = true)
+    },
+    POLLS(listOf(1068), "polls", 20),
+
+    /**
      * Video: the current kinds and the deprecated ones together, because the
      * deprecated ones are where the video actually is.
      *
@@ -50,8 +70,22 @@ enum class Desk(
     ARTICLES(listOf(30023), "long-form", 100),
     CLASSIFIEDS(listOf(30402), "classifieds", 30),
     WIKI(listOf(30818), "wiki entries", 30),
-    CALENDAR(listOf(31923), "calendar events", 100),
+
+    // 31922 is the all-day half of NIP-52 and 31923 the timed half. Reading
+    // only one of them dropped whole-day events silently -- measured 2026-08-18
+    // there were none, which is exactly how a gap like this stays invisible.
+    CALENDAR(listOf(31922, 31923), "calendar events", 100),
     APPS(listOf(32267), "app releases", 30),
+    GIT(listOf(30617), "code repositories", 30),
+    ;
+
+    /**
+     * Whether an event still belongs on the desk after it arrives.
+     *
+     * Only [LIVE] needs it. A filter cannot express "and the `status` tag says
+     * live", so the relay returns both and this drops the rest.
+     */
+    open fun keeps(event: Event): Boolean = true
 }
 
 /** A byline, resolved from a kind 0 through quartz's own metadata reader. */
@@ -172,7 +206,11 @@ class Pull(
                 val asked =
                     desks.map { desk ->
                         desk to
-                            async { relays.fetch(searchRelay, filter(desk.kinds, since, until, desk.limit, observer), idle = 25_000) }
+                            async {
+                                relays
+                                    .fetch(searchRelay, filter(desk.kinds, since, until, desk.limit, observer), idle = 25_000)
+                                    .filter(desk::keeps)
+                            }
                     }
                 val controlAsked = async { controlRun(since, until) }
                 asked.associate { (desk, job) -> desk to job.await().take(desk.limit) } to controlAsked.await()
@@ -181,7 +219,13 @@ class Pull(
         // Every author we are about to print, plus everyone the control run
         // names -- the Instrument panel prints the spammer's own text, and a hex
         // string there would hide what makes the comparison land.
-        val keys = (ranked.values.flatten() + control).map { it.pubKey }.distinct()
+        //
+        // And the people a HIGHLIGHT quotes. They wrote the sentence but signed
+        // nothing in this window, so they appear in no event's pubKey; without
+        // them the digest can only credit the excerpt to a hex prefix, which is
+        // the same as not crediting it.
+        val quoted = ranked[Desk.HIGHLIGHTS].orEmpty().mapNotNull { it.value("p") }.filter { it.length == 64 }
+        val keys = ((ranked.values.flatten() + control).map { it.pubKey } + quoted).distinct()
         return Corpus(observer, since, until, ranked, control, profiles(keys))
     }
 

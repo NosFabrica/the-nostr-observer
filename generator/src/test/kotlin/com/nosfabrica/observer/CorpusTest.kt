@@ -2,6 +2,7 @@ package com.nosfabrica.observer
 
 import com.nosfabrica.observer.corpus.ArtDesk
 import com.nosfabrica.observer.corpus.Digest
+import com.nosfabrica.observer.nostr.Desk
 import com.nosfabrica.observer.nostr.Readiness
 import com.vitorpamplona.quartz.nip19Bech32.decodePublicKeyAsHexOrNull
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -325,5 +326,54 @@ class ReadinessTest {
         assertNull(Readiness.fraction(5, null))
         assertNull(Readiness.fraction(5, 0))
         assertEquals(1.0, Readiness.fraction(120, 100), "we can hold more than an upstream serves")
+    }
+}
+
+/**
+ * A highlight is somebody else's sentence.
+ *
+ * The digest used to render a `kind 9802` exactly like a post: byline of the
+ * highlighter, no source, no author. A model reading that writes `Gigi wrote
+ * "..."` when Gigi only marked the passage — a real quote under the wrong name,
+ * published with the reader's signature on it. The validator cannot catch it,
+ * because the text IS verbatim in a source event; text fidelity and correct
+ * attribution are different properties and only one was being checked.
+ */
+class HighlightTest {
+    private fun render(vararg tags: List<String>): String {
+        val highlight =
+            Fixtures.event("h1", Fixtures.ALICE, "human code review has very nearly run its course", kind = 9802, tags = tags.toList())
+        return Digest().render(Fixtures.corpus(listOf(highlight), Desk.HIGHLIGHTS), emptyList()).text
+    }
+
+    @Test
+    fun `the byline says who highlighted it, not who wrote it`() {
+        val text = render(listOf("p", Fixtures.MALLORY), listOf("r", "https://example.com/essay"))
+        assertTrue(text.contains("HIGHLIGHTED BY Alice"), text.take(300))
+        assertTrue(text.contains("NOT the highlighter's words"), text.take(300))
+    }
+
+    @Test
+    fun `the original author is named and resolved to a name`() {
+        val text = render(listOf("p", Fixtures.MALLORY))
+        assertTrue(text.contains("AUTHOR: Mallory"), text.take(300))
+    }
+
+    @Test
+    fun `an unnamed author says so rather than staying silent`() {
+        // Silence is what invites the writer to fall back on the byline, which
+        // is the highlighter. Measured: only 11 highlights in 31 carry a `p`.
+        val text = render(listOf("r", "https://example.com/essay"))
+        assertTrue(text.contains("AUTHOR: not named"), text.take(300))
+        assertTrue(text.contains("SOURCE: https://example.com/essay"), text.take(300))
+    }
+
+    @Test
+    fun `context is offered as background and marked unquotable`() {
+        // Only the excerpt is verbatim-checked. A writer quoting the context
+        // would lose the whole edition at the validator.
+        val text = render(listOf("context", "The surrounding passage of the essay."))
+        assertTrue(text.contains("do not quote as the excerpt"), text.take(300))
+        assertTrue(text.contains("The surrounding passage"), text.take(300))
     }
 }

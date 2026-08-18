@@ -5,6 +5,7 @@ import com.nosfabrica.observer.nostr.Desk
 import com.nosfabrica.observer.nostr.client
 import com.nosfabrica.observer.nostr.hashtags
 import com.nosfabrica.observer.nostr.value
+import com.nosfabrica.observer.nostr.values
 import com.vitorpamplona.quartz.nip01Core.core.Event
 import java.time.Instant
 import java.time.ZoneOffset
@@ -93,14 +94,21 @@ class Digest(
         art: List<Art>,
     ) {
         val profile = corpus.profiles[event.pubKey]
-        sb.append("\n--- ").append(profile?.display() ?: event.pubKey.take(8))
+        // A highlight is somebody ELSE's sentence. Saying so in the byline is
+        // the whole fix: see [highlight].
+        sb.append("\n--- ").append(if (desk == Desk.HIGHLIGHTS) "HIGHLIGHTED BY " else "")
+        sb.append(profile?.display() ?: event.pubKey.take(8))
         profile?.nip05?.let { sb.append(" <").append(it).append(">") }
         sb.append(" · ").append(stamp.format(Instant.ofEpochSecond(event.createdAt))).append("Z")
         event.client()?.let { sb.append(" · via ").append(it) }
         sb.append(" · event ").append(event.id).append("\n")
 
-        event.value("title")?.let { sb.append("TITLE: ").append(it.take(200)).append("\n") }
-        event.value("summary")?.let { sb.append("SUMMARY: ").append(it.take(600)).append("\n") }
+        // `name` and `description` are what a git repository calls these.
+        (event.value("title") ?: event.value("name"))?.let { sb.append("TITLE: ").append(it.take(200)).append("\n") }
+        (event.value("summary") ?: event.value("description"))?.let { sb.append("SUMMARY: ").append(it.take(600)).append("\n") }
+        if (desk == Desk.HIGHLIGHTS) highlight(sb, event, corpus)
+        if (desk == Desk.LIVE) live(sb, event)
+        if (desk == Desk.POLLS) poll(sb, event)
         event.value("location")?.let { sb.append("LOCATION: ").append(it.take(120)).append("\n") }
         // Length is most of what a reader needs to decide about a video, and
         // it is the one fact the body text never carries.
@@ -116,6 +124,78 @@ class Digest(
 
         val body = body(desk, event)
         if (body.isNotBlank()) sb.append(body).append("\n")
+    }
+
+    /**
+     * Who actually wrote the sentence, and where it came from.
+     *
+     * THE BUG THIS FIXES: a `kind 9802` highlight's content is a verbatim
+     * excerpt of somebody else's writing, and the digest rendered it exactly
+     * like a post — byline of the highlighter, no source, no original author.
+     * A model reading that writes `Gigi wrote: "human code review has very
+     * nearly run its course"` when Gigi merely marked the passage. It is a real
+     * quote attributed to the wrong person, published under the reader's key.
+     *
+     * The validator cannot catch it. It checks that quoted text appears
+     * VERBATIM in a source event, and the text does — in the highlight. Text
+     * fidelity and correct attribution are different properties, and only one
+     * of them was being checked.
+     *
+     * Measured 2026-08-18 over 31 highlights: 11 carry a `p` naming the author,
+     * 20 an `r` for the source URL, 7 an `a` for a long-form address, and 18 a
+     * `context` giving the surrounding passage. All of it was being discarded.
+     */
+    private fun highlight(
+        sb: StringBuilder,
+        event: Event,
+        corpus: Corpus,
+    ) {
+        sb.append("EXCERPT — these are NOT the highlighter's words. Attribute the quote to the author below.\n")
+        // Named when the highlight names them, and explicitly unknown when it
+        // does not -- measured 2026-08-18, only 11 of 31 carried a `p`. Silence
+        // here is what invites the writer to fall back on the byline above,
+        // which is the highlighter and the wrong person.
+        val author = event.value("p")?.takeIf { it.length == 64 }
+        if (author != null) {
+            sb.append("AUTHOR: ").append(corpus.byline(author)).append("\n")
+        } else {
+            sb.append("AUTHOR: not named — cite the source below, never the highlighter\n")
+        }
+        (event.value("r") ?: event.value("a"))?.let { sb.append("SOURCE: ").append(it.take(200)).append("\n") }
+        event.value("context")?.takeIf { it.isNotBlank() }?.let {
+            sb.append("CONTEXT (surrounding passage, do not quote as the excerpt): ").append(it.take(500)).append("\n")
+        }
+    }
+
+    /** A stream is only news while it is running, so say when it started and who is there. */
+    private fun live(
+        sb: StringBuilder,
+        event: Event,
+    ) {
+        event.value("starts")?.toLongOrNull()?.let {
+            sb.append("ON AIR SINCE: ").append(stamp.format(Instant.ofEpochSecond(it))).append("Z\n")
+        }
+        event.value("current_participants")?.let { sb.append("WATCHING: ").append(it).append("\n") }
+    }
+
+    /**
+     * A poll is its question and its options, and the options are tags.
+     *
+     * Two shapes in the wild, measured 2026-08-18: `["option", "0", "A) €25,000"]`
+     * and `["option", "Bu2a9f", "Yes"]`. The first field is an id in both, so the
+     * label is always the second.
+     */
+    private fun poll(
+        sb: StringBuilder,
+        event: Event,
+    ) {
+        val options = event.values("option").mapNotNull { it.getOrNull(1) }.filter { it.isNotBlank() }
+        if (options.isNotEmpty()) {
+            sb.append("OPTIONS: ").append(options.take(8).joinToString(" / ") { it.take(80) }).append("\n")
+        }
+        event.value("endsAt")?.toLongOrNull()?.let {
+            sb.append("CLOSES: ").append(stamp.format(Instant.ofEpochSecond(it))).append("Z\n")
+        }
     }
 
     /**

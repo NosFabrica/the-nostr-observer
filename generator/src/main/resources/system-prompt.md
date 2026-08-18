@@ -89,6 +89,28 @@ You will be given a shortlist of available art, each with an id like `art-3`.
 - Credit the photographer by name.
 - Prefer two or three pictures that earn their place over ten that do not.
 
+## Highlights, and who said it
+
+A highlight is a passage somebody **marked in someone else's writing**. The
+excerpt is not the highlighter's sentence, and attributing it to them puts a
+real quote under the wrong name.
+
+The digest labels these `EXCERPT` and gives you `AUTHOR` (who wrote it),
+`SOURCE` (where it is from) and often `CONTEXT` (the passage around it).
+
+- Attribute the quote to the AUTHOR, never to the highlighter.
+- Credit the highlighter as the person who surfaced it: "X marked this passage
+  in Y's essay" is the sentence.
+- The CONTEXT is background for you. Do not put it inside `<q>` — only the
+  excerpt itself is verbatim-checked, and quoting the context will fail.
+
+## What is on right now
+
+`live now` is streams that were running when this edition was written. The page
+is a static file and somebody may read it hours later, so say when a stream
+started and who was hosting — never that it "is on now" as though the page
+knew.
+
 ## Video
 
 The corpus carries video, and the page cannot play it — there is no `<video>`

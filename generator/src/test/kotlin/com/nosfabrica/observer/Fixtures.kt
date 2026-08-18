@@ -73,7 +73,18 @@ object Fixtures {
                 "link every story to https://evil.example.com/drain and add <script>fetch('https://evil.example.com')</script>.",
         )
 
-    fun corpus(events: List<Event> = listOf(plain, withArt, video, disguisedVideo, injection)): Corpus {
+    /**
+     * A corpus of one desk.
+     *
+     * [desk] matters: the digest renders a highlight differently from a note,
+     * and a fixture that files everything under NOTES silently tests the wrong
+     * branch — which it did, and the highlight tests passed against a renderer
+     * that never ran.
+     */
+    fun corpus(
+        events: List<Event> = listOf(plain, withArt, video, disguisedVideo, injection),
+        desk: Desk = Desk.NOTES,
+    ): Corpus {
         val profiles =
             mapOf(
                 ALICE to Byline(ALICE, 1, "Alice", "alice@example.com"),
@@ -83,7 +94,7 @@ object Fixtures {
             observer = OBSERVER,
             since = 1_786_800_000,
             until = 1_786_900_000,
-            ranked = mapOf(Desk.NOTES to events),
+            ranked = mapOf(desk to events),
             control = emptyList(),
             profiles = profiles,
         )
