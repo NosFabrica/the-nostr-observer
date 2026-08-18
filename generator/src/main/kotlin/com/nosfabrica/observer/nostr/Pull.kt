@@ -5,6 +5,8 @@ import com.vitorpamplona.quartz.nip01Core.metadata.MetadataEvent
 import com.vitorpamplona.quartz.nip01Core.relay.filters.Filter
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import java.security.MessageDigest
+import java.util.HexFormat
 
 /**
  * The desks a front page is made of, and why each earns a column.
@@ -145,6 +147,42 @@ data class Corpus(
     fun all(): List<Event> = ranked.values.flatten()
 
     fun byline(pubkey: String): String = profiles[pubkey]?.display() ?: pubkey.take(8)
+
+    /**
+     * A short code for this edition, printed top-left of the folio.
+     *
+     * IT CANNOT BE THE HASH OF THE PAGE. That is a fixed point: printing the
+     * page's own sha256 into the page changes the page, which changes the hash.
+     * The published file does have a content hash — it is what Blossom stores
+     * it under and what the upload authorization is bound to — but it exists
+     * only after the page is final, and no ink on the page can name it.
+     *
+     * So this hashes what the edition is MADE of: who it was read for, the
+     * window it covers, and the id of every event that came back. Two runs over
+     * the same material print the same code, a run an hour later prints a
+     * different one, and two readers on the same morning print different ones
+     * because their lenses surfaced different things. That is what "this
+     * specific unit" means for a paper — a print run, not a file.
+     *
+     * Six hex digits, which is sixteen million and is not a collision domain
+     * anybody will meet: this identifies an edition to a person reading it,
+     * beside a date and a name, not to a database.
+     */
+    fun code(): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        digest.update(observer.toByteArray())
+        digest.update(since.toString().toByteArray())
+        digest.update(until.toString().toByteArray())
+        // Sorted, because the desks are pulled in parallel and the order they
+        // finish in is a race. A code that changed between two runs over
+        // identical material would be worse than no code at all.
+        all().map { it.id }.sorted().forEach { digest.update(it.toByteArray()) }
+        return HexFormat
+            .of()
+            .formatHex(digest.digest())
+            .take(6)
+            .uppercase()
+    }
 }
 
 class Pull(

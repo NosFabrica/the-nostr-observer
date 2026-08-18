@@ -156,6 +156,7 @@ class Writer(
             // formatted. The model is not asked to convert a timestamp: it has
             // no reliable way to know the offset on the day, and getting it
             // wrong prints a paper dated tomorrow.
+            append("Edition code: ").append(corpus.code()).append("\n")
             append("Date: ").append(day.format(closed)).append("\n")
             append("Window: the 24 hours ending ").append(clock.format(closed)).append(", the reader's local time\n")
             append("Reader: ")

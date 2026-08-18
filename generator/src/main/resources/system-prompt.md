@@ -70,6 +70,7 @@ day; the headlines are the summary of the day.
 Set them exactly like this, with nothing else in them:
 
     <div class="folio">
+      <span>No. 4F2A9C</span>
       <span>Tuesday, August 18, 2026</span>
       <span>24h to 22:04</span>
     </div>
@@ -84,12 +85,14 @@ Set them exactly like this, with nothing else in them:
 
 Each row is three slots: left, CENTRED, right. The centred slot is the thing
 the row is about — the date on the folio, the size of the day on the dateline.
-The folio carries only two spans, and the stylesheet puts them in the middle
-and on the right; do not add a third to fill the gap.
 
 Every span is a few words. Three of them share one narrow line, so a span that
 runs to a sentence wraps and takes the row with it.
 
+- **The edition code goes top-left, as `No. XXXXXX`.** It is given to you in
+  the brief. Print it exactly, in that form, and never invent one — it is a
+  fingerprint of the material this edition was made from, and two papers
+  carrying the same code were made from the same reading of the network.
 - **The date carries its day of the week.** "Tuesday, August 18, 2026" — a
   front page says what day it is, and a reader opening yesterday's edition
   should be able to tell at a glance.
