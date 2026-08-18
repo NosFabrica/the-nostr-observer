@@ -480,11 +480,13 @@ fun Application.routes(app: App) {
                     ok = announced.any { it.ok },
                     day = day,
                     naddr = Templates.address(session.pubkey, day) ?: "",
-                    url =
-                        run.servers
-                            .firstOrNull()
-                            ?.trimEnd('/')
-                            ?.let { "$it/${run.sha}" },
+                    // The URL the SERVER gave us, from the first one that
+                    // accepted. Assembling `server + "/" + hash` is a guess,
+                    // and BUD-02 has the server answer with the real one --
+                    // free to be a CDN domain, a path prefix, or to carry an
+                    // extension. Guessing produces a link that 404s while the
+                    // upload itself was perfectly fine.
+                    url = uploads.firstOrNull { it.ok && it.url != null }?.url,
                     uploads = uploads.map { Outcome(it.server, it.ok, it.detail) },
                     relays = announced.map { Outcome(it.relay, it.ok, it.message) },
                 )

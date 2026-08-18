@@ -9,6 +9,7 @@ import com.vitorpamplona.quartz.nip01Core.signers.NostrSignerSync
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.net.InetSocketAddress
@@ -150,6 +151,69 @@ class BlossomTest {
             } finally {
                 ok.stop(0)
                 broken.stop(0)
+            }
+        }
+
+    @Test
+    fun `the URL comes from the server, not from us`() =
+        runTest {
+            // BUD-02 has the server answer with the URL, and it is free to
+            // serve from somewhere other than `<server>/<hash>` -- a CDN
+            // domain, a path prefix, an extension. We used to assemble that
+            // guess and put it in the publish report, which is a link that 404s
+            // while the upload itself was perfectly fine.
+            val seen = Seen()
+            val blob = "<main>today</main>".toByteArray()
+            val sha = Blossom.sha256(blob)
+            val server =
+                serve(seen) {
+                    200 to """{"url":"https://cdn.example.com/blobs/$sha.html","sha256":"$sha","size":${blob.size}}"""
+                }
+            try {
+                val result = Blossom().upload(listOf(url(server)), blob, authFor(blob)).single()
+                assertTrue(result.ok)
+                assertEquals("https://cdn.example.com/blobs/$sha.html", result.url)
+            } finally {
+                server.stop(0)
+            }
+        }
+
+    @Test
+    fun `a server that stored something else is not a success`() =
+        runTest {
+            // A 200 whose descriptor names a different blob means the manifest
+            // we are about to sign would point at a hash this server does not
+            // have: a signed link to a 404, announced to their relays.
+            val seen = Seen()
+            val server =
+                serve(seen) {
+                    200 to """{"url":"https://blossom.example.com/${"9".repeat(64)}","sha256":"${"9".repeat(64)}"}"""
+                }
+            try {
+                val blob = "<main>today</main>".toByteArray()
+                val result = Blossom().upload(listOf(url(server)), blob, authFor(blob)).single()
+                assertFalse(result.ok, "a 200 is not enough: it stored a different blob")
+                assertTrue(result.detail.contains("different blob"), result.detail)
+            } finally {
+                server.stop(0)
+            }
+        }
+
+    @Test
+    fun `a server that says nothing useful is still a success`() =
+        runTest {
+            // Not every server answers with a descriptor we can parse, and an
+            // upload that a server accepted is an upload. Only a descriptor
+            // that CONTRADICTS us is a failure.
+            val seen = Seen()
+            val server = serve(seen) { 200 to "OK" }
+            try {
+                val blob = "<main>today</main>".toByteArray()
+                val result = Blossom().upload(listOf(url(server)), blob, authFor(blob)).single()
+                assertTrue(result.ok, result.detail)
+                assertNull(result.url)
+            } finally {
+                server.stop(0)
             }
         }
 

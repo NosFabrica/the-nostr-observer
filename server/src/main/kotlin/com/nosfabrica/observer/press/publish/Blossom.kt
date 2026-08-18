@@ -2,10 +2,13 @@ package com.nosfabrica.observer.press.publish
 
 import com.vitorpamplona.quartz.nip01Core.core.Event
 import com.vitorpamplona.quartz.nipB7Blossom.BlossomAuthorizationEvent
+import com.vitorpamplona.quartz.nipB7Blossom.BlossomServerUrl
+import com.vitorpamplona.quartz.nipB7Blossom.BlossomUploadResult
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.serialization.json.Json
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -33,6 +36,18 @@ class Blossom(
         val server: String,
         val ok: Boolean,
         val detail: String,
+        /**
+         * Where the server says the blob is, from its own descriptor.
+         *
+         * NOT `server + "/" + sha`, which is what this assembled before and is
+         * a guess: BUD-02 has the server answer with the URL, and it is free to
+         * serve from a CDN domain, a path prefix, or with an extension on the
+         * end. Guessing produces a link that 404s for a reader while the upload
+         * itself was perfectly fine.
+         */
+        val url: String? = null,
+        /** What the server says it stored. Compared against what we sent. */
+        val sha256: String? = null,
     )
 
     /**
@@ -59,6 +74,9 @@ class Blossom(
                 .awaitAll()
         }
 
+    /** Servers send fields we do not model, and a new one must not fail an upload. */
+    private val json = Json { ignoreUnknownKeys = true }
+
     private fun put(
         server: String,
         blob: ByteArray,
@@ -78,25 +96,45 @@ class Blossom(
         val request =
             Request
                 .Builder()
-                .url("$base/upload")
+                .url(base + BlossomServerUrl.UPLOAD_PATH)
                 .put(blob.toRequestBody("text/html".toMediaType()))
                 .header("Authorization", header)
                 .build()
 
         return runCatching {
             http.newCall(request).execute().use { response ->
+                val body = response.body?.string().orEmpty()
+                if (!response.isSuccessful) {
+                    // A Blossom server that refuses says why in the body, and
+                    // that sentence is the only thing that will tell a reader
+                    // whether they need a different server or a bigger plan.
+                    return@use Upload(
+                        server = server,
+                        ok = false,
+                        detail = "HTTP ${response.code}: ${body.take(200).ifBlank { "no reason given" }}",
+                    )
+                }
+
+                // The descriptor, parsed rather than assumed. A 200 with a
+                // sha256 that is not the one we sent means the server stored
+                // something else, and a manifest pointing at OUR hash would be
+                // a signed link to a 404.
+                val stored = runCatching { json.decodeFromString<BlossomUploadResult>(body) }.getOrNull()
+                val said = stored?.sha256
+                val expected = auth.tags.firstOrNull { it.size > 1 && it[0] == "x" }?.get(1)
+                if (said != null && expected != null && !said.equals(expected, ignoreCase = true)) {
+                    return@use Upload(
+                        server = server,
+                        ok = false,
+                        detail = "stored a different blob: it says ${said.take(12)}…, we sent ${expected.take(12)}…",
+                    )
+                }
                 Upload(
                     server = server,
-                    ok = response.isSuccessful,
-                    // A Blossom server that refuses says why in the body, and that
-                    // sentence is the only thing that will tell a reader whether
-                    // they need a different server or a bigger plan.
-                    detail =
-                        if (response.isSuccessful) {
-                            "HTTP ${response.code}"
-                        } else {
-                            "HTTP ${response.code}: ${response.body?.string().orEmpty().take(200).ifBlank { "no reason given" }}"
-                        },
+                    ok = true,
+                    detail = "HTTP ${response.code}",
+                    url = stored?.url,
+                    sha256 = stored?.sha256,
                 )
             }
         }.getOrElse { Upload(server, false, it.message ?: it::class.simpleName ?: "failed") }
