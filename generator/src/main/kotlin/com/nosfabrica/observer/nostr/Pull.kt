@@ -75,22 +75,35 @@ data class Corpus(
 class Pull(
     private val relays: Relays,
     private val searchRelay: String,
+    private val trustFloor: Int = DEFAULT_TRUST_FLOOR,
 ) {
     /**
      * A bare `observer:<pk> sort:rank` with no search term is a valid NIP-50
      * query and returns a ranked recency feed. That is the whole product, and
      * it is worth stating because it looks like a mistake: every other client
      * sends a term.
+     *
+     * `filter:rank:gte` is the trust floor, and it is not redundant with
+     * `limit`. See [DEFAULT_TRUST_FLOOR]. It is NOT applied to the control run:
+     * that query is the anonymous read, and filtering it would destroy the only
+     * comparison this project makes.
      */
     private fun filter(
         kind: Int,
         since: Long,
+        until: Long,
         limit: Int,
         observer: String?,
     ): Filter =
         Filter(
             kinds = listOf(kind),
             since = since,
+            // BOTH ends. `until` was carried all the way into Corpus and never
+            // put into a filter, so the window had a start and no finish: a
+            // backdated run asked for "the 24 hours ending last Tuesday" and got
+            // everything from last Monday to now instead. Invisible in normal
+            // use, because the server always passes the present.
+            until = until,
             limit = limit,
             // Null is the control run, and the difference between these two
             // strings is the entire product. `sort:rank` without a resolvable
@@ -98,7 +111,12 @@ class Pull(
             // ranking, which on a measured window was 209 of 400 posts from one
             // spam account. That is why nothing gets here without a lens the
             // readiness chain has already confirmed.
-            search = if (observer == null) "sort:rank" else "observer:$observer sort:rank",
+            search =
+                if (observer == null) {
+                    "sort:rank"
+                } else {
+                    "observer:$observer sort:rank filter:rank:gte:$trustFloor"
+                },
         )
 
     suspend fun corpus(
@@ -128,9 +146,9 @@ class Pull(
                 val asked =
                     desks.map { desk ->
                         desk to
-                            async { relays.fetch(searchRelay, filter(desk.kind, since, desk.limit, observer), idle = 25_000) }
+                            async { relays.fetch(searchRelay, filter(desk.kind, since, until, desk.limit, observer), idle = 25_000) }
                     }
-                val controlAsked = async { controlRun(since) }
+                val controlAsked = async { controlRun(since, until) }
                 asked.associate { (desk, job) -> desk to job.await().take(desk.limit) } to controlAsked.await()
             }
 
@@ -148,8 +166,43 @@ class Pull(
      * them interleaved with no way to tell which side an event came from — and
      * the Instrument panel's whole claim is about the difference between them.
      */
-    private suspend fun controlRun(since: Long): List<Event> =
-        relays.fetch(searchRelay, filter(Desk.NOTES.kind, since, Desk.NOTES.limit, null), idle = 25_000)
+    private suspend fun controlRun(
+        since: Long,
+        until: Long,
+    ): List<Event> = relays.fetch(searchRelay, filter(Desk.NOTES.kind, since, until, Desk.NOTES.limit, null), idle = 25_000)
+
+    companion object {
+        /**
+         * The lowest trust score this reader's paper will print.
+         *
+         * `limit` alone is not a quality gate, and measuring that was the
+         * surprise. The obvious model — the relay ranks the window and `limit`
+         * takes the top N, so a floor below the Nth score does nothing — is
+         * WRONG. Measured against search-staging on 2026-08-18 for the
+         * prototype observer, over a 24-hour window of 35,084 candidate notes:
+         *
+         *     no floor   35,084      gte:20   11,838
+         *     gte:5      22,899      gte:30    9,607
+         *     gte:10     16,265      gte:50    6,834
+         *
+         * and at `limit = 400`, adding `gte:20` REPLACED 49 of the 400 notes.
+         * So roughly one in eight of what the paper printed scored under 20 on
+         * the reader's own web of trust, and the floor swaps those out for
+         * better material.
+         *
+         * It matters most where it is hardest to see. A reader with a rich lens
+         * has twelve thousand notes above the floor and gives up nothing; a
+         * reader with a thin lens, or anybody on a quiet day, is the case where
+         * a bare `limit` scrapes downward to fill its quota with material
+         * nobody vouched for. The floor turns the cap from a target back into a
+         * ceiling.
+         *
+         * `filter:rank:` is this relay's own NIP-50 extension, like `observer:`
+         * — the generator is already specific to it, so this adds no coupling
+         * that was not there.
+         */
+        const val DEFAULT_TRUST_FLOOR = 20
+    }
 
     /** kind 0 for everyone we will name. Newest wins; batched because 244 authors is normal. */
     suspend fun profiles(pubkeys: List<String>): Map<String, Byline> {

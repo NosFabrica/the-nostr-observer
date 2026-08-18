@@ -92,6 +92,28 @@ API key. A full run reads `ANTHROPIC_API_KEY` from the environment.
   frame reads the challenge as the answer.
 - **A NIP-50 search with no `since` times out** on this store; the same search
   with a 24-hour `since` answers immediately.
+- **`observer:` RANKS, it does not filter.** The candidate set for a query is
+  the whole window — 35,084 kind-1 notes in 24 hours, measured 2026-08-18 — and
+  `limit` is what turns that into a top-N. So `limit` is the lens's cutoff, not
+  pagination, and "just ask for everything" is a request for the firehose.
+- **Selection is by score; delivery is by `created_at` descending.** Measured:
+  a `limit=400` read spans the full 23.5 hours and shares only 48 events with
+  the newest 400 of a `limit=3000` read, so it is not a recency cut — but 2999
+  of 2999 consecutive pairs arrive in time order, and quartz's `EventCollector`
+  appends without sorting, so that ordering is the relay's. **The score is not
+  recoverable from the response**, which is why a client cannot do its own
+  ranked cut and why `limit` has to carry that job.
+- **`filter:rank:gte:N` is the trust floor, and it is NOT redundant with
+  `limit`.** Counts over one 24-hour window for the prototype observer: no floor
+  35,084 · gte:5 22,899 · gte:10 16,265 · gte:20 11,838 · gte:30 9,607 · gte:50
+  6,834. At `limit=400`, adding `gte:20` replaced 49 of the 400 notes — so the
+  top-N is not a strict top-N by the same score the floor uses. The pipeline
+  sends `gte:20`; the control run gets no floor and no observer, deliberately.
+- **The floor bites hardest on the small desks.** Same window: long-form 94 → 22,
+  calendar 100 → 28, file metadata 29 → 10, wiki 20 → 11, and what survives is
+  concentrated in very few authors (wiki: 11 entries from 1 person). That is
+  "sections are earned, not fixed" working as the plan intends, but it is a
+  visible editorial change and not only a quality gate.
 - **COUNTs must go one at a time.** Issuing the readiness chain's four COUNTs
   concurrently was tried and `--check` went from ~3s to hanging. Probably the
   AUTH challenge above, racing on one socket. The fetches around them do run in
@@ -173,6 +195,15 @@ API key. A full run reads `ANTHROPIC_API_KEY` from the environment.
   own kind 35128 merged with our index, so losing our database — or moving them
   to another deployment — no longer silently deletes every earlier edition on
   the next publish.
+
+## Found by audit (2026-08-18), second pass
+
+- **`until` never reached a filter.** It was threaded from the CLI into `Corpus`
+  and read by nothing, so a window had a start and no end: `--until` backdating
+  asked for "the 24 hours ending last Tuesday" and got everything from last
+  Monday to now. Latent on the server, which always passes the present. Both
+  ends are in the filters now, verified by a backdated run whose events all fall
+  inside the requested day.
 
 ## Quartz behaviours worth knowing here
 
