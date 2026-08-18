@@ -9,6 +9,8 @@ import com.vitorpamplona.quartz.nip01Core.signers.EventTemplate
 import com.vitorpamplona.quartz.nip01Core.signers.NostrSignerSync
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertInstanceOf
+import org.junit.jupiter.api.Assertions.assertNotEquals
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -46,23 +48,53 @@ class TemplateTest {
     }
 
     @Test
-    fun `a manifest carries every day, because publishing replaces it`() {
-        val days = listOf("/index.html" to "b".repeat(64), "/2026-08-18" to "b".repeat(64), "/2026-08-17" to "c".repeat(64))
-        val template = Templates.manifest(days, listOf("https://blossom.example.com"), "The Nostr Observer", 1_786_900_000)
+    fun `an edition is its own site, named for its day`() {
+        val template =
+            Templates.manifest(
+                "2026-08-18",
+                "b".repeat(64),
+                listOf("https://blossom.example.com"),
+                "The Nostr Observer",
+                1_786_900_000,
+            )
 
         assertEquals(35128, template.kind)
-        assertEquals("observer", template.tags.first { it[0] == "d" }[1])
-        val paths = template.tags.filter { it[0] == "path" }.map { it[1] to it[2] }
-        // Yesterday is still in there. A kind 35128 REPLACES, so a manifest
-        // holding only today is a manifest that deleted the archive.
-        assertEquals(days, paths)
+        assertEquals("observer-2026-08-18", template.tags.first { it[0] == "d" }[1])
+        // One page, at the root of its own site. The manifest used to carry
+        // every day the reader had ever published, because one site held all of
+        // them and a kind 35128 REPLACES -- so a manifest holding only today
+        // deleted the archive. Nothing here can: yesterday is a different event.
+        assertEquals(listOf("/index.html" to "b".repeat(64)), template.tags.filter { it[0] == "path" }.map { it[1] to it[2] })
         assertTrue(template.tags.any { it[0] == "server" && it[1] == "https://blossom.example.com" })
     }
 
     @Test
-    fun `a manifest with no paths is refused rather than published`() {
+    fun `two days are two addresses, so publishing one cannot touch the other`() {
+        // The whole reason for the shape. These are different `d` tags, so they
+        // are different addressable events, so no publish replaces another.
+        val monday = Templates.manifest("2026-08-17", "a".repeat(64), listOf("https://b.example.com"), "x", 1)
+        val tuesday = Templates.manifest("2026-08-18", "b".repeat(64), listOf("https://b.example.com"), "x", 2)
+        assertNotEquals(
+            monday.tags.first { it[0] == "d" }[1],
+            tuesday.tags.first { it[0] == "d" }[1],
+        )
+        assertNotEquals(Templates.address("9".repeat(64), "2026-08-17"), Templates.address("9".repeat(64), "2026-08-18"))
+    }
+
+    @Test
+    fun `a day is recoverable from the site name, and nothing else is ours`() {
+        // How the archive listing works: relays cannot prefix-match a `d`, so
+        // every site the reader has comes back and this is what sorts ours out.
+        assertEquals("2026-08-18", Templates.dayOf("observer-2026-08-18"))
+        assertNull(Templates.dayOf("observer"), "the old single-site name is not an edition")
+        assertNull(Templates.dayOf("blog"), "somebody else's nsite is not an edition")
+        assertNull(Templates.dayOf("observer-notes"), "a name that is not a date is not a day")
+    }
+
+    @Test
+    fun `a manifest with a bad hash is refused rather than published`() {
         assertThrows(IllegalArgumentException::class.java) {
-            Templates.manifest(emptyList(), listOf("https://b.example.com"), "x", 1)
+            Templates.manifest("2026-08-18", "not-a-hash", listOf("https://b.example.com"), "x", 1)
         }
     }
 }

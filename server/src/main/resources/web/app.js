@@ -67,6 +67,40 @@ async function signInWithBunker() {
   arrive(data);
 }
 
+/**
+ * Every paper they have already published, off their own relays.
+ *
+ * Not from a database of ours — there isn't one. Each edition is its own nsite
+ * under the day it was printed, so this list is theirs whether we are running
+ * or not, and it is the same list anybody else reading their relays would see.
+ */
+async function archive() {
+  const res = await fetch("/api/archive");
+  if (!res.ok) return;
+  const past = await res.json();
+  if (!past.length) return;
+
+  const list = $("issues");
+  list.innerHTML = "";
+  for (const edition of past) {
+    const li = document.createElement("li");
+    const link = document.createElement("a");
+    link.textContent = edition.day;
+    // A top-level navigation, so no server has to allow us in from here.
+    link.href = edition.url || "#";
+    link.target = "_blank";
+    link.rel = "noopener";
+    li.append(link);
+    if (edition.address) {
+      const addr = document.createElement("small");
+      addr.textContent = edition.address;
+      li.append(addr);
+    }
+    list.append(li);
+  }
+  $("archive").hidden = false;
+}
+
 function arrive(who) {
   state.me = who;
   // A name, or an npub if they have not published one. The server sends one
@@ -75,6 +109,7 @@ function arrive(who) {
   $("signin").hidden = true;
   $("desk").hidden = false;
   readiness();
+  archive();
 }
 
 async function signOut() {

@@ -60,6 +60,21 @@ private data class Who(
     val signer: String,
 )
 
+/**
+ * One past edition, as the console needs it.
+ *
+ * [url] is where the page actually is: a Blossom server plus the blob's hash,
+ * which any of the reader's servers will serve because the file is addressed by
+ * its content. [address] is the same edition as an `naddr1…`, for pasting into
+ * a Nostr client — and for the NIP-09 deletion that removes it.
+ */
+@Serializable
+private data class Past(
+    val day: String,
+    val url: String?,
+    val address: String?,
+)
+
 @Serializable
 private data class Started(
     val draft: String,
@@ -248,12 +263,7 @@ fun Application.routes(app: App) {
                     // From their own site event. Null when we could not read
                     // it, which is honestly "we do not know" and draws the same
                     // chain as a reader who has never published.
-                    publishedBefore =
-                        when (app.announce.existing(session.pubkey, facts.writeRelays.orEmpty())) {
-                            is Announce.Site.Found -> true
-                            Announce.Site.Missing -> false
-                            Announce.Site.Unreadable -> null
-                        },
+                    publishedBefore = app.announce.editions(session.pubkey, facts.writeRelays.orEmpty()).isNotEmpty(),
                 )
             call.respond(
                 Preflight(
@@ -276,6 +286,31 @@ fun Application.routes(app: App) {
                             chain = store.chain.map { ChainLink(it.key, it.status.name, it.detail) },
                         ),
                 ),
+            )
+        }
+
+        // Every edition they have published, read off their own relays.
+        //
+        // Nothing here comes from a table of ours. Each day is its own kind
+        // 35128 under a `d` of `observer-<date>`, so this is their archive
+        // whether we are running or not.
+        get("/api/archive") {
+            val session = signedIn(app) ?: return@get call.respond(HttpStatusCode.Unauthorized, Problem("not signed in"))
+            val relays = app.press.writeRelaysOf(session.pubkey)
+            call.respond(
+                app.announce.editions(session.pubkey, relays).map { edition ->
+                    Past(
+                        day = edition.day,
+                        // The manifest names its own servers, so an edition
+                        // keeps resolving even after they change their list.
+                        url =
+                            edition.servers
+                                .firstOrNull()
+                                ?.trimEnd('/')
+                                ?.let { "$it/${edition.hash}" },
+                        address = Templates.address(session.pubkey, edition.day),
+                    )
+                },
             )
         }
 
@@ -362,42 +397,12 @@ fun Application.routes(app: App) {
             val sha = draft.sha256 ?: return@post call.respond(HttpStatusCode.Conflict, Problem("draft has no hash"))
             val now = Instant.now().epochSecond
             val day = DAY.format(Instant.ofEpochSecond(now).atOffset(ZoneOffset.UTC))
-            // THE ARCHIVE IS THEIRS, AND IT IS THE ONLY COPY.
-            //
-            // A kind 35128 replaces rather than appends, so the manifest we
-            // build has to carry every day the reader has ever published. That
-            // list used to be rebuilt from a table of our own, which made this
-            // deployment's database the record of somebody else's archive:
-            // lose it, or move them to another instance, and the next publish
-            // silently deleted every earlier edition. Their own site event
-            // already carries all of it, so the table is gone and this is the
-            // source.
-            //
-            // Which makes the read a precondition rather than an enrichment.
-            // Silence from every relay is NOT an empty archive, and treating it
-            // as one is exactly how the back catalogue disappears — so we stop.
-            val theirs = app.announce.existing(session.pubkey, writeRelays)
-            if (theirs is Announce.Site.Unreadable) {
-                return@post call.respond(
-                    HttpStatusCode.ServiceUnavailable,
-                    Problem(
-                        "We could not reach your relays to see what you have already published. Publishing " +
-                            "now would replace your whole archive with today's paper, so nothing has been " +
-                            "sent. Try again in a moment.",
-                    ),
-                )
-            }
-            val already =
-                (theirs as? Announce.Site.Found)
-                    ?.site
-                    ?.paths()
-                    ?.map { it.path to it.hash }
-                    .orEmpty()
-            val paths = (listOf("/index.html" to sha, "/$day" to sha) + already).distinctBy { it.first }
-
             val upload = Templates.uploadAuth(sha, blob.size.toLong(), now, now + 600)
+            // One event, one path, its own address. Nothing to read first and
+            // nothing to merge: yesterday's edition is a different site that no
+            // publish will ever touch.
             val manifest =
-                Templates.manifest(paths, servers, app.continuities.of(session.pubkey).masthead, now)
+                Templates.manifest(day, sha, servers, app.continuities.of(session.pubkey).masthead, now)
             app.pending[draft.id] = Pendings.Pending(upload, manifest, servers, writeRelays, sha, day)
             call.respond(ToSign(upload.toJson(), manifest.toJson(), servers, writeRelays, sha))
         }
@@ -468,14 +473,14 @@ fun Application.routes(app: App) {
             // screen.
             // Nothing is recorded. The manifest we just published IS the record,
             // it is on the reader's own relays, and it outlives this server.
-            val naddr = "35128:${session.pubkey}:${Templates.SITE}"
+            val naddr = Templates.address(session.pubkey, pending.day) ?: "35128:${session.pubkey}:${Templates.site(pending.day)}"
             app.pending.remove(draft.id)
 
             call.respond(
                 PublishReport(
                     ok = announced.any { it.ok },
                     day = pending.day,
-                    naddr = Templates.address(session.pubkey) ?: naddr,
+                    naddr = naddr,
                     uploads = uploads.map { Outcome(it.server, it.ok, it.detail) },
                     relays = announced.map { Outcome(it.relay, it.ok, it.message) },
                 ),

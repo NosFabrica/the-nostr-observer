@@ -61,94 +61,69 @@ class Announce(
     )
 
     /**
-     * The reader's site, and whether we actually got to look.
+     * Every edition this reader has published, newest first.
      *
-     * THE WHOLE ARCHIVE IS THIS EVENT. A `kind 35128` carries every path the
-     * reader has published — `/index.html`, `/2026-08-18`, and every day before
-     * it — and it REPLACES on publish. So the difference between "you have no
-     * site" and "we could not read your site" is the difference between a first
-     * publish and deleting somebody's back catalogue, and it cannot be a
-     * guess: [Missing] is a relay saying there is nothing, and [Unreadable] is
-     * a relay saying nothing.
+     * THIS IS THE ARCHIVE, and it is entirely theirs. Each day is its own
+     * `kind 35128` under a `d` of `observer-<date>`, so the list is just their
+     * sites, filtered to the ones we named — and no publish has ever replaced
+     * any of them.
+     *
+     * There is nothing to fail closed about any more. When one site held every
+     * day at once, this read was a PRECONDITION: publishing rewrote the event
+     * that carried the archive, so a read that came back empty for the wrong
+     * reason deleted it. That needed a canary to tell an unreachable relay from
+     * an empty one, and a refusal when it could not. Now a failed read costs a
+     * reader a listing they can refresh, and nothing else.
+     *
+     * Relays cannot prefix-match a `d` tag, so this asks for their sites and
+     * sorts ours out here. A reader has a few hundred at most.
      */
-    sealed interface Site {
-        /** They have one, with every path it names. */
-        data class Found(
-            val site: NamedSiteEvent,
-        ) : Site
-
-        /** Relays answered, and there is no site yet. A first publish. */
-        data object Missing : Site
-
-        /** Nobody answered. We do not know, so nothing may be replaced. */
-        data object Unreadable : Site
-    }
-
-    suspend fun existing(
+    suspend fun editions(
         pubkey: String,
         hosts: List<String>,
-    ): Site {
-        // ASKED WITH A CANARY, because an unreachable relay is indistinguishable
-        // from an empty one.
-        //
-        // The first version of this read the manifest alone and called silence
-        // `Unreadable`. It does not work, and a test caught it: quartz answers a
-        // host it cannot reach with an empty list rather than an error, so a
-        // dead relay and a reader who has never published produce byte-identical
-        // results. Timeouts, refused connections and bad DNS all arrive as
-        // "nothing here".
-        //
-        // So the read also asks for the small replaceable events every Nostr
-        // account has — profile, relay list, server list. One of them coming
-        // back proves the host is answering, and an absent manifest beside a
-        // present profile is a real absence. Nothing at all, from any of their
-        // relays, means we are talking to nobody.
-        val mine = hosts.take(3).distinct()
-        val filter =
-            Filter(
-                kinds = listOf(NamedSiteEvent.KIND, BlossomServersEvent.KIND, RELAY_LIST, PROFILE),
-                authors = listOf(pubkey),
+    ): List<Edition> {
+        val events =
+            anyOf(
+                hosts,
+                Filter(kinds = listOf(NamedSiteEvent.KIND), authors = listOf(pubkey)),
             )
-
-        // THEIR hosts are the witnesses, not ours. Our search relay is always up
-        // and holds a profile for anybody in the corpus, so letting it vouch
-        // would make the canary sing no matter what.
-        val theirs = eachOf(mine, filter)
-        if (theirs.isEmpty() || theirs.all { it.isEmpty() }) return Site.Unreadable
-
-        // Ours is still worth reading for the manifest itself — it may hold a
-        // copy theirs has dropped — but only now that the question is known to
-        // be answerable.
-        val ours = runCatching { relays.fetch(readRelay, filter, idle = 10_000) }.getOrDefault(emptyList())
-        val newest =
-            (theirs.flatten() + ours)
-                .filter { it.kind == NamedSiteEvent.KIND && named(it) }
-                .maxByOrNull { it.createdAt }
-                ?: return Site.Missing
-        return Site.Found(NamedSiteEvent(newest.id, newest.pubKey, newest.createdAt, newest.tags, newest.content, newest.sig))
+        return events
+            .mapNotNull { event ->
+                val site = NamedSiteEvent(event.id, event.pubKey, event.createdAt, event.tags, event.content, event.sig)
+                val day = Templates.dayOf(site.identifier() ?: return@mapNotNull null) ?: return@mapNotNull null
+                val hash = site.paths().firstOrNull { it.path == "/index.html" }?.hash ?: return@mapNotNull null
+                Edition(day, hash, site.servers(), event.createdAt)
+            }
+            // Newest wins per day: a day republished is one edition, not two.
+            .groupBy { it.day }
+            .mapNotNull { (_, versions) -> versions.maxByOrNull { it.publishedAt } }
+            .sortedByDescending { it.day }
     }
 
-    /** Our site, and not another nsite the reader happens to keep. */
-    private fun named(event: Event) = event.tags.any { it.size > 1 && it[0] == "d" && it[1] == Templates.SITE }
+    data class Edition(
+        val day: String,
+        val hash: String,
+        val servers: List<String>,
+        val publishedAt: Long,
+    )
 
     /**
-     * One list per host, so a caller can tell which of them said anything.
+     * The reader's own relays and ours, asked together.
      *
-     * Asked at once: these are independent hosts and three of them in series is
-     * three idle windows, thirty seconds to read one small event.
+     * A site lives where they put it, and our search relay mirrors only the
+     * kinds it was asked to, so we need every answer anyway. Asked at once:
+     * four hosts in series is four idle windows, forty seconds to read a
+     * handful of small events.
      */
-    private suspend fun eachOf(
+    private suspend fun anyOf(
         hosts: List<String>,
         filter: Filter,
-    ): List<List<Event>> =
+    ): List<Event> =
         coroutineScope {
-            hosts
+            (hosts.take(3) + readRelay)
+                .distinct()
                 .map { host -> async { runCatching { relays.fetch(host, filter, idle = 10_000) }.getOrDefault(emptyList()) } }
                 .awaitAll()
+                .flatten()
         }
-
-    private companion object {
-        const val RELAY_LIST = 10002
-        const val PROFILE = 0
-    }
 }

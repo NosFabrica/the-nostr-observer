@@ -26,18 +26,46 @@ import com.vitorpamplona.quartz.nipB7Blossom.BlossomAuthorizationEvent
  * trips through a path already known to be awkward on mobile.
  */
 object Templates {
-    /** The site's `d` tag. One named site per reader, so their other nsites are untouched. */
-    const val SITE = "observer"
+    /**
+     * ONE SITE PER EDITION, and the day is its name.
+     *
+     * The alternative was one site carrying every day as a path, and it looked
+     * tidier right up to the point where you notice that a `kind 35128`
+     * REPLACES: publishing Tuesday means rewriting the event that holds Monday,
+     * so every publish had to first read the current manifest and merge, and a
+     * read that came back empty for the wrong reason deleted the reader's whole
+     * back catalogue. That hazard needed a canary read, a fail-closed refusal
+     * and a precondition on every publish, and none of it is needed here —
+     * a new `d` each day replaces nothing.
+     *
+     * It also makes removing one edition a plain NIP-09 deletion against that
+     * day's address, rather than a republish of everything except it. And it
+     * stops the manifest growing by a tag a day toward the relay's message
+     * limit.
+     *
+     * The cost is one entry per day in whatever lists a reader's sites, and
+     * more events on their relays than a single replaceable one. Both are
+     * honest: they did publish a paper a day.
+     */
+    fun site(day: String): String = "$PREFIX$day"
+
+    /** The day back out of a `d` tag, or null if this is not one of ours. */
+    fun dayOf(identifier: String): String? = identifier.removePrefix(PREFIX).takeIf { it != identifier && DAY.matches(it) }
 
     /**
-     * The reader's site as an `naddr1…`.
+     * One edition as an `naddr1…`.
      *
-     * The same thing as `35128:<pubkey>:observer`, which is the correct form
-     * for an `a` tag and the wrong form for a person: it is sixty-four
-     * characters of hex with punctuation. This is what gets shown, and what a
-     * reader could paste into any Nostr client.
+     * The same thing as `35128:<pubkey>:observer-2026-08-18`, which is right for
+     * an `a` tag and wrong for a person — sixty-four characters of hex with
+     * punctuation. This is what gets shown and what a reader can paste.
      */
-    fun address(pubkey: String): String? = runCatching { NAddress.create(NamedSiteEvent.KIND, pubkey, SITE, emptyList()) }.getOrNull()
+    fun address(
+        pubkey: String,
+        day: String,
+    ): String? = runCatching { NAddress.create(NamedSiteEvent.KIND, pubkey, site(day), emptyList()) }.getOrNull()
+
+    private const val PREFIX = "observer-"
+    private val DAY = Regex("""\d{4}-\d{2}-\d{2}""")
 
     /**
      * BUD-01 upload authorization: what may be uploaded, by whom, until when.
@@ -64,30 +92,31 @@ object Templates {
     }
 
     /**
-     * The whole archive, as one replaceable event.
+     * One day's edition: one page, at one path, under its own address.
      *
-     * `kind 35128` REPLACES: publishing today's edition with only today's path
-     * tag does not add a day, it deletes every other day. So [paths] must always
-     * be the complete list, rebuilt from our own index of what this reader has
-     * published. Most nsite material in circulation still describes `kind 34128`,
-     * one event per file, which is deprecated and would not have this hazard.
+     * This used to take the WHOLE path list, because the site held every day at
+     * once and a `kind 35128` replaces rather than appends — so a manifest
+     * missing a day deleted it. There is nothing to lose here: this event names
+     * today and nothing else, and yesterday's is a different event that no
+     * publish will ever touch.
      */
     fun manifest(
-        paths: List<Pair<String, String>>,
+        day: String,
+        sha256: String,
         servers: List<String>,
         masthead: String,
         createdAt: Long,
     ): EventTemplate<Event> {
-        require(paths.isNotEmpty()) { "a site with no paths is a deletion, not a publish" }
-        val tags = paths.map { PathTag(it.first, it.second) }
+        require(sha256.matches(Regex("^[0-9a-f]{64}$"))) { "not a sha256: $sha256" }
+        val tags = listOf(PathTag("/index.html", sha256))
         return Event.build(NamedSiteEvent.KIND, "", createdAt) {
-            add(arrayOf("d", SITE))
+            add(arrayOf("d", site(day)))
             sitePaths(tags)
             // The manifest's own server list comes first when a host resolves a
             // path; the reader's kind 10063 is the fallback. Naming them here
             // means an edition keeps resolving even if they later edit that list.
             siteServers(servers)
-            siteTitle(masthead)
+            siteTitle("$masthead — $day")
             siteAggregateHash(tags)
         }
     }

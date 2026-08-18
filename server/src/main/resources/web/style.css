@@ -215,3 +215,27 @@ footer {
   border-top: 1px solid var(--rule);
   padding-top: 1rem;
 }
+
+/* Back issues. A date and the address it lives at -- the address is long, and
+   it is the thing a reader pastes elsewhere, so it gets its own quiet line. */
+.issues {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.issues li {
+  padding: 0.6rem 0;
+  border-bottom: 1px dotted var(--rule);
+}
+
+.issues li:last-child {
+  border-bottom: 0;
+}
+
+.issues small {
+  display: block;
+  color: var(--quiet);
+  font-size: 0.72rem;
+  word-break: break-all;
+}

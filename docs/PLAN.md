@@ -171,7 +171,7 @@ it sets, so on the published copy the sanitizer is the only protection there is.
 | Generate | One call. Fixed system prompt + continuity block + digest + art shortlist → a complete document | built, run against the real API |
 | Sanitize & validate | Allowlist pass; every quote a verbatim substring of a source event; art resolved from ids; open-web links unwrapped | built |
 | Proof | Render the candidate headlessly at 390px and 1280px in both schemes. No horizontal overflow, body text at 4.5:1, no empty sections, no page whose classes resolve to nothing. Regenerate once, then fall back to the house layout | built |
-| Publish | On request only: upload the blob, then replace the reader's `kind 35128` with a manifest carrying every day they have published — read back from their own relays, never from a table of ours. Refuses if that read fails | built |
+| Publish | Upload the blob, then publish ONE `kind 35128` for that day, `d` = `observer-<date>`. Nothing is replaced and nothing is merged: each edition is its own site, and the archive is the set of them | built |
 
 Two orderings worth keeping. **Art is shortlisted before generation** — not to
 save a fetch, but because it is what makes an invented image reference
