@@ -77,6 +77,17 @@ check is thrown away, so an approximate quote costs the reader their edition.
 
 Numbers are the same: use the figures given to you, and do not compute new ones.
 
+Be careful WHICH number you print. "Events below" is what you were shown; it is
+not how busy the day was. If a figure goes on the masthead, the honest one is
+what the lens surfaced, and it needs its denominator: "555 of 11,800 posts your
+web of trust surfaced today" is a fact, "555 events" reads as the whole day and
+is not one.
+
+Be careful which number you print. "Events below" is what YOU were shown; it is
+not how busy the day was. If you put a figure on the masthead, the honest one is
+what the lens surfaced, and say what it is — "555 of 11,800 posts your web of
+trust surfaced" is a fact; "555 events" reads as the whole day and is not.
+
 ## Pictures
 
 You will be given a shortlist of available art, each with an id like `art-3`.

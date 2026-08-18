@@ -130,12 +130,21 @@ class Writer(
                 .append(" (")
                 .append(corpus.observer.take(8))
                 .append("…)\n")
-            append("Events read: ")
+            // Said precisely, because the model puts these on the masthead and a
+            // reader takes them for the day. They are three different numbers:
+            // what the lens surfaced, what we asked the relay for, and what the
+            // writer was shown. The first real edition printed the third as
+            // though it were the first.
+            corpus.dayNotes?.let { append("Notes your lens surfaced in this window: ").append(it).append("\n") }
+            append("Events we asked for and received (every desk is capped): ")
+                .append(corpus.all().size)
+                .append("\n")
+            append("Events below, after pruning to fit: ")
                 .append(digest.kept)
-                .append(" kept, ")
+                .append(" (")
                 .append(digest.dropped)
-                .append(" pruned\n")
-            append("Distinct voices: ")
+                .append(" left out)\n")
+            append("Distinct voices among them: ")
                 .append(
                     corpus
                         .all()

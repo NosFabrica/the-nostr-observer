@@ -27,6 +27,7 @@ dependencies {
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.okhttp)
     implementation(libs.jsoup)
+    implementation(libs.playwright)
     implementation(libs.anthropic)
 
     testImplementation(libs.junit.jupiter)

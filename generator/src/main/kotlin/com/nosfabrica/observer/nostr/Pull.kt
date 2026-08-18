@@ -123,6 +123,21 @@ data class Corpus(
     val ranked: Map<Desk, List<Event>>,
     /** The same window with no lens at all — the Instrument panel. */
     val control: List<Event>,
+    /**
+     * How many notes the lens surfaced in this window, or null if the relay
+     * would not say.
+     *
+     * The desks are CAPPED — the notes desk asks for 400 — so what we pull is
+     * what we asked for and not what the day held. Without this the page can
+     * only report its own digest, and that reads like the day: the first real
+     * edition printed "555 EVENTS KEPT · 51 PRUNED" as a masthead statistic
+     * when the window actually held around eleven thousand notes above the
+     * trust floor.
+     *
+     * Null is a supported answer and must not become a guess. NIP-45 COUNT is
+     * optional, and this store has spells of not answering it at all.
+     */
+    val dayNotes: Long?,
     val profiles: Map<String, Byline>,
 ) {
     val notes: List<Event> get() = ranked[Desk.NOTES].orEmpty()
@@ -152,7 +167,8 @@ class Pull(
         kinds: List<Int>,
         since: Long,
         until: Long,
-        limit: Int,
+        /** Null asks for everything matching, which is what a COUNT wants and a REQ never does. */
+        limit: Int?,
         observer: String?,
     ): Filter =
         Filter(
@@ -201,7 +217,7 @@ class Pull(
         // number this whole product exists to report. Asking separately means
         // each answer arrives already attributed and no future desk can collide
         // with another by sharing a kind.
-        val (ranked, control) =
+        val (ranked, control, dayNotes) =
             coroutineScope {
                 val asked =
                     desks.map { desk ->
@@ -213,7 +229,20 @@ class Pull(
                             }
                     }
                 val controlAsked = async { controlRun(since, until) }
-                asked.associate { (desk, job) -> desk to job.await().take(desk.limit) } to controlAsked.await()
+                // One COUNT, for an honest denominator: the same question the
+                // notes desk asks, without the cap. It is what makes "555 of
+                // ~11,800" a sentence a reader could check.
+                // NO LIMIT on a COUNT. Passing the desk's cap made the relay
+                // count up to the cap and stop: it answered 400 for a window
+                // holding around eleven thousand, which is a denominator that
+                // agrees with the numerator by construction and says nothing.
+                val countAsked =
+                    async { relays.count(searchRelay, filter(Desk.NOTES.kinds, since, until, null, observer)) }
+                Triple(
+                    asked.associate { (desk, job) -> desk to job.await().take(desk.limit) },
+                    controlAsked.await(),
+                    countAsked.await(),
+                )
             }
 
         // Every author we are about to print, plus everyone the control run
@@ -226,7 +255,7 @@ class Pull(
         // the same as not crediting it.
         val quoted = ranked[Desk.HIGHLIGHTS].orEmpty().mapNotNull { it.value("p") }.filter { it.length == 64 }
         val keys = ((ranked.values.flatten() + control).map { it.pubKey } + quoted).distinct()
-        return Corpus(observer, since, until, ranked, control, profiles(keys))
+        return Corpus(observer, since, until, ranked, control, dayNotes, profiles(keys))
     }
 
     /**

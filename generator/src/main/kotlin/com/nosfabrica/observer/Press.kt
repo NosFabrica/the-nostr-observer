@@ -59,6 +59,8 @@ class Press(
         ) : Step
 
         data class Pulled(
+            /** What the lens surfaced in the window, or null if the relay would not say. */
+            val surfaced: Long?,
             val events: Int,
             val voices: Int,
             val profiles: Int,
@@ -209,6 +211,7 @@ class Press(
                 .corpus(observer, since, until)
         onStep(
             Step.Pulled(
+                surfaced = corpus.dayNotes,
                 events = corpus.all().size,
                 voices =
                     corpus

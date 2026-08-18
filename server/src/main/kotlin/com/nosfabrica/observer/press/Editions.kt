@@ -168,7 +168,8 @@ class Editions(
 
             is Press.Step.Pulled -> {
                 pair(
-                    "Read ${step.events} posts from ${step.voices} people",
+                    "Read ${step.events} posts from ${step.voices} people" +
+                        (step.surfaced?.let { " of $it your lens surfaced" } ?: ""),
                     "${step.overlap} of ${step.control} unranked posts made it in",
                 )
             }

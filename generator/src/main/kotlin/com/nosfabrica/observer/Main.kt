@@ -145,7 +145,10 @@ private fun show(progress: Press.Step) {
         }
 
         is Press.Step.Pulled -> {
-            step("Pulled ${progress.events} events from ${progress.voices} people, ${progress.profiles} profiles")
+            // The denominator, when the relay gives one. "608 events" alone
+            // reads as the size of the day; it is the size of the request.
+            val of = progress.surfaced?.let { " (of $it your lens surfaced)" } ?: ""
+            step("Pulled ${progress.events} events$of from ${progress.voices} people, ${progress.profiles} profiles")
             step("Control: ${progress.control} anonymous notes, ${progress.overlap} of them also in the paper")
         }
 

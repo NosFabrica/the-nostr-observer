@@ -459,6 +459,7 @@ class BudgetTest {
             until = 1_786_900_000,
             ranked = desks.toMap(),
             control = emptyList(),
+            dayNotes = null,
             profiles = emptyMap(),
         )
 

@@ -96,6 +96,7 @@ object Fixtures {
             until = 1_786_900_000,
             ranked = mapOf(desk to events),
             control = emptyList(),
+            dayNotes = null,
             profiles = profiles,
         )
     }
