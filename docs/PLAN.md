@@ -460,12 +460,14 @@ and the image-storage question (we no longer store images).
 - **Is the NIP-85 scoring service ours to extend?** The plan assumes
   `nip85.nosfabrica.com` can onboard new observers on demand. If not, Phase 2 is
   the critical path and the timeline changes.
-- **Named site or root site?** Assumed `kind 35128` with `d: "observer"` so the
-  paper sits beside whatever else the reader hosts. Root site is `kind 15128` and
-  no `d` tag, but collides with anyone who already has an nsite.
-- **Do we keep a copy of published editions?** §7 says yes, purely as a rot
-  backstop. It slightly weakens the "we host nothing" story, so it should be a
-  stated choice with a way to decline.
+- ~~**Named site or root site?**~~ **Answered, and further than asked.** One
+  `kind 35128` PER EDITION, `d: "observer-<date>"`. A single site holding every
+  day as a path meant each publish replaced the event carrying the archive, so a
+  bad read deleted the back catalogue; separate sites replace nothing, and
+  removing one day becomes a plain NIP-09 deletion.
+- ~~**Do we keep a copy of published editions?**~~ **No.** The table is gone. The
+  reader's own site events are the archive, on their own relays, and we read
+  them back to list it.
 - **What happens on a day with nothing in it?** A fixed 24-hour window makes quiet
   days possible. The paper should say so — a thin single-column edition is honest,
   and four columns of filler is the one thing that would make it feel generated.
