@@ -1,11 +1,8 @@
 package com.nosfabrica.observer.press
 
 import com.nosfabrica.observer.press.auth.Sessions
-import com.nosfabrica.observer.press.publish.Pendings
-import com.nosfabrica.observer.press.publish.Templates
 import com.nosfabrica.observer.press.store.Continuities
 import com.nosfabrica.observer.press.store.Db
-import com.nosfabrica.observer.press.store.Drafts
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
@@ -14,65 +11,6 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.nio.file.Path
-
-class DraftTest {
-    private val alice = "a".repeat(64)
-    private val mallory = "b".repeat(64)
-
-    private fun db(dir: Path) = Db(dir.resolve("t.db").toString())
-
-    @Test
-    fun `a draft belongs to the reader who made it`(
-        @TempDir dir: Path,
-    ) {
-        val drafts = Drafts(db(dir))
-        val id = drafts.open(alice)
-
-        assertNotNull(drafts.of(id, alice))
-        // Unguessable ids keep strangers out; this keeps out a signed-in reader
-        // who simply tries somebody else's id, which is a different attack and
-        // needs its own answer.
-        assertNull(drafts.of(id, mallory), "another reader must not read it by id")
-    }
-
-    @Test
-    fun `an expired draft is gone rather than merely old`(
-        @TempDir dir: Path,
-    ) {
-        // A TTL nobody enforces is a retention policy of "forever". Zero seconds
-        // is the same code path a six-hour draft takes, just already past.
-        val drafts = Drafts(db(dir), ttlSeconds = -1)
-        val id = drafts.open(alice)
-        assertNull(drafts.of(id, alice))
-    }
-
-    @Test
-    fun `a run reaches ready with its page and hash`(
-        @TempDir dir: Path,
-    ) {
-        val drafts = Drafts(db(dir))
-        val id = drafts.open(alice)
-        assertEquals(Drafts.State.RUNNING, drafts.of(id, alice)?.state)
-
-        drafts.ready(id, "<main>hello</main>", "c".repeat(64), "{}", "[]")
-        val done = drafts.of(id, alice)!!
-        assertEquals(Drafts.State.READY, done.state)
-        assertEquals("<main>hello</main>", done.html)
-        assertEquals("c".repeat(64), done.sha256)
-    }
-
-    @Test
-    fun `migrations are idempotent across opens`(
-        @TempDir dir: Path,
-    ) {
-        // The second open must not try to create the tables again. This is the
-        // whole point of numbering them, and it only ever fails on restart --
-        // which is to say, in production and not in a fresh test.
-        val path = dir.resolve("twice.db").toString()
-        val id = Drafts(Db(path)).open(alice)
-        assertNotNull(Drafts(Db(path)).of(id, alice))
-    }
-}
 
 class ContinuityTest {
     @Test
@@ -142,29 +80,6 @@ class SessionTest {
         val sessions = Sessions()
         val reader = "a".repeat(64)
         assertNotEquals(sessions.open(reader, Sessions.Signer.NIP07), sessions.open(reader, Sessions.Signer.NIP46))
-    }
-}
-
-class PendingsTest {
-    private fun template() = Templates.uploadAuth("a".repeat(64), 10, 1, 2)
-
-    @Test
-    fun `a prepared template survives long enough to be signed`() {
-        val pendings = Pendings()
-        pendings["draft"] = Pendings.Pending(template(), template(), emptyList(), emptyList(), "a".repeat(64), "2026-08-18")
-        assertNotNull(pendings["draft"])
-    }
-
-    @Test
-    fun `an abandoned prepare does not live forever`() {
-        // Every Prepare the reader then walked away from used to leave an entry
-        // nothing removed. The upload authorization inside is dead after ten
-        // minutes anyway, so the entry was a leak holding something unusable.
-        val pendings = Pendings(ttlSeconds = -1)
-        pendings["draft"] = Pendings.Pending(template(), template(), emptyList(), emptyList(), "a".repeat(64), "2026-08-18")
-        assertNull(pendings["draft"])
-        pendings.sweep()
-        assertEquals(0, pendings.size())
     }
 }
 

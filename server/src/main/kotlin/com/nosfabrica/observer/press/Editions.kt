@@ -2,9 +2,10 @@ package com.nosfabrica.observer.press
 
 import com.nosfabrica.observer.Press
 import com.nosfabrica.observer.nostr.Readiness
+import com.nosfabrica.observer.press.publish.Announce
 import com.nosfabrica.observer.press.publish.Blossom
+import com.nosfabrica.observer.press.publish.Templates
 import com.nosfabrica.observer.press.store.Continuities
-import com.nosfabrica.observer.press.store.Drafts
 import com.nosfabrica.observer.write.Masthead
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -52,12 +53,12 @@ data class Summary(
  */
 class Editions(
     private val press: Press,
-    private val drafts: Drafts,
+    private val runs: Runs,
+    private val announce: Announce,
     private val continuities: Continuities,
     private val scope: CoroutineScope,
 ) {
     private val json = Json { encodeDefaults = true }
-    private val running = java.util.concurrent.ConcurrentHashMap<String, String>()
 
     /**
      * The reader's own timezone, or UTC if they did not say.
@@ -76,32 +77,16 @@ class Editions(
     fun start(
         pubkey: String,
         timezone: String? = null,
-    ): String {
-        var started: String? = null
-
-        // compute(), not get-then-put. Check-then-act here is a race between two
-        // clicks on a slow button, and losing it means two model calls and two
-        // bills for one edition. ConcurrentHashMap.compute holds the bin lock
-        // for this key, so the check and the claim are one step.
-        val id =
-            running.compute(pubkey) { _, existing ->
-                if (existing != null && drafts.of(existing, pubkey)?.state == Drafts.State.RUNNING) {
-                    existing
-                } else {
-                    drafts.open(pubkey).also { started = it }
-                }
-            }!!
-
-        // Launched outside compute: the mapping function must be short and must
-        // not call back into the map, and a coroutine that finishes fast enough
-        // to call running.remove() from inside it would deadlock.
-        started?.let { fresh -> scope.launch(Dispatchers.IO) { run(fresh, pubkey, zoneOf(timezone)) } }
-        return id
+    ): Runs.Run {
+        val (run, fresh) = runs.open(pubkey)
+        // Launched outside the map's compute: a coroutine that finished fast
+        // enough to touch the map from inside it would deadlock.
+        if (fresh) scope.launch(Dispatchers.IO) { run(run, zoneOf(timezone)) }
+        return run
     }
 
     private suspend fun run(
-        id: String,
-        pubkey: String,
+        run: Runs.Run,
         zone: ZoneId,
     ) {
         val lines = mutableListOf<Line>()
@@ -111,15 +96,15 @@ class Editions(
             detail: String? = null,
         ) {
             lines += Line(Instant.now().epochSecond, text, detail)
-            drafts.progress(id, json.encodeToString(lines))
+            run.lines = lines.toList()
         }
 
         try {
             val edition =
                 press.edition(
-                    observer = pubkey,
+                    observer = run.pubkey,
                     until = Instant.now().epochSecond,
-                    continuity = continuities.of(pubkey),
+                    continuity = continuities.of(run.pubkey),
                     zone = zone,
                 ) { step ->
                     val (text, detail) = describe(step)
@@ -127,53 +112,97 @@ class Editions(
                 }
 
             val blob = edition.html.toByteArray()
-            val summary =
-                Summary(
-                    events = edition.corpus.all().size,
-                    voices =
-                        edition.corpus
-                            .all()
-                            .map { it.pubKey }
-                            .distinct()
-                            .size,
-                    control = edition.corpus.control.size,
-                    overlap =
-                        edition.corpus
-                            .all()
-                            .map { it.id }
-                            .intersect(
-                                edition.corpus.control
-                                    .map { it.id }
-                                    .toSet(),
-                            ).size,
-                    bytes = blob.size,
-                    costUsd = edition.usage.costUsd(),
-                    publishable = edition.publishable,
-                    violations = edition.report.violations.map { "${it.kind}: ${it.detail}" },
+            run.summary =
+                json.encodeToString(
+                    Summary(
+                        events = edition.corpus.all().size,
+                        voices =
+                            edition.corpus
+                                .all()
+                                .map { it.pubKey }
+                                .distinct()
+                                .size,
+                        control = edition.corpus.control.size,
+                        overlap =
+                            edition.corpus
+                                .all()
+                                .map { it.id }
+                                .intersect(
+                                    edition.corpus.control
+                                        .map { it.id }
+                                        .toSet(),
+                                ).size,
+                        bytes = blob.size,
+                        costUsd = edition.usage.costUsd(),
+                        publishable = edition.publishable,
+                        violations = edition.report.violations.map { "${it.kind}: ${it.detail}" },
+                    ),
                 )
-            drafts.ready(id, edition.html, Blossom.sha256(blob), json.encodeToString(summary), json.encodeToString(lines))
 
-            // Tomorrow's paper is the same paper. Recorded after the edition is
-            // safely stored, because a failure to remember a masthead must not
-            // cost the reader a page they already have.
-            val next = Masthead.next(edition.rawHtml, continuities.of(pubkey))
-            continuities.remember(pubkey, next.masthead, next.motto, next.sections, next.recentHeadlines)
+            // THE VALIDATOR IS THE ONLY GATE LEFT.
+            //
+            // There used to be a reader between the checks and the world: an
+            // edition that failed them was simply not offered, and one that
+            // passed still waited for somebody to press Publish. Publishing
+            // straight through removes the second half of that, which means the
+            // first half is now the whole of it -- a page that misquotes
+            // somebody must stop here, because the next step is the reader's
+            // permanent archive.
+            if (!edition.publishable) {
+                say("Not published", "it failed its own checks: " + edition.report.violations.joinToString("; ") { it.kind.name })
+                run.error = "This edition quoted something it could not find in a source event, so it was not published."
+                run.state = Runs.State.FAILED
+                return
+            }
+
+            // Where it goes, asked now rather than remembered: this is the
+            // moment before it is sent, and a stale list publishes to an
+            // address they have moved away from.
+            val relays = press.writeRelaysOf(run.pubkey)
+            val servers = announce.servers(run.pubkey, relays)
+            if (servers.isEmpty()) {
+                say("Not published", "nowhere to put it")
+                run.error =
+                    "You have not set up anywhere to store files, so there is nowhere to publish to. " +
+                    "Add one in your usual Nostr app and print again."
+                run.state = Runs.State.FAILED
+                return
+            }
+
+            val now = Instant.now().epochSecond
+            val day = DAY.format(Instant.ofEpochSecond(now).atZone(zone))
+            val sha = Blossom.sha256(blob)
+            run.html = blob
+            run.sha = sha
+            run.day = day
+            run.servers = servers
+            run.relays = relays
+            run.upload = Templates.uploadAuth(sha, blob.size.toLong(), now, now + 600)
+            run.manifest = Templates.manifest(day, sha, servers, continuities.of(run.pubkey).masthead, now)
+            say("Ready to publish", "your signer will ask twice")
+            run.state = Runs.State.SIGNING
+
+            // Tomorrow's paper is the same paper. Remembered before the signing
+            // round trip, because a reader who declines still made this page and
+            // the masthead they were given is the one they should see again.
+            val next = Masthead.next(edition.rawHtml, continuities.of(run.pubkey))
+            continuities.remember(run.pubkey, next.masthead, next.motto, next.sections, next.recentHeadlines)
         } catch (refused: Press.Refused) {
             say("Stopped", refused.message)
-            drafts.failed(id, refused.message, json.encodeToString(lines))
+            run.error = refused.message
+            run.state = Runs.State.FAILED
         } catch (cancelled: kotlinx.coroutines.CancellationException) {
             // A shutdown is not an edition that failed. Recording it as one
-            // would leave a FAILED draft the reader is told to retry, on a
-            // process that is going away.
+            // would leave a FAILED run the reader is told to retry, on a process
+            // that is going away.
             throw cancelled
         } catch (failure: Exception) {
             // The reader gets the class and the message, not a stack trace: the
             // interesting half of a failure here is nearly always "which relay"
             // or "which API", and the rest belongs in the log.
             say("Failed", failure.message ?: failure::class.simpleName)
-            drafts.failed(id, failure.message ?: failure::class.simpleName ?: "unknown failure", json.encodeToString(lines))
-        } finally {
-            running.remove(pubkey, id)
+            run.error = failure.message ?: failure::class.simpleName ?: "unknown failure"
+            run.state = Runs.State.FAILED
         }
     }
 
@@ -239,6 +268,11 @@ class Editions(
             }
         }
 }
+
+/** The day this edition is for, in the reader's own zone. */
+private val DAY =
+    java.time.format.DateTimeFormatter
+        .ofPattern("yyyy-MM-dd")
 
 private fun pair(
     text: String,

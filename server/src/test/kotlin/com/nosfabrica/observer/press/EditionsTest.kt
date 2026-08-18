@@ -2,9 +2,9 @@ package com.nosfabrica.observer.press
 
 import com.nosfabrica.observer.Press
 import com.nosfabrica.observer.nostr.Relays
+import com.nosfabrica.observer.press.publish.Announce
 import com.nosfabrica.observer.press.store.Continuities
 import com.nosfabrica.observer.press.store.Db
-import com.nosfabrica.observer.press.store.Drafts
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -31,12 +31,13 @@ class EditionsTest {
         @TempDir dir: Path,
     ) {
         val db = Db(dir.resolve("e.db").toString())
-        val drafts = Drafts(db)
         val relays = Relays()
+        val press = Press(relays, "wss://unreachable.invalid")
         val editions =
             Editions(
-                Press(relays, "wss://unreachable.invalid"),
-                drafts,
+                press,
+                Runs(),
+                Announce(relays, "wss://unreachable.invalid", press),
                 Continuities(db),
                 CoroutineScope(SupervisorJob()),
             )
@@ -51,7 +52,7 @@ class EditionsTest {
                 pool.submit<String> {
                     ready.countDown()
                     go.await()
-                    editions.start(reader)
+                    editions.start(reader).id
                 }
             }
         ready.await()

@@ -6,7 +6,7 @@ import java.sql.DriverManager
 import java.sql.ResultSet
 
 /**
- * One SQLite file, opened once, created from one statement list.
+ * One SQLite file, holding the one thing worth remembering.
  *
  * NOT a migration history, and deliberately. There is nothing deployed and
  * nobody using it, so an append-only list of numbered steps would be a record
@@ -107,21 +107,7 @@ class Db(
                     sections    TEXT NOT NULL,
                     headlines   TEXT NOT NULL,
                     updated_at  INTEGER NOT NULL
-                );--
-                CREATE TABLE drafts (
-                    id          TEXT PRIMARY KEY,
-                    pubkey      TEXT NOT NULL,
-                    created_at  INTEGER NOT NULL,
-                    expires_at  INTEGER NOT NULL,
-                    state       TEXT NOT NULL,
-                    progress    TEXT NOT NULL,
-                    html        TEXT,
-                    sha256      TEXT,
-                    summary     TEXT,
-                    error       TEXT
-                );--
-                CREATE INDEX drafts_by_owner ON drafts (pubkey, created_at DESC);--
-                CREATE INDEX drafts_by_expiry ON drafts (expires_at)
+                )
                 """,
             )
     }

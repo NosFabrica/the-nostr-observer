@@ -242,13 +242,25 @@ async function pollDraft() {
   if (!res.ok) return;
   state.misses = 0;
   const status = await res.json();
-  drawProgress(JSON.parse(status.progress || "[]"));
+  drawProgress(status.lines || []);
   if (status.state === "RUNNING") return;
 
   clearInterval(state.poll);
-  $("generate").disabled = false;
-  if (status.state === "FAILED") return showFailure(status.error);
-  showEdition(JSON.parse(status.summary || "{}"));
+  if (status.state === "FAILED") {
+    $("generate").disabled = false;
+    return showFailure(status.error);
+  }
+  if (status.state === "SIGNING") {
+    // NO BUTTON HERE. Printing publishes; the page is written, it passed its
+    // own checks, and the only thing left is the reader's signer. Asking them
+    // to confirm a decision they already made is how a publish gets abandoned
+    // half way.
+    return publishEdition(status);
+  }
+  if (status.state === "PUBLISHED" && status.report) {
+    $("generate").disabled = false;
+    showPublished(JSON.parse(status.report));
+  }
 }
 
 function drawProgress(lines) {
@@ -276,92 +288,72 @@ function showFailure(error) {
   panel.append(p);
 }
 
-function showEdition(summary) {
+function showPublished(report) {
   const panel = $("result");
   panel.hidden = false;
   panel.innerHTML = "";
 
-  const stat = document.createElement("p");
-  stat.textContent = `${summary.events} posts from ${summary.voices} people you trust.`;
-  panel.append(stat);
+  const line = document.createElement("p");
+  line.className = report.ok ? "ok" : "waiting";
+  line.textContent = report.ok
+    ? "Published for " + report.day + "."
+    : "Uploaded, but no relay accepted it, so nobody can find it yet.";
+  panel.append(line);
 
-  // The comparison is the product's whole argument, and it was the lead
-  // sentence -- two clauses of methodology before the reader had seen their
-  // paper. It is still here, said in one line, underneath.
-  const against = document.createElement("p");
-  against.className = "note";
-  against.textContent =
-    `Reading the same window without your web of trust returns ${summary.control} posts. ` +
-    `${summary.overlap} of them made this page.`;
-  panel.append(against);
-
-  const preview = document.createElement("a");
-  preview.href = "/draft/" + state.draft;
-  preview.target = "_blank";
-  preview.rel = "noopener";
-  preview.className = "button";
-  preview.textContent = "Read it";
-  panel.append(preview);
-
-  if (!summary.publishable) {
-    // The button is not merely disabled: an edition that failed its own checks
-    // is not offered at all, and the reason is printed.
-    const bad = document.createElement("div");
-    bad.className = "waiting";
-    bad.textContent = "This edition failed its own checks, so it is not offered for publication:";
-    const why = document.createElement("ul");
-    for (const v of summary.violations || []) {
-      const li = document.createElement("li");
-      li.textContent = v;
-      why.append(li);
-    }
-    bad.append(why);
-    panel.append(bad);
-    return;
+  if (report.url) {
+    const read = document.createElement("a");
+    read.href = report.url;
+    read.target = "_blank";
+    read.rel = "noopener";
+    read.className = "button";
+    read.textContent = "Read it";
+    panel.append(read);
   }
 
-  const publish = document.createElement("button");
-  publish.textContent = "Publish to my servers";
-  publish.onclick = () => publishEdition(publish);
-  panel.append(publish);
+  // Every target, with the server's or relay's own words. "Published" with a
+  // silent failure behind it is the case where a reader's paper resolves for us
+  // and for nobody else.
+  const list = document.createElement("ul");
+  for (const row of [...report.uploads, ...report.relays]) {
+    const li = document.createElement("li");
+    li.dataset.status = row.ok ? "OK" : "BROKEN";
+    li.textContent = row.target + " — " + row.detail;
+    list.append(li);
+  }
+  panel.append(list);
+  archive();
 }
 
 // -------------------------------------------------------------- publishing
 
-async function publishEdition(button) {
-  button.disabled = true;
-  const status = document.createElement("p");
-  button.after(status);
-  status.textContent = "Working out where your paper goes…";
-
-  const prep = await fetch("/api/editions/" + state.draft + "/prepare", { method: "POST" });
-  const plan = await prep.json();
-  if (!prep.ok) {
-    button.disabled = false;
-    status.className = "waiting";
-    return (status.textContent = plan.error);
-  }
+async function publishEdition(status) {
+  const panel = $("result");
+  panel.hidden = false;
+  panel.innerHTML = "";
+  const note = document.createElement("p");
+  panel.append(note);
 
   let body = "{}";
   if (state.me.signer === "NIP07") {
     // Two prompts, said out loud beforehand. Surprising somebody with a second
     // signer dialog mid-publish is how a publish gets abandoned halfway.
-    status.textContent = `Your extension will ask twice: once to authorize the upload to ${plan.servers.length} server(s), once for the manifest.`;
+    note.textContent = `Your extension will ask twice: once to authorize the upload to ${status.servers.length} server(s), once for the page itself.`;
     try {
-      const upload = await window.nostr.signEvent(JSON.parse(plan.upload));
-      const manifest = await window.nostr.signEvent(JSON.parse(plan.manifest));
+      const upload = await window.nostr.signEvent(JSON.parse(status.upload));
+      const manifest = await window.nostr.signEvent(JSON.parse(status.manifest));
       body = JSON.stringify({ upload: JSON.stringify(upload), manifest: JSON.stringify(manifest) });
     } catch (e) {
-      button.disabled = false;
-      status.className = "waiting";
-      return (status.textContent = "Signing was refused.");
+      $("generate").disabled = false;
+      note.className = "waiting";
+      note.textContent = "Signing was refused, so nothing was published.";
+      return;
     }
-    status.textContent = "Uploading and announcing…";
+    note.textContent = "Uploading and announcing…";
   } else {
     // The signing happens inside the request below, on the server, so this
-    // message has to stand for the whole wait -- the reader is looking at
-    // their phone, not at this.
-    status.textContent = "Your signer will ask twice. Approve both on your device…";
+    // message has to stand for the whole wait -- the reader is looking at their
+    // phone, not at this.
+    note.textContent = "Your signer will ask twice. Approve both on your device…";
   }
 
   const res = await fetch("/api/editions/" + state.draft + "/publish", {
@@ -370,34 +362,13 @@ async function publishEdition(button) {
     headers: { "Content-Type": "application/json" },
   });
   const report = await res.json();
+  $("generate").disabled = false;
   if (!res.ok) {
-    button.disabled = false;
-    status.className = "waiting";
-    return (status.textContent = report.error);
+    note.className = "waiting";
+    note.textContent = report.error;
+    return;
   }
-  drawReport(status, report);
-}
-
-function drawReport(status, report) {
-  // A second publish must not leave the first one's list sitting underneath it.
-  status.nextElementSibling?.remove();
-
-  status.textContent = report.ok
-    ? `Published as ${report.naddr} for ${report.day}.`
-    : "Uploaded, but no relay accepted the manifest, so nobody can find it yet.";
-  status.className = report.ok ? "ok" : "waiting";
-
-  // Every target, with the server's or relay's own words. "Published" with a
-  // silent failure behind it is the case where a reader's paper resolves for
-  // us and for nobody else.
-  const list = document.createElement("ul");
-  for (const row of [...report.uploads, ...report.relays]) {
-    const li = document.createElement("li");
-    li.dataset.status = row.ok ? "OK" : "BROKEN";
-    li.textContent = row.target + " — " + row.detail;
-    list.append(li);
-  }
-  status.after(list);
+  showPublished(report);
 }
 
 // ------------------------------------------------------------------- boot

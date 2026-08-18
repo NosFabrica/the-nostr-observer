@@ -7,9 +7,7 @@ import com.nosfabrica.observer.press.auth.Sessions
 import com.nosfabrica.observer.press.auth.SignIn
 import com.nosfabrica.observer.press.publish.Announce
 import com.nosfabrica.observer.press.publish.Countersign
-import com.nosfabrica.observer.press.publish.Pendings
 import com.nosfabrica.observer.press.publish.Templates
-import com.nosfabrica.observer.press.store.Drafts
 import com.vitorpamplona.quartz.nip01Core.core.Event
 import io.ktor.http.ContentType
 import io.ktor.http.Cookie
@@ -96,10 +94,15 @@ private data class Wanted(
 @Serializable
 private data class Status(
     val state: String,
-    val progress: String,
+    val lines: List<Line>,
     val summary: String? = null,
     val error: String? = null,
-    val sha256: String? = null,
+    val report: String? = null,
+    /** The unsigned upload authorization, once there is a page to authorize. */
+    val upload: String? = null,
+    /** The unsigned site event for the day. */
+    val manifest: String? = null,
+    val servers: List<String> = emptyList(),
 )
 
 @Serializable
@@ -146,6 +149,8 @@ private data class PublishReport(
     val ok: Boolean,
     val day: String,
     val naddr: String,
+    /** Where the page actually is, on the first of their own servers. */
+    val url: String? = null,
     val uploads: List<Outcome>,
     val relays: List<Outcome>,
 )
@@ -319,102 +324,47 @@ fun Application.routes(app: App) {
             // A missing or unparseable body is a request with no preference,
             // not a bad request: the timezone is the only thing in it.
             val wanted = runCatching { Json.decodeFromString<Wanted>(call.receiveText()) }.getOrNull()
-            call.respond(Started(app.editions.start(session.pubkey, wanted?.timezone)))
+            call.respond(Started(app.editions.start(session.pubkey, wanted?.timezone).id))
         }
 
+        // Where a run is up to, and — once it is written — what to sign.
+        //
+        // The templates ride along with the status rather than waiting behind a
+        // second "prepare" call. There is nothing left to decide between the
+        // two: the page is finished, it passed its own checks, and the only
+        // thing between it and the reader's servers is their signer.
         get("/api/editions/{id}") {
             val session = signedIn(app) ?: return@get call.respond(HttpStatusCode.Unauthorized, Problem("not signed in"))
-            val draft = draftOf(app, session.pubkey) ?: return@get call.respond(HttpStatusCode.NotFound, Problem("no such draft"))
+            val run =
+                app.runs.of(call.parameters["id"].orEmpty(), session.pubkey)
+                    ?: return@get call.respond(HttpStatusCode.NotFound, Problem("no such edition"))
             call.respond(
                 Status(
-                    state = draft.state.name,
-                    progress = draft.progress,
-                    summary = draft.summary,
-                    error = draft.error,
-                    sha256 = draft.sha256,
+                    state = run.state.name,
+                    lines = run.lines,
+                    summary = run.summary,
+                    error = run.error,
+                    report = run.report,
+                    upload = run.upload?.toJson(),
+                    manifest = run.manifest?.toJson(),
+                    servers = run.servers,
                 ),
             )
         }
 
-        // The private preview.
-        //
-        // Served from our own origin, to the owner only, before anything is
-        // signed. Generate-then-publish: nobody should have to publish a page to
-        // find out what it says.
-        get("/draft/{id}") {
-            val session = signedIn(app) ?: return@get call.respondText("Sign in first.", status = HttpStatusCode.Unauthorized)
-            val draft =
-                draftOf(app, session.pubkey)
-                    ?: return@get call.respondText("No such draft.", status = HttpStatusCode.NotFound)
-            val html = draft.html ?: return@get call.respondText("Not finished yet.", status = HttpStatusCode.Accepted)
-            // The page is sanitized, and it is still not trusted enough to run
-            // beside a session cookie. These two headers are what make an
-            // unexpected script tag inert rather than merely unlikely.
-            call.response.headers.append("Content-Security-Policy", CSP)
-            call.response.headers.append("X-Content-Type-Options", "nosniff")
-            call.respondText(html, ContentType.Text.Html)
-        }
-
-        // What the reader is about to sign, built here so it can be checked here.
-        //
-        // Two events, and the reader will see two prompts. The manifest carries
-        // every day they have ever published, not just today: `kind 35128` is
-        // replaceable, so a manifest with one path is a manifest that deleted
-        // the archive.
-        post("/api/editions/{id}/prepare") {
-            val session = signedIn(app) ?: return@post call.respond(HttpStatusCode.Unauthorized, Problem("not signed in"))
-            val draft =
-                draftOf(app, session.pubkey)
-                    ?: return@post call.respond(HttpStatusCode.NotFound, Problem("no such draft"))
-            val html = draft.html ?: return@post call.respond(HttpStatusCode.Conflict, Problem("that edition is not finished"))
-            val summary = draft.summary?.let { runCatching { json.decodeFromString<Summary>(it) }.getOrNull() }
-            if (summary?.publishable == false) {
-                return@post call.respond(
-                    HttpStatusCode.Conflict,
-                    Problem("this edition failed its own checks and is not offered for publication"),
-                )
-            }
-
-            // Their relays, from their own kind 10002, asked again rather than
-            // remembered: this is where the manifest is going, and a stale copy
-            // publishes the paper to an address they have moved away from. One
-            // fetch, not the whole readiness chain -- which is what this did,
-            // spending two NIP-50 searches and four COUNTs on a shared relay to
-            // read a single event.
-            val writeRelays = app.press.writeRelaysOf(session.pubkey)
-            val servers = app.announce.servers(session.pubkey, writeRelays)
-            if (servers.isEmpty()) {
-                return@post call.respond(
-                    HttpStatusCode.Conflict,
-                    Problem(
-                        "You have not set up anywhere to store files. Your paper is published to your own " +
-                            "storage, so there is nowhere to put it yet — add one in your usual Nostr app.",
-                    ),
-                )
-            }
-
-            val blob = html.toByteArray()
-            val sha = draft.sha256 ?: return@post call.respond(HttpStatusCode.Conflict, Problem("draft has no hash"))
-            val now = Instant.now().epochSecond
-            val day = DAY.format(Instant.ofEpochSecond(now).atOffset(ZoneOffset.UTC))
-            val upload = Templates.uploadAuth(sha, blob.size.toLong(), now, now + 600)
-            // One event, one path, its own address. Nothing to read first and
-            // nothing to merge: yesterday's edition is a different site that no
-            // publish will ever touch.
-            val manifest =
-                Templates.manifest(day, sha, servers, app.continuities.of(session.pubkey).masthead, now)
-            app.pending[draft.id] = Pendings.Pending(upload, manifest, servers, writeRelays, sha, day)
-            call.respond(ToSign(upload.toJson(), manifest.toJson(), servers, writeRelays, sha))
-        }
-
+        // Upload, then announce. Nothing here decides whether to publish — that
+        // was decided when the reader pressed print.
         post("/api/editions/{id}/publish") {
             val session = signedIn(app) ?: return@post call.respond(HttpStatusCode.Unauthorized, Problem("not signed in"))
-            val draft =
-                draftOf(app, session.pubkey)
-                    ?: return@post call.respond(HttpStatusCode.NotFound, Problem("no such draft"))
-            val pending =
-                app.pending[draft.id]
-                    ?: return@post call.respond(HttpStatusCode.Conflict, Problem("nothing prepared for this edition"))
+            val run =
+                app.runs.of(call.parameters["id"].orEmpty(), session.pubkey)
+                    ?: return@post call.respond(HttpStatusCode.NotFound, Problem("no such edition"))
+            if (run.state != Runs.State.SIGNING) {
+                return@post call.respond(HttpStatusCode.Conflict, Problem("this edition is not waiting to be signed"))
+            }
+            val wantUpload = run.upload ?: return@post call.respond(HttpStatusCode.Conflict, Problem("nothing to sign"))
+            val wantManifest = run.manifest ?: return@post call.respond(HttpStatusCode.Conflict, Problem("nothing to sign"))
+
             // Two signers, one publish. An extension signs in the page and posts
             // the results back; a remote signer is connected to THIS process, so
             // the two prompts go to the reader's phone from here. Everything
@@ -429,8 +379,8 @@ fun Application.routes(app: App) {
                 auth = Event.fromJsonOrNull(offered.upload)
                 manifest = Event.fromJsonOrNull(offered.manifest)
             } else if (token != null && app.bunkers.has(token)) {
-                val signedUpload = app.bunkers.sign(token, pending.upload)
-                val signedManifest = app.bunkers.sign(token, pending.manifest)
+                val signedUpload = app.bunkers.sign(token, wantUpload)
+                val signedManifest = app.bunkers.sign(token, wantManifest)
                 val failure = listOf(signedUpload, signedManifest).firstNotNullOfOrNull { it.exceptionOrNull() }
                 if (failure != null) {
                     return@post call.respond(
@@ -450,14 +400,14 @@ fun Application.routes(app: App) {
                 return@post call.respond(HttpStatusCode.BadRequest, Problem("that is not a signed event"))
             }
             listOf(
-                Countersign.check(auth, pending.upload, session.pubkey),
-                Countersign.check(manifest, pending.manifest, session.pubkey),
+                Countersign.check(auth, wantUpload, session.pubkey),
+                Countersign.check(manifest, wantManifest, session.pubkey),
             ).filterIsInstance<Countersign.Result.No>().firstOrNull()?.let {
                 return@post call.respond(HttpStatusCode.BadRequest, Problem("signature rejected: ${it.reason}"))
             }
 
-            val html = draft.html ?: return@post call.respond(HttpStatusCode.Conflict, Problem("draft has no page"))
-            val uploads = app.blossom.upload(pending.servers, html.toByteArray(), auth)
+            val blob = run.html ?: return@post call.respond(HttpStatusCode.Conflict, Problem("this edition is no longer held"))
+            val uploads = app.blossom.upload(run.servers, blob, auth)
             if (uploads.none { it.ok }) {
                 return@post call.respond(
                     HttpStatusCode.BadGateway,
@@ -467,32 +417,30 @@ fun Application.routes(app: App) {
 
             // Only after a server actually holds the blob. A manifest pointing at
             // a hash nobody stores is a 404 with a signature on it.
-            val announced = app.announce.publish(manifest, pending.relays)
-            // Stored as the `a`-tag coordinate, which is what it is; shown as
-            // `naddr1…`, which is what a person can paste. Neither is hex on a
-            // screen.
-            // Nothing is recorded. The manifest we just published IS the record,
-            // it is on the reader's own relays, and it outlives this server.
-            val naddr = Templates.address(session.pubkey, pending.day) ?: "35128:${session.pubkey}:${Templates.site(pending.day)}"
-            app.pending.remove(draft.id)
-
-            call.respond(
+            val announced = app.announce.publish(manifest, run.relays)
+            val day = run.day.orEmpty()
+            val report =
                 PublishReport(
                     ok = announced.any { it.ok },
-                    day = pending.day,
-                    naddr = naddr,
+                    day = day,
+                    naddr = Templates.address(session.pubkey, day) ?: "",
+                    url =
+                        run.servers
+                            .firstOrNull()
+                            ?.trimEnd('/')
+                            ?.let { "$it/${run.sha}" },
                     uploads = uploads.map { Outcome(it.server, it.ok, it.detail) },
                     relays = announced.map { Outcome(it.relay, it.ok, it.message) },
-                ),
-            )
+                )
+            run.report = json.encodeToString(report)
+            if (announced.any { it.ok }) {
+                run.state = Runs.State.PUBLISHED
+                // It is theirs now, so our copy goes. "We keep nothing" is
+                // either true at a particular line of code or it is a footer.
+                run.forget()
+            }
+            call.respond(report)
         }
-
-        // No archive endpoint. There was one, and nothing called it: the console
-        // never asked, so it was an untested route answering in a borrowed type
-        // -- `Outcome` is a publish RESULT, and it was carrying archive rows with
-        // the day and the address crushed into one string and `ok` hardcoded
-        // true. `Published.of` still holds the data, and the day the console
-        // grows an archive view, the endpoint can be written to fit it.
     }
 }
 
@@ -519,11 +467,6 @@ private fun RoutingContext.signedIn(app: App): Sessions.Entry? = app.sessions.of
 //
 // The pubkey is passed down into the store rather than compared here: a check
 // the caller performs is a check some future route forgets to perform.
-private fun RoutingContext.draftOf(
-    app: App,
-    pubkey: String,
-): Drafts.Draft? = call.parameters["id"]?.let { app.drafts.of(it, pubkey) }
-
 // The preview's own leash.
 //
 // `default-src 'none'` with images allowed anywhere is exactly the shape of the

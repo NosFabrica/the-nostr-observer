@@ -8,10 +8,8 @@ import com.nosfabrica.observer.press.auth.Sessions
 import com.nosfabrica.observer.press.auth.SignIn
 import com.nosfabrica.observer.press.publish.Announce
 import com.nosfabrica.observer.press.publish.Blossom
-import com.nosfabrica.observer.press.publish.Pendings
 import com.nosfabrica.observer.press.store.Continuities
 import com.nosfabrica.observer.press.store.Db
-import com.nosfabrica.observer.press.store.Drafts
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.netty.Netty
 import kotlinx.coroutines.CoroutineScope
@@ -72,31 +70,29 @@ class App(
     val sessions = Sessions()
     val bunkers = Bunkers(relays.client)
     val signIn = SignIn()
-    val drafts = Drafts(db)
+    val runs = Runs()
     val continuities = Continuities(db)
     val blossom = Blossom()
     val press = Press(relays, config.searchRelay, effort(config.effort))
     val announce = Announce(relays, config.searchRelay, press)
-    val editions = Editions(press, drafts, continuities, scope)
-
-    val pending = Pendings()
+    val editions = Editions(press, runs, announce, continuities, scope)
 
     /**
      * Everything that expires, swept on a timer rather than on access.
      *
-     * Drafts, sessions and pending templates all have a TTL, and all three used
-     * to be enforced only when something happened to touch the row. That is not
-     * expiry: a reader who abandons a draft, or signs in once from a phone and
-     * never returns, leaves a row nothing ever looks at again. It also takes the
-     * per-poll DELETE off the read path.
+     * Runs and sessions both have a TTL, and both used to be enforced only when
+     * something happened to touch them. That is not expiry: a reader who
+     * abandons a print, or signs in once from a phone and never returns, leaves
+     * something nothing ever looks at again — and an abandoned run is holding a
+     * whole edition in memory.
      */
     fun housekeeping() =
         scope.launch {
             while (isActive) {
                 delay(10 * 60 * 1000L)
                 runCatching {
-                    val gone = drafts.sweep() + sessions.sweep() + pending.sweep()
-                    if (gone > 0) log.info("swept $gone expired record(s)")
+                    val gone = runs.sweep() + sessions.sweep()
+                    if (gone > 0) log.info("swept $gone expired run(s) and session(s)")
                 }.onFailure { log.warn("housekeeping failed", it) }
             }
         }

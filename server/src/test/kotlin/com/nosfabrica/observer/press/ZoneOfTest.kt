@@ -2,9 +2,9 @@ package com.nosfabrica.observer.press
 
 import com.nosfabrica.observer.Press
 import com.nosfabrica.observer.nostr.Relays
+import com.nosfabrica.observer.press.publish.Announce
 import com.nosfabrica.observer.press.store.Continuities
 import com.nosfabrica.observer.press.store.Db
-import com.nosfabrica.observer.press.store.Drafts
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -26,9 +26,12 @@ import java.time.ZoneOffset
 class ZoneOfTest {
     private fun editions(dir: Path): Editions {
         val db = Db(dir.resolve("z.db").toString())
+        val relays = Relays()
+        val press = Press(relays, "wss://unreachable.invalid")
         return Editions(
-            Press(Relays(), "wss://unreachable.invalid"),
-            Drafts(db),
+            press,
+            Runs(),
+            Announce(relays, "wss://unreachable.invalid", press),
             Continuities(db),
             CoroutineScope(SupervisorJob()),
         )

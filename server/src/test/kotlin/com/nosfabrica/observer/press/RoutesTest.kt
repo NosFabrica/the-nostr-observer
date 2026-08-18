@@ -78,9 +78,8 @@ class RoutesTest {
             assertEquals(HttpStatusCode.Unauthorized, client.get("/api/readiness").status)
             assertEquals(HttpStatusCode.Unauthorized, client.post("/api/editions").status)
             assertEquals(HttpStatusCode.Unauthorized, client.get("/api/editions/anything").status)
-            assertEquals(HttpStatusCode.Unauthorized, client.post("/api/editions/anything/prepare").status)
             assertEquals(HttpStatusCode.Unauthorized, client.post("/api/editions/anything/publish").status)
-            assertEquals(HttpStatusCode.Unauthorized, client.get("/draft/anything").status)
+            assertEquals(HttpStatusCode.Unauthorized, client.get("/api/archive").status)
         }
     }
 
@@ -188,7 +187,7 @@ class RoutesTest {
     }
 
     @Test
-    fun `a preview cannot run scripts`(
+    fun `one reader cannot reach another reader's edition`(
         @TempDir dir: Path,
     ) = runTest {
         testApplication {
@@ -203,46 +202,17 @@ class RoutesTest {
                 }
             val cookie = signIn.headers["Set-Cookie"]!!.substringBefore(";")
 
-            val id = instance.drafts.open(reader.pubKey.toHexKey())
-            instance.drafts.ready(id, "<main>today</main>", "a".repeat(64), "{}", "[]")
-
-            val preview = client.get("/draft/$id") { header("Cookie", cookie) }
-            assertEquals(HttpStatusCode.OK, preview.status)
-            assertTrue(preview.bodyAsText().contains("today"))
-
-            // The page is already sanitized. This is the second lock: a script
-            // that got through would still not run, and it would not run beside
-            // a session cookie on our own origin.
-            val csp = preview.headers["Content-Security-Policy"]!!
-            assertTrue(csp.contains("default-src 'none'"))
-            assertFalse(csp.contains("script-src"), "no script source may be allowed at all")
-            assertEquals("nosniff", preview.headers["X-Content-Type-Options"])
-        }
-    }
-
-    @Test
-    fun `one reader cannot preview another reader's draft`(
-        @TempDir dir: Path,
-    ) = runTest {
-        testApplication {
-            val instance = app(dir)
-            application { routes(instance) }
-
-            val body = """{"signer":"NIP07"}"""
-            val signIn =
-                client.post("/api/session") {
-                    header("Authorization", auth("http://localhost/api/session", "POST", body))
-                    setBody(body)
-                }
-            val cookie = signIn.headers["Set-Cookie"]!!.substringBefore(";")
-
-            // Somebody else's finished edition, and our reader has its id.
+            // Somebody else's run, and our reader has its id. A run id is a
+            // bearer token unless somebody compares the owner, and the page a
+            // run is holding has not been published yet.
             val stranger = KeyPair().pubKey.toHexKey()
-            val id = instance.drafts.open(stranger)
-            instance.drafts.ready(id, "<main>not yours</main>", "b".repeat(64), "{}", "[]")
+            val (theirs, _) = instance.runs.open(stranger)
 
-            assertEquals(HttpStatusCode.NotFound, client.get("/draft/$id") { header("Cookie", cookie) }.status)
-            assertEquals(HttpStatusCode.NotFound, client.get("/api/editions/$id") { header("Cookie", cookie) }.status)
+            assertEquals(HttpStatusCode.NotFound, client.get("/api/editions/${theirs.id}") { header("Cookie", cookie) }.status)
+            assertEquals(
+                HttpStatusCode.NotFound,
+                client.post("/api/editions/${theirs.id}/publish") { header("Cookie", cookie) }.status,
+            )
         }
     }
 }
