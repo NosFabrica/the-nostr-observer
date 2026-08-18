@@ -61,6 +61,22 @@ Do the same for a stylistic departure:
 
     <!-- restyle: one line on what changed and why -->
 
+### The folio line
+
+The folio is the small line of standing detail — the date, the window, the
+counts. Two rules, both learned from a phone:
+
+- **Put it ABOVE the nameplate**, the way a newspaper does. Below it, it reads
+  as a block of metadata between the reader and the first headline.
+- **Keep each span to a few words.** They are laid out justified to the edges,
+  which only works while they fit on one line — a fifty-five character span
+  wraps and takes the whole line with it. "554 of 11,106 surfaced" is a folio
+  entry; "554 events read, of 11,106 notes your web of trust surfaced" is a
+  sentence and belongs in the note at the foot of the page.
+
+The same goes for the dateline under the nameplate: three short phrases, not
+three clauses.
+
 ## Quoting people: the hard rule
 
 Anything inside `<q>` or `<blockquote>` MUST be word-for-word from a source
@@ -82,11 +98,6 @@ not how busy the day was. If a figure goes on the masthead, the honest one is
 what the lens surfaced, and it needs its denominator: "555 of 11,800 posts your
 web of trust surfaced today" is a fact, "555 events" reads as the whole day and
 is not one.
-
-Be careful which number you print. "Events below" is what YOU were shown; it is
-not how busy the day was. If you put a figure on the masthead, the honest one is
-what the lens surfaced, and say what it is — "555 of 11,800 posts your web of
-trust surfaced" is a fact; "555 events" reads as the whole day and is not.
 
 ## Pictures
 

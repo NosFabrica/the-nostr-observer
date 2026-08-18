@@ -231,4 +231,18 @@ td.num { text-align: right; padding-right: 0; font-family: var(--mono); font-siz
   .cell { padding: 16px 0; border-left: 0; border-top: 1px solid var(--rule-soft); }
   .cell:first-child { border-top: 0; padding-top: 0; }
   .reverse { padding: 20px 16px; }
+
+  /* A folio is a rule of thumb about LINE LENGTH, and on a phone there is no
+   * line length to justify against. `space-between` only reads as a newspaper
+   * folio while its spans fit on one line: the moment one of them wraps, the
+   * flex row becomes a ragged left-aligned list sitting under a centred
+   * nameplate, and the two axes fight. Compared side by side at 390px, that is
+   * the whole difference between an edition whose folio spans were short and
+   * one whose middle span ran to fifty-five characters -- same stylesheet, and
+   * the second one looked broken.
+   *
+   * Centred and stacked, a long span reads as a standfirst instead. It also
+   * gives back about sixty pixels, which on a phone is the difference between
+   * seeing the lead headline above the fold and not. */
+  .folio, .dateline { flex-direction: column; align-items: center; text-align: center; gap: 5px; }
 }
