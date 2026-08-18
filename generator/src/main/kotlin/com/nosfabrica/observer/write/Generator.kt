@@ -132,8 +132,15 @@ class Writer(
      */
     private val day = DateTimeFormatter.ofPattern("EEEE, MMMM d, yyyy")
 
-    /** The closing time, with the zone named, so "02:04 EDT" needs no footnote. */
-    private val clock = DateTimeFormatter.ofPattern("HH:mm zzz")
+    /**
+     * The closing time, unlabelled.
+     *
+     * It is already the reader's own clock, and naming the zone beside it tells
+     * them what they are standing in. The abbreviation earns its place only on
+     * a page that might be read somewhere else, and this one is dated for one
+     * person.
+     */
+    private val clock = DateTimeFormatter.ofPattern("HH:mm")
 
     internal fun userMessage(
         corpus: Corpus,

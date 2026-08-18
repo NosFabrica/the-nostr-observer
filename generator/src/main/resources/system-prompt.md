@@ -71,7 +71,7 @@ Set them exactly like this, with nothing else in them:
 
     <div class="folio">
       <span>Tuesday, August 18, 2026</span>
-      <span>24h to 22:04 EDT</span>
+      <span>24h to 22:04</span>
     </div>
 
     <header class="masthead"> … </header>
@@ -93,7 +93,7 @@ runs to a sentence wraps and takes the row with it.
 - **The date carries its day of the week.** "Tuesday, August 18, 2026" — a
   front page says what day it is, and a reader opening yesterday's edition
   should be able to tell at a glance.
-- **The window is a stamp, not a sentence.** "24h to 22:04 EDT".
+- **The window is a stamp, not a sentence.** "24h to 22:04".
 - **The date and the closing time are the READER's, and they are given to you
   formatted.** Print them as handed over. Never convert a time yourself and
   never print UTC: you cannot know what offset was in force on the day, and the
