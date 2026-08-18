@@ -2,9 +2,11 @@ package com.nosfabrica.observer.press.publish
 
 import com.vitorpamplona.quartz.nip01Core.core.Event
 import com.vitorpamplona.quartz.nip01Core.signers.EventTemplate
+import com.vitorpamplona.quartz.nip09Deletions.DeletionEvent
 import com.vitorpamplona.quartz.nip19Bech32.entities.NAddress
 import com.vitorpamplona.quartz.nip5aStaticWebsites.NamedSiteEvent
 import com.vitorpamplona.quartz.nip5aStaticWebsites.siteAggregateHash
+import com.vitorpamplona.quartz.nip5aStaticWebsites.siteDescription
 import com.vitorpamplona.quartz.nip5aStaticWebsites.sitePaths
 import com.vitorpamplona.quartz.nip5aStaticWebsites.siteServers
 import com.vitorpamplona.quartz.nip5aStaticWebsites.siteTitle
@@ -68,6 +70,32 @@ object Templates {
     private val DAY = Regex("""\d{4}-\d{2}-\d{2}""")
 
     /**
+     * Take one edition off the network.
+     *
+     * A NIP-09 deletion naming that day's address. This is only a plain,
+     * one-event request BECAUSE each edition is its own site: when a single
+     * site held every day as a path, removing Tuesday meant republishing a
+     * manifest of everything except it, and a kind 5 against the site would
+     * have deleted the lot — relays "delete all versions of the replaceable
+     * event" named by an `a` tag.
+     *
+     * What it does not do is unmake the file. The blob is content-addressed on
+     * somebody's media server and anybody holding the hash can still fetch it;
+     * this removes the edition from the reader's site and from the archive
+     * anyone reading their relays would see. Saying that plainly is the honest
+     * version — content-addressed storage does not really forget.
+     */
+    fun deletion(
+        pubkey: String,
+        day: String,
+        createdAt: Long,
+    ): EventTemplate<Event> =
+        Event.build(DeletionEvent.KIND, "Remove the edition for $day", createdAt) {
+            add(arrayOf("a", "${NamedSiteEvent.KIND}:$pubkey:${site(day)}"))
+            add(arrayOf("k", NamedSiteEvent.KIND.toString()))
+        }
+
+    /**
      * BUD-01 upload authorization: what may be uploaded, by whom, until when.
      *
      * The `x` tag binds the authorization to the SHA-256 of one specific blob,
@@ -105,6 +133,17 @@ object Templates {
         sha256: String,
         servers: List<String>,
         masthead: String,
+        /**
+         * The day's lead headline, so an archive can be read.
+         *
+         * Without it a back issue is a date, and a list of dates tells a reader
+         * nothing about which paper was which — the alternative is fetching
+         * every past page to read its `<h1>`, which is absurd for a list. It
+         * costs one tag, and the site's own title tag was carrying
+         * "The Nostr Observer — 2026-08-18", which says nothing the date does
+         * not.
+         */
+        headline: String?,
         createdAt: Long,
     ): EventTemplate<Event> {
         require(sha256.matches(Regex("^[0-9a-f]{64}$"))) { "not a sha256: $sha256" }
@@ -116,7 +155,8 @@ object Templates {
             // path; the reader's kind 10063 is the fallback. Naming them here
             // means an edition keeps resolving even if they later edit that list.
             siteServers(servers)
-            siteTitle("$masthead — $day")
+            siteTitle(masthead)
+            headline?.takeIf { it.isNotBlank() }?.let { siteDescription(it.take(200)) }
             siteAggregateHash(tags)
         }
     }

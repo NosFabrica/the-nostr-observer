@@ -69,6 +69,7 @@ private data class Who(
 @Serializable
 private data class Past(
     val day: String,
+    val headline: String?,
     val url: String?,
     val address: String?,
 )
@@ -306,6 +307,7 @@ fun Application.routes(app: App) {
                 app.announce.editions(session.pubkey, relays).map { edition ->
                     Past(
                         day = edition.day,
+                        headline = edition.headline,
                         // The manifest names its own servers, so an edition
                         // keeps resolving even after they change their list.
                         url =
@@ -316,6 +318,60 @@ fun Application.routes(app: App) {
                         address = Templates.address(session.pubkey, edition.day),
                     )
                 },
+            )
+        }
+
+        // Take one edition off the network.
+        //
+        // Two calls, like publishing: this one hands back the deletion request
+        // to sign, and the next publishes what comes back. Built here so
+        // Countersign has something to compare against -- a flow where the
+        // client invents its own kind 5 and we relay it can check nothing.
+        post("/api/archive/{day}/remove") {
+            val session = signedIn(app) ?: return@post call.respond(HttpStatusCode.Unauthorized, Problem("not signed in"))
+            val day =
+                call.parameters["day"]?.takeIf { Templates.dayOf(Templates.site(it)) != null }
+                    ?: return@post call.respond(HttpStatusCode.BadRequest, Problem("that is not a day"))
+            val template = Templates.deletion(session.pubkey, day, Instant.now().epochSecond)
+            app.removals[session.pubkey + "/" + day] = template
+            call.respond(ToSign(template.toJson(), "", emptyList(), app.press.writeRelaysOf(session.pubkey), ""))
+        }
+
+        post("/api/archive/{day}/removed") {
+            val session = signedIn(app) ?: return@post call.respond(HttpStatusCode.Unauthorized, Problem("not signed in"))
+            val day = call.parameters["day"].orEmpty()
+            val template =
+                app.removals[session.pubkey + "/" + day]
+                    ?: return@post call.respond(HttpStatusCode.Conflict, Problem("nothing to remove"))
+
+            val body = call.receiveText()
+            val offered = runCatching { json.decodeFromString<Signed>(body) }.getOrNull()
+            val token = call.request.cookies[COOKIE]
+            val candidate =
+                if (offered != null && offered.upload.isNotBlank()) {
+                    Event.fromJsonOrNull(offered.upload)
+                } else if (token != null && app.bunkers.has(token)) {
+                    app.bunkers.sign(token, template).getOrNull()
+                } else {
+                    null
+                }
+            val signed = candidate ?: return@post call.respond(HttpStatusCode.BadRequest, Problem("that is not a signed event"))
+
+            (Countersign.check(signed, template, session.pubkey) as? Countersign.Result.No)?.let {
+                return@post call.respond(HttpStatusCode.BadRequest, Problem("signature rejected: ${it.reason}"))
+            }
+
+            val relays = app.press.writeRelaysOf(session.pubkey)
+            val announced = app.announce.publish(signed, relays)
+            app.removals.remove(session.pubkey + "/" + day)
+            call.respond(
+                PublishReport(
+                    ok = announced.any { it.ok },
+                    day = day,
+                    naddr = Templates.address(session.pubkey, day) ?: "",
+                    uploads = emptyList(),
+                    relays = announced.map { Outcome(it.relay, it.ok, it.message) },
+                ),
             )
         }
 

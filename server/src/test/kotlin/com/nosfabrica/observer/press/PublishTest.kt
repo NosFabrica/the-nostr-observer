@@ -55,6 +55,7 @@ class TemplateTest {
                 "b".repeat(64),
                 listOf("https://blossom.example.com"),
                 "The Nostr Observer",
+                "Three patches before breakfast",
                 1_786_900_000,
             )
 
@@ -66,14 +67,17 @@ class TemplateTest {
         // deleted the archive. Nothing here can: yesterday is a different event.
         assertEquals(listOf("/index.html" to "b".repeat(64)), template.tags.filter { it[0] == "path" }.map { it[1] to it[2] })
         assertTrue(template.tags.any { it[0] == "server" && it[1] == "https://blossom.example.com" })
+        // The day's lead headline, so a list of back issues can be read without
+        // fetching every page in it.
+        assertEquals("Three patches before breakfast", template.tags.first { it[0] == "description" }[1])
     }
 
     @Test
     fun `two days are two addresses, so publishing one cannot touch the other`() {
         // The whole reason for the shape. These are different `d` tags, so they
         // are different addressable events, so no publish replaces another.
-        val monday = Templates.manifest("2026-08-17", "a".repeat(64), listOf("https://b.example.com"), "x", 1)
-        val tuesday = Templates.manifest("2026-08-18", "b".repeat(64), listOf("https://b.example.com"), "x", 2)
+        val monday = Templates.manifest("2026-08-17", "a".repeat(64), listOf("https://b.example.com"), "x", null, 1)
+        val tuesday = Templates.manifest("2026-08-18", "b".repeat(64), listOf("https://b.example.com"), "x", null, 2)
         assertNotEquals(
             monday.tags.first { it[0] == "d" }[1],
             tuesday.tags.first { it[0] == "d" }[1],
@@ -94,7 +98,7 @@ class TemplateTest {
     @Test
     fun `a manifest with a bad hash is refused rather than published`() {
         assertThrows(IllegalArgumentException::class.java) {
-            Templates.manifest("2026-08-18", "not-a-hash", listOf("https://b.example.com"), "x", 1)
+            Templates.manifest("2026-08-18", "not-a-hash", listOf("https://b.example.com"), "x", null, 1)
         }
     }
 }

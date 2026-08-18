@@ -10,6 +10,8 @@ import com.nosfabrica.observer.press.publish.Announce
 import com.nosfabrica.observer.press.publish.Blossom
 import com.nosfabrica.observer.press.store.Continuities
 import com.nosfabrica.observer.press.store.Db
+import com.vitorpamplona.quartz.nip01Core.core.Event
+import com.vitorpamplona.quartz.nip01Core.signers.EventTemplate
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.netty.Netty
 import kotlinx.coroutines.CoroutineScope
@@ -19,6 +21,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import org.slf4j.LoggerFactory
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Everything the app needs, read once from the environment.
@@ -71,6 +74,16 @@ class App(
     val bunkers = Bunkers(relays.client)
     val signIn = SignIn()
     val runs = Runs()
+
+    /**
+     * Deletion requests issued but not yet signed.
+     *
+     * Same reason the templates for a publish are held: they exist to be
+     * compared against what comes back, and they need to survive a round trip
+     * through a signer and nothing longer. Small enough that a sweep would cost
+     * more than the leak.
+     */
+    val removals = ConcurrentHashMap<String, EventTemplate<Event>>()
     val continuities = Continuities(db)
     val blossom = Blossom()
     val press = Press(relays, config.searchRelay, effort(config.effort))

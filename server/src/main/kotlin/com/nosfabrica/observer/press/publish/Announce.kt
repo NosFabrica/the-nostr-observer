@@ -92,7 +92,7 @@ class Announce(
                 val site = NamedSiteEvent(event.id, event.pubKey, event.createdAt, event.tags, event.content, event.sig)
                 val day = Templates.dayOf(site.identifier() ?: return@mapNotNull null) ?: return@mapNotNull null
                 val hash = site.paths().firstOrNull { it.path == "/index.html" }?.hash ?: return@mapNotNull null
-                Edition(day, hash, site.servers(), event.createdAt)
+                Edition(day, hash, site.servers(), site.description(), event.createdAt)
             }
             // Newest wins per day: a day republished is one edition, not two.
             .groupBy { it.day }
@@ -104,6 +104,8 @@ class Announce(
         val day: String,
         val hash: String,
         val servers: List<String>,
+        /** The day's lead headline, put there at publish so a list can be read. */
+        val headline: String?,
         val publishedAt: Long,
     )
 

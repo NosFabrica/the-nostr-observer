@@ -177,15 +177,18 @@ class Editions(
             run.day = day
             run.servers = servers
             run.relays = relays
+            // Read before the manifest is built, because the lead headline goes
+            // INTO it: a back issue that lists only its date tells a reader
+            // nothing about which paper was which.
+            val next = Masthead.next(edition.rawHtml, continuities.of(run.pubkey))
             run.upload = Templates.uploadAuth(sha, blob.size.toLong(), now, now + 600)
-            run.manifest = Templates.manifest(day, sha, servers, continuities.of(run.pubkey).masthead, now)
+            run.manifest = Templates.manifest(day, sha, servers, next.masthead, next.recentHeadlines.firstOrNull(), now)
             say("Ready to publish", "your signer will ask twice")
             run.state = Runs.State.SIGNING
 
             // Tomorrow's paper is the same paper. Remembered before the signing
             // round trip, because a reader who declines still made this page and
             // the masthead they were given is the one they should see again.
-            val next = Masthead.next(edition.rawHtml, continuities.of(run.pubkey))
             continuities.remember(run.pubkey, next.masthead, next.motto, next.sections, next.recentHeadlines)
         } catch (refused: Press.Refused) {
             say("Stopped", refused.message)
