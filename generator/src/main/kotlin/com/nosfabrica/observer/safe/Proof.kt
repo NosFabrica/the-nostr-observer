@@ -173,16 +173,27 @@ class Proof(
     }
 
     /**
-     * Text the reader cannot see.
+     * Text the reader cannot see, anywhere on the page.
      *
-     * Not a general contrast audit — the failure this catches is the one a
-     * free-form stylesheet actually produces: a theme where the ink and the
-     * paper are the same colour, or nearly. WCAG AA for body text is 4.5:1 and
-     * that is the number used, applied to the body only, because judging every
-     * element would fail honest editorial choices like a muted caption.
+     * This used to check the BODY only, and said so: judging every element
+     * "would fail honest editorial choices like a muted caption". That was the
+     * wrong conclusion from a right observation. A muted caption is an honest
+     * choice; a muted caption at 2.45:1 is an unreadable one, and the way to
+     * tell them apart is the rule WCAG already writes down — 4.5:1 for text,
+     * relaxed to 3:1 once it is large enough to carry itself.
+     *
+     * Applied to the whole page, it immediately found something a body-only
+     * check never could and nobody had noticed by eye: the accent inside the
+     * reverse panel. `--spot` is tuned against the PAGE's ground, so in the
+     * light theme it is a deep red for cream paper — printed on the reverse
+     * panel's near-black it came to 2.45:1, on every story that had a kicker.
+     *
+     * Backgrounds are composed through transparency rather than read off the
+     * element, because a half-opaque layer over dark paper is a different
+     * colour from the one the stylesheet names.
      */
     private fun unreadable(page: com.microsoft.playwright.Page): String? {
-        val ratio =
+        val worst =
             page.evaluate(
                 """() => {
                     const lum = (c) => {
@@ -192,24 +203,61 @@ class Proof(
                         });
                         return 0.2126 * r + 0.7152 * g + 0.0722 * b;
                     };
-                    const parse = (s) => (s.match(/\d+(\.\d+)?/g) || []).slice(0, 3).map(Number);
-                    const body = document.body;
-                    let bg = getComputedStyle(body).backgroundColor;
-                    let el = body;
-                    // Walk up for the first painted background; `transparent`
-                    // on the body is normal and means the html element's.
-                    while (el && (bg === 'rgba(0, 0, 0, 0)' || bg === 'transparent')) {
-                        el = el.parentElement;
-                        bg = el ? getComputedStyle(el).backgroundColor : 'rgb(255, 255, 255)';
+                    const parse = (s) => {
+                        const n = (s.match(/[\d.]+/g) || []).map(Number);
+                        return n.length >= 3 ? { rgb: n.slice(0, 3), a: n.length > 3 ? n[3] : 1 } : null;
+                    };
+                    const over = (fg, bg) => fg.rgb.map((c, i) => c * fg.a + bg[i] * (1 - fg.a));
+                    const ratio = (a, b) => {
+                        const [x, y] = [lum(a), lum(b)].sort((p, q) => q - p);
+                        return (x + 0.05) / (y + 0.05);
+                    };
+                    // Up through the ancestors, composing every partly
+                    // transparent layer, to whatever is actually behind the ink.
+                    const groundOf = (el) => {
+                        let node = el, layers = [];
+                        while (node) {
+                            const c = parse(getComputedStyle(node).backgroundColor);
+                            if (c && c.a > 0) { layers.push(c); if (c.a === 1) break; }
+                            node = node.parentElement;
+                        }
+                        let base = [255, 255, 255];
+                        for (const layer of layers.reverse()) base = over(layer, base);
+                        return base;
+                    };
+
+                    let worst = null;
+                    for (const el of document.querySelectorAll('*')) {
+                        const own = [...el.childNodes]
+                            .filter(n => n.nodeType === 3 && n.textContent.trim())
+                            .map(n => n.textContent.trim()).join(' ');
+                        if (!own) continue;
+                        const s = getComputedStyle(el);
+                        if (s.visibility === 'hidden' || s.display === 'none' || +s.opacity === 0) continue;
+                        const box = el.getBoundingClientRect();
+                        if (!box.width || !box.height) continue;
+                        const fg = parse(s.color);
+                        if (!fg) continue;
+                        const size = parseFloat(s.fontSize), weight = +s.fontWeight || 400;
+                        // WCAG's own definition of large: 18pt, or 14pt bold.
+                        const need = (size >= 24 || (size >= 18.66 && weight >= 700)) ? 3 : 4.5;
+                        const bg = groundOf(el);
+                        const got = ratio(over(fg, bg), bg);
+                        if (got >= need) continue;
+                        if (!worst || got < worst.got) {
+                            worst = {
+                                got: Math.round(got * 100) / 100,
+                                need,
+                                size: Math.round(size),
+                                what: el.tagName.toLowerCase() + (el.className ? '.' + String(el.className).split(' ')[0] : ''),
+                                text: own.slice(0, 40),
+                            };
+                        }
                     }
-                    const fg = parse(getComputedStyle(body).color);
-                    const back = parse(bg || 'rgb(255, 255, 255)');
-                    if (fg.length < 3 || back.length < 3) return 21;
-                    const a = lum(fg), b = lum(back);
-                    return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+                    return worst;
                 }""",
-            ) as Number
-        return if (ratio.toDouble() >= 4.5) null else "body text contrast %.1f:1, below 4.5:1".format(ratio.toDouble())
+            ) as Map<*, *>? ?: return null
+        return "${worst["what"]} at ${worst["got"]}:1, needs ${worst["need"]}:1 (${worst["size"]}px) — \"${worst["text"]}\""
     }
 
     /** A heading with nothing under it. "Sections are earned" cuts both ways. */

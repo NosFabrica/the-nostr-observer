@@ -49,6 +49,41 @@ class ProofTest {
     }
 
     @Test
+    fun `an accent that only works on the page's own ground is caught`() {
+        // THE ONE A BODY-ONLY CHECK CANNOT SEE, and the real bug this found. A
+        // dark panel inside a light page, with the page's accent printed on it:
+        // body contrast is perfect, the panel's own text is fine, and the small
+        // caps inside it are a deep red on near-black at 2.45:1.
+        val report =
+            check(
+                page(
+                    "body { color: #16121B; background: #FAF8F3 }" +
+                        ".reverse { background: #16121B; color: #F5F1EC; padding: 20px }" +
+                        ".kicker { color: #9C2B24; font-size: 10px; font-weight: 700 }",
+                    "<main><p>$WORDS</p><section class=\"reverse\"><p class=\"kicker\">Marked yesterday</p>" +
+                        "<p>$WORDS</p></section></main>",
+                ),
+            )
+        assertFalse(report.ok, "2.45:1 is not readable text")
+        assertTrue(report.findings.any { it.what.startsWith("unreadable") }, report.summary())
+    }
+
+    @Test
+    fun `large text keeps the allowance WCAG gives it`() {
+        // Not a stricter rule than WCAG, the same one. A 30px heading at 3.2:1
+        // passes, and failing it would push a stylesheet toward flatter, duller
+        // pages for no gain to anybody.
+        assertTrue(
+            check(
+                page(
+                    "body { color: #111; background: #fff } h2 { color: #767676; font-size: 30px }",
+                    "<main><h2>A heading in grey</h2><p>$WORDS</p></main>",
+                ),
+            ).ok,
+        )
+    }
+
+    @Test
     fun `ink the colour of the paper is caught`() {
         // The failure a free-form stylesheet actually produces, and the one a
         // reader reports as "the page is blank".
