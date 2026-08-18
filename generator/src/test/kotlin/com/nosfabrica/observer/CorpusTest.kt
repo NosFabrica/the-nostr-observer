@@ -2,6 +2,7 @@ package com.nosfabrica.observer
 
 import com.nosfabrica.observer.corpus.ArtDesk
 import com.nosfabrica.observer.corpus.Digest
+import com.nosfabrica.observer.nostr.Corpus
 import com.nosfabrica.observer.nostr.Desk
 import com.nosfabrica.observer.nostr.Readiness
 import com.vitorpamplona.quartz.nip19Bech32.decodePublicKeyAsHexOrNull
@@ -438,5 +439,71 @@ class StorageChainTest {
         assertEquals("can-publish", storageFine.state)
         assertEquals("no-relay-list", lensBroken.state)
         assertTrue(lensBroken.chain.none { it.key.startsWith("blossom") }, "the lens chain must not mention storage")
+    }
+}
+
+/**
+ * The budget is shared, not raced for.
+ *
+ * One pass in desk order spent it first-come, so a verbose desk near the front
+ * silently emptied whichever desk was declared LAST in the enum. Observed
+ * between two consecutive live runs: app releases went from 3 of 3 to 1 of 3
+ * for no reason but upstream verbosity, with the enum's declaration order
+ * quietly acting as an editorial priority.
+ */
+class BudgetTest {
+    private fun corpusOf(vararg desks: Pair<Desk, List<com.vitorpamplona.quartz.nip01Core.core.Event>>) =
+        Corpus(
+            observer = Fixtures.OBSERVER,
+            since = 1_786_800_000,
+            until = 1_786_900_000,
+            ranked = desks.toMap(),
+            control = emptyList(),
+            profiles = emptyMap(),
+        )
+
+    /**
+     * Distinct authors and distinct text, or the digest's own pruning eats the
+     * fixture before the budget ever sees it: identical content collapses as
+     * duplicates, and one author is capped per desk. The first version of these
+     * tests measured that instead, and two of them passed vacuously.
+     */
+    private fun bulk(
+        prefix: String,
+        n: Int,
+        chars: Int,
+    ) = (1..n).map { i ->
+        Fixtures.event("$prefix$i", "%064x".format(i), "$prefix story $i " + "word$i ".repeat(chars / 8))
+    }
+
+    @Test
+    fun `a greedy front desk cannot empty the last one`() {
+        // Sized so the crumb left over from a first-come pass cannot hold even
+        // one app release. An earlier version of this test used small app
+        // blocks, which still squeezed into the remainder -- so it passed under
+        // the very rule it was written to catch.
+        val corpus = corpusOf(Desk.NOTES to bulk("n", 60, 4_000), Desk.APPS to bulk("a", 3, 4_000))
+        val rendered = Digest(budgetChars = 20_000).render(corpus, emptyList())
+        assertTrue(rendered.text.contains("APP RELEASES"), "the last desk lost everything to the first")
+        assertEquals(3, Regex("""APP RELEASES \((\d+) of""").find(rendered.text)!!.groupValues[1].toInt())
+    }
+
+    @Test
+    fun `a desk that wants less than its share does not hoard it`() {
+        // Fair share is a floor, not a quota: what one desk leaves goes to the
+        // others rather than being wasted.
+        val corpus = corpusOf(Desk.NOTES to bulk("n", 40, 500), Desk.APPS to bulk("a", 1, 100))
+        val rendered = Digest(budgetChars = 40_000).render(corpus, emptyList())
+        assertEquals(41, rendered.kept, "everything fits, so everything is kept")
+    }
+
+    @Test
+    fun `the header counts what was printed, not what was pruned`() {
+        val corpus = corpusOf(Desk.NOTES to bulk("n", 30, 4_000))
+        val text = Digest(budgetChars = 20_000).render(corpus, emptyList()).text
+        val header = Regex("""NOTES \((\d+) of (\d+)\)""").find(text)!!
+        val printed = header.groupValues[1].toInt()
+        assertTrue(printed < 30, "the budget must have cut this short")
+        assertEquals(printed, Regex("""^--- """, RegexOption.MULTILINE).findAll(text).count())
     }
 }

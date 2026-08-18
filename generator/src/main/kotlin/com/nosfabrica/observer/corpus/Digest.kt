@@ -43,48 +43,85 @@ class Digest(
         corpus: Corpus,
         art: List<Art>,
     ): Rendered {
+        val artByEvent = art.groupBy { it.eventId }
+        var dropped = 0
+
+        // Everything rendered first, so allocation is a decision about text
+        // that exists rather than a race down the desk list.
+        val pages =
+            Desk.entries.mapNotNull { desk ->
+                val events = corpus.ranked[desk].orEmpty()
+                if (events.isEmpty()) return@mapNotNull null
+                val pruned = prune(desk, events)
+                dropped += events.size - pruned.size
+                if (pruned.isEmpty()) return@mapNotNull null
+                desk to
+                    Page(
+                        events.size,
+                        pruned.map { event ->
+                            StringBuilder().also { renderEvent(it, desk, event, corpus, artByEvent[event.id].orEmpty()) }.toString()
+                        },
+                    )
+            }
+
+        // A FAIR SHARE FIRST, then rank order takes the rest.
+        //
+        // This used to be one pass in desk order, spending the budget
+        // first-come: a verbose notes desk exhausted it and whichever desk was
+        // declared LAST in the enum silently lost its content. Observed between
+        // two consecutive runs, app releases went from 3 of 3 to 1 of 3 for no
+        // reason but upstream verbosity, and the enum's declaration order was
+        // quietly acting as an editorial priority. Adding desks made it worse:
+        // there are thirteen now and there were nine when it was found.
+        val share = if (pages.isEmpty()) 0 else budgetChars / pages.size
+        val taken = pages.associate { (desk, _) -> desk to mutableListOf<String>() }
+        var used = 0
+
+        for ((desk, page) in pages) {
+            for (block in page.blocks) {
+                if (taken.getValue(desk).sumOf { it.length } + block.length > share) break
+                taken.getValue(desk).add(block)
+                used += block.length
+            }
+        }
+        for ((desk, page) in pages) {
+            for (block in page.blocks.drop(taken.getValue(desk).size)) {
+                if (used + block.length > budgetChars) break
+                taken.getValue(desk).add(block)
+                used += block.length
+            }
+        }
+
         val sb = StringBuilder()
         var kept = 0
-        var dropped = 0
-        val artByEvent = art.groupBy { it.eventId }
-
-        for (desk in Desk.entries) {
-            val events = corpus.ranked[desk].orEmpty()
-            if (events.isEmpty()) continue
-            val pruned = prune(desk, events)
-            dropped += events.size - pruned.size
-            if (pruned.isEmpty()) continue
-
+        for ((desk, page) in pages) {
+            val blocks = taken.getValue(desk)
+            if (blocks.isEmpty()) continue
+            kept += blocks.size
+            dropped += page.blocks.size - blocks.size
             // Rendered first, counted second. The header used to be written
-            // before the events and claimed `pruned.size` of them, which stopped
+            // before the events and claimed the pruned count, which stopped
             // being true the moment the budget cut the desk short -- and the
             // header is one of the few things in the digest the writer is
             // entitled to treat as fact.
-            val desked = StringBuilder()
-            var here = 0
-            for (event in pruned) {
-                if (sb.length + desked.length > budgetChars) {
-                    dropped++
-                    continue
-                }
-                here++
-                renderEvent(desked, desk, event, corpus, artByEvent[event.id].orEmpty())
-            }
-            if (here == 0) continue
-            kept += here
-
             sb
                 .append("\n\n===== ")
                 .append(desk.label.uppercase())
                 .append(" (")
-                .append(here)
+                .append(blocks.size)
                 .append(" of ")
-                .append(events.size)
+                .append(page.returned)
                 .append(") =====\n")
-                .append(desked)
+            blocks.forEach(sb::append)
         }
         return Rendered(sb.toString().trim(), kept, dropped, sb.length)
     }
+
+    /** One desk's events, rendered but not yet allocated a share of the budget. */
+    private data class Page(
+        val returned: Int,
+        val blocks: List<String>,
+    )
 
     private fun renderEvent(
         sb: StringBuilder,

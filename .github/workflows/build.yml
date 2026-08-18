@@ -1,0 +1,39 @@
+name: build
+
+# Phase 1 said the adversarial fixture runs in CI from the first commit. It did
+# not: the fixture and the tests existed and nothing ran them on push, which is
+# the same as not having them the first time somebody lands a change without
+# running `./gradlew build` locally.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: temurin
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      # `build` is compile + test + spotlessCheck, so formatting alone fails
+      # here exactly as it does in the pre-commit hook.
+      - name: Build, test and check formatting
+        run: ./gradlew build --no-daemon --console=plain
+
+      # Nothing in this job talks to a relay or to the model API. Every test is
+      # meant to pass with no network at all, and a test that quietly needed one
+      # would stop running the first week CI was busy.
+      - name: Publish test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: '**/build/test-results/test/*.xml'
+          if-no-files-found: error
