@@ -195,6 +195,26 @@ class Pull(
                 },
         )
 
+    /**
+     * What actually belongs on a desk, once the relay has answered.
+     *
+     * Two rules a filter cannot express. [Desk.keeps] drops a live stream that
+     * has already ended, and the reader's own posts are not the news: a paper
+     * is what OTHER people did today, and reading your own words back under
+     * your own masthead is the one thing in it you cannot learn anything from.
+     * They rank highly through your own lens almost by construction, so without
+     * this they crowd the front page.
+     *
+     * They stay in the CONTROL run, which is a measurement of the network
+     * rather than a page, and they stay quotable when somebody else is replying
+     * to them.
+     */
+    internal fun belongs(
+        desk: Desk,
+        observer: String,
+        events: List<Event>,
+    ): List<Event> = events.filter { desk.keeps(it) && it.pubKey != observer }
+
     suspend fun corpus(
         observer: String,
         since: Long,
@@ -223,9 +243,11 @@ class Pull(
                     desks.map { desk ->
                         desk to
                             async {
-                                relays
-                                    .fetch(searchRelay, filter(desk.kinds, since, until, desk.limit, observer), idle = 25_000)
-                                    .filter(desk::keeps)
+                                belongs(
+                                    desk,
+                                    observer,
+                                    relays.fetch(searchRelay, filter(desk.kinds, since, until, desk.limit, observer), idle = 25_000),
+                                )
                             }
                     }
                 val controlAsked = async { controlRun(since, until) }

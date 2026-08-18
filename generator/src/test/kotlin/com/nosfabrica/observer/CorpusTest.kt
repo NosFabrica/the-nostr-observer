@@ -4,7 +4,9 @@ import com.nosfabrica.observer.corpus.ArtDesk
 import com.nosfabrica.observer.corpus.Digest
 import com.nosfabrica.observer.nostr.Corpus
 import com.nosfabrica.observer.nostr.Desk
+import com.nosfabrica.observer.nostr.Pull
 import com.nosfabrica.observer.nostr.Readiness
+import com.nosfabrica.observer.nostr.Relays
 import com.vitorpamplona.quartz.nip19Bech32.decodePublicKeyAsHexOrNull
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -506,5 +508,43 @@ class BudgetTest {
         val printed = header.groupValues[1].toInt()
         assertTrue(printed < 30, "the budget must have cut this short")
         assertEquals(printed, Regex("""^--- """, RegexOption.MULTILINE).findAll(text).count())
+    }
+}
+
+/**
+ * The reader is not the news.
+ *
+ * A paper is what other people did today. The observer's own posts rank highly
+ * through their own lens almost by construction, so without this they crowd the
+ * front page with things the reader already knows they wrote.
+ */
+class BelongsTest {
+    private val pull = Pull(Relays(), "wss://example.invalid")
+
+    @Test
+    fun `the observer's own events are not a story`() {
+        val mine = Fixtures.event("m1", Fixtures.OBSERVER, "my own note")
+        val theirs = Fixtures.event("t1", Fixtures.ALICE, "somebody else's note")
+        assertEquals(listOf(theirs), pull.belongs(Desk.NOTES, Fixtures.OBSERVER, listOf(mine, theirs)))
+    }
+
+    @Test
+    fun `a stream that has already ended is not on air`() {
+        // A kind 30311 is replaceable, so the record of a finished stream sits
+        // in the window looking exactly like a running one.
+        fun stream(
+            id: String,
+            status: String,
+        ) = Fixtures.event(id, Fixtures.ALICE, "", kind = 30311, tags = listOf(listOf("status", status)))
+        val live = stream("s1", "live")
+        val kept = pull.belongs(Desk.LIVE, Fixtures.OBSERVER, listOf(live, stream("s2", "ended"), stream("s3", "planned")))
+        assertEquals(listOf(live), kept)
+    }
+
+    @Test
+    fun `both rules apply at once`() {
+        val mineLive =
+            Fixtures.event("s4", Fixtures.OBSERVER, "", kind = 30311, tags = listOf(listOf("status", "live")))
+        assertTrue(pull.belongs(Desk.LIVE, Fixtures.OBSERVER, listOf(mineLive)).isEmpty(), "my own stream is still mine")
     }
 }
