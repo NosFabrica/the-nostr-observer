@@ -6,11 +6,18 @@ import java.sql.DriverManager
 import java.sql.ResultSet
 
 /**
- * One SQLite file, opened once, migrated forward by number.
+ * One SQLite file, opened once, created from one statement list.
  *
- * Numbered migrations rather than a schema dump, the way the relay does it: the
- * version a running deployment is on is a fact you can read out of the file,
- * and adding a column later is an append rather than an edit to history.
+ * NOT a migration history, and deliberately. There is nothing deployed and
+ * nobody using it, so an append-only list of numbered steps would be a record
+ * of decisions this project made and unmade to itself — the `published` table
+ * was created and dropped without a single row ever being written to it
+ * anywhere. Until there is a database somebody would be upset to lose, the
+ * schema is just the schema, and it is easier to read as one.
+ *
+ * The version row stays: it costs one integer, it is what makes the first real
+ * migration possible, and the day this ships to anybody is the day this list
+ * stops being editable.
  *
  * SQLite and one connection: this is a single-process app whose write volume is
  * a handful of rows per edition. A pool would buy nothing and cost the "who
@@ -86,10 +93,9 @@ class Db(
 
     private companion object {
         /**
-         * Append only. Statements inside one migration are split on `;--`
-         * because a plain `;` also ends a line inside a trigger body, and the
-         * day this file grows one is the day a naive split starts corrupting
-         * migrations that used to work.
+         * The schema, as it is. Statements are split on `;--` because a plain
+         * `;` also ends a line inside a trigger body, and the day this file
+         * grows one is the day a naive split starts corrupting it.
          */
         val MIGRATIONS =
             listOf(
@@ -115,29 +121,8 @@ class Db(
                     error       TEXT
                 );--
                 CREATE INDEX drafts_by_owner ON drafts (pubkey, created_at DESC);--
-                CREATE INDEX drafts_by_expiry ON drafts (expires_at);--
-                CREATE TABLE published (
-                    pubkey       TEXT NOT NULL,
-                    day          TEXT NOT NULL,
-                    sha256       TEXT NOT NULL,
-                    naddr        TEXT NOT NULL,
-                    servers      TEXT NOT NULL,
-                    published_at INTEGER NOT NULL,
-                    PRIMARY KEY (pubkey, day)
-                )
+                CREATE INDEX drafts_by_expiry ON drafts (expires_at)
                 """,
-                // The archive moved to where it belonged all along: the
-                // reader's own kind 35128, on the reader's own relays, which
-                // already carried every path and outlives this deployment.
-                // Keeping a copy here made our database the record of somebody
-                // else's back catalogue -- and a replaceable event rebuilt from
-                // a record we might not have is how a back catalogue vanishes.
-                //
-                // Appended rather than edited above, because the migration list
-                // is append-only: an installation that ran migration 1 needs a
-                // statement that drops the table, not a version of migration 1
-                // that never made it.
-                """DROP TABLE IF EXISTS published""",
             )
     }
 }
