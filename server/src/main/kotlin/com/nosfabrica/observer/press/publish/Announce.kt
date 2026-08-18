@@ -21,33 +21,21 @@ import kotlinx.coroutines.coroutineScope
 class Announce(
     private val relays: Relays,
     private val readRelay: String,
+    private val press: com.nosfabrica.observer.Press,
 ) {
     /**
-     * The reader's Blossom servers, newest list wins.
+     * The reader's Blossom servers, from the generator's reader.
      *
-     * An empty list is a hard stop rather than a default. Substituting a server
-     * of our own would silently make us the host of a page whose whole promise
-     * is that the reader hosts it, and "delete my paper" would stop being
-     * something they can do without asking us.
+     * This used to parse the kind 10063 itself, which meant two parsers for one
+     * question — and the storage readiness chain would have been the second
+     * place to disagree about what counts as a usable server. An empty list is
+     * still a hard stop at publish: substituting a server of our own would make
+     * us the host of a page whose whole promise is that the reader hosts it.
      */
     suspend fun servers(
         pubkey: String,
         hosts: List<String>,
-    ): List<String> {
-        val events = anyOf(hosts, Filter(kinds = listOf(BlossomServersEvent.KIND), authors = listOf(pubkey)))
-        val newest = events.maxByOrNull { it.createdAt } ?: return emptyList()
-        return BlossomServersEvent(
-            newest.id,
-            newest.pubKey,
-            newest.createdAt,
-            newest.tags,
-            newest.content,
-            newest.sig,
-        ).servers()
-            .map { it.trimEnd('/') }
-            .filter { it.startsWith("https://") }
-            .distinct()
-    }
+    ): List<String> = press.blossomServers(pubkey, hosts)
 
     /**
      * Publish the manifest to the reader's own write relays and report each one.

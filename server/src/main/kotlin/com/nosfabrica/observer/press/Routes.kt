@@ -74,6 +74,13 @@ private data class Verdict(
     val chain: List<ChainLink>,
 )
 
+/** Both chains, because they fail independently and a reader should see which. */
+@Serializable
+private data class Preflight(
+    val lens: Verdict,
+    val storage: Verdict,
+)
+
 @Serializable
 private data class ToSign(
     val upload: String,
@@ -200,13 +207,32 @@ fun Application.routes(app: App) {
         // The readiness chain, for the panel that explains why there is no lens yet.
         get("/api/readiness") {
             val session = signedIn(app) ?: return@get call.respond(HttpStatusCode.Unauthorized, Problem("not signed in"))
-            val (_, verdict) = app.press.readiness(session.pubkey, Instant.now().epochSecond - WINDOW_SECONDS)
+            val (facts, lens) = app.press.readiness(session.pubkey, Instant.now().epochSecond - WINDOW_SECONDS)
+            // Asked here, before an edition exists. Learning you have nowhere to
+            // publish AFTER paying for a paper is the failure the second chain
+            // is for, and that is exactly where the check used to sit.
+            val store =
+                app.press.storage(
+                    session.pubkey,
+                    facts.writeRelays.orEmpty(),
+                    publishedBefore = app.published.of(session.pubkey).isNotEmpty(),
+                )
             call.respond(
-                Verdict(
-                    state = verdict.state,
-                    explanation = Readiness.explain(verdict),
-                    ranks = verdict.ranks,
-                    chain = verdict.chain.map { ChainLink(it.key, it.status.name, it.detail) },
+                Preflight(
+                    lens =
+                        Verdict(
+                            state = lens.state,
+                            explanation = Readiness.explain(lens),
+                            ranks = lens.ranks,
+                            chain = lens.chain.map { ChainLink(it.key, it.status.name, it.detail) },
+                        ),
+                    storage =
+                        Verdict(
+                            state = store.state,
+                            explanation = Readiness.explainStorage(store),
+                            ranks = store.state == "can-publish",
+                            chain = store.chain.map { ChainLink(it.key, it.status.name, it.detail) },
+                        ),
                 ),
             )
         }

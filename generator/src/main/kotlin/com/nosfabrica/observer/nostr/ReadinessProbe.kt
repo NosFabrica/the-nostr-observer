@@ -8,7 +8,9 @@ import com.vitorpamplona.quartz.nip85TrustedAssertions.list.TrustProviderListEve
 import com.vitorpamplona.quartz.nip85TrustedAssertions.list.serviceProviders
 import com.vitorpamplona.quartz.nip85TrustedAssertions.list.tags.ProviderTypes
 import com.vitorpamplona.quartz.nip85TrustedAssertions.users.ContactCardEvent
+import com.vitorpamplona.quartz.nipB7Blossom.BlossomServersEvent
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 
 /**
@@ -88,6 +90,39 @@ class ReadinessProbe(
                 posts = posts,
             )
         }
+
+    /**
+     * The reader's Blossom servers, from their own kind 10063.
+     *
+     * Lives here rather than in the publish path because BOTH need it: the
+     * storage readiness chain asks at pre-flight so a reader learns they have
+     * nowhere to publish BEFORE an edition is written, and the publish path
+     * asks again because that is where the manifest is going. One reader, one
+     * parser, no chance of the two disagreeing about what counts as a server.
+     *
+     * https only. A Blossom PUT is an HTTPS call and the sanitizer allows no
+     * other scheme; a plain-http entry is a server we cannot use.
+     */
+    suspend fun blossomServers(
+        observer: String,
+        hosts: List<String>,
+    ): List<String> {
+        val filter = Filter(kinds = listOf(BlossomServersEvent.KIND), authors = listOf(observer))
+        val events =
+            coroutineScope {
+                (hosts.take(3) + searchRelay)
+                    .distinct()
+                    .map { host -> async { runCatching { relays.fetch(host, filter, idle = 10_000) }.getOrDefault(emptyList()) } }
+                    .awaitAll()
+                    .flatten()
+            }
+        val newest = events.maxByOrNull { it.createdAt } ?: return emptyList()
+        return BlossomServersEvent(newest.id, newest.pubKey, newest.createdAt, newest.tags, newest.content, newest.sig)
+            .servers()
+            .map { it.trimEnd('/') }
+            .filter { it.startsWith("https://", ignoreCase = true) }
+            .distinct()
+    }
 
     /**
      * Just the reader's write relays, for callers that need only those.

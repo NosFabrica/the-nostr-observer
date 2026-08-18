@@ -144,6 +144,28 @@ class Press(
     /** Where this reader's own events go, without running the whole chain to find out. */
     suspend fun writeRelaysOf(observer: String): List<String> = ReadinessProbe(relays, searchRelay).writeRelaysOf(observer)
 
+    /** Their Blossom servers, from their own kind 10063. */
+    suspend fun blossomServers(
+        observer: String,
+        hosts: List<String>,
+    ): List<String> = ReadinessProbe(relays, searchRelay).blossomServers(observer, hosts)
+
+    /**
+     * Can this reader publish, asked BEFORE anything is written.
+     *
+     * Separate from [readiness] because the two chains fail independently: no
+     * media server is not a broken lens, and a reader with one and not the
+     * other should be told exactly which.
+     */
+    suspend fun storage(
+        observer: String,
+        writeRelays: List<String>,
+        publishedBefore: Boolean? = null,
+    ): Readiness.Verdict {
+        val servers = blossomServers(observer, writeRelays)
+        return Readiness.storage(Readiness.Storage(serverListSeen = true, servers = servers, publishedBefore = publishedBefore))
+    }
+
     suspend fun readiness(
         observer: String,
         since: Long,

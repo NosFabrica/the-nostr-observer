@@ -79,6 +79,75 @@ object Readiness {
     fun counted(v: Long?): Boolean = v != null && v >= 0
 
     /**
+     * The second chain: can you HOST your paper?
+     *
+     * Two chains, not one, and they fail independently. A reader with no
+     * Blossom server can still see their edition — they just cannot publish it.
+     * Folding storage into the lens chain would tell somebody whose lens is
+     * perfect that their search is broken, which is the same mistake the
+     * "own posts are behind" aside exists to avoid.
+     *
+     * It is checked at PRE-FLIGHT, and that is the whole point. The 10063 check
+     * used to happen at publish time, which is after an edition has been
+     * generated and paid for: the reader learned they had nowhere to put their
+     * paper at the one moment the answer was most expensive.
+     */
+    data class Storage(
+        /** Null = not asked. False = no kind 10063 anywhere we looked. */
+        val serverListSeen: Boolean? = null,
+        val servers: List<String> = emptyList(),
+        /** Has this reader ever completed an upload? Null = we have no record either way. */
+        val publishedBefore: Boolean? = null,
+    )
+
+    fun storage(f: Storage): Verdict {
+        val chain = mutableListOf<Link>()
+        val seen = f.serverListSeen ?: return Verdict("checking", Tone.WORKING, null, chain.toList())
+
+        if (f.servers.isEmpty()) {
+            // Same distinction the relay list draws: never published a list, or
+            // published one naming nothing we can use. Different sentences.
+            chain.add(Link("blossomServers", Status.BROKEN, if (seen) "list names no usable server" else "absent"))
+            chain.add(Link("uploadConsent", Status.WAITING))
+            return Verdict("no-blossom-server", Tone.BLOCKED, null, chain.toList())
+        }
+        chain.add(Link("blossomServers", Status.OK, "${f.servers.size} server(s)"))
+
+        // Consent CANNOT be pre-flighted. Whether a signer will produce a
+        // kind 24242 is knowable only when it is asked, and asking means a
+        // prompt on the reader's device for an upload they have not requested.
+        // So this link reports history, and the publish path reports refusal.
+        return when (f.publishedBefore) {
+            true -> {
+                chain.add(Link("uploadConsent", Status.OK, "has published before"))
+                Verdict("can-publish", Tone.OK, null, chain.toList())
+            }
+
+            else -> {
+                chain.add(Link("uploadConsent", Status.WAITING, "asked at publish"))
+                Verdict("can-publish", Tone.OK, null, chain.toList())
+            }
+        }
+    }
+
+    /** The storage chain in words, same contract as [explain]. */
+    fun explainStorage(v: Verdict): String =
+        when (v.state) {
+            "checking" -> {
+                "Checking where you can publish."
+            }
+
+            "no-blossom-server" -> {
+                "You have no media server listed (kind 10063), so there is nowhere to put your paper. " +
+                    "Add one in your usual client — you can still read today's edition without it."
+            }
+
+            else -> {
+                "Ready to publish."
+            }
+        }
+
+    /**
      * here/there as 0..1, or null when there is no honest denominator.
      *
      * Null is a supported answer and the caller must draw nothing rather than

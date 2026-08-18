@@ -87,30 +87,41 @@ async function readiness() {
   panel.textContent = "Checking your lens…";
   const res = await fetch("/api/readiness");
   if (!res.ok) return (panel.textContent = "");
-  const v = await res.json();
+  const pre = await res.json();
   panel.innerHTML = "";
+
+  // Two chains, drawn separately, because they fail independently: no media
+  // server is not a broken lens, and a reader with one and not the other should
+  // be able to see which.
+  drawChain(panel, pre.lens);
+  drawChain(panel, pre.storage);
+
+  // No lens, no ranked paper. The button says so rather than producing
+  // something built a different way and calling it the reader's paper.
+  $("generate").disabled = !pre.lens.ranks;
+  if (!pre.lens.ranks) {
+    const waiting = document.createElement("p");
+    waiting.className = "waiting";
+    waiting.textContent = "We will tell you as soon as your lens is ready.";
+    panel.append(waiting);
+  }
+}
+
+function drawChain(panel, verdict) {
   const line = document.createElement("p");
-  line.className = v.ranks ? "ok" : "waiting";
-  line.textContent = v.explanation;
+  line.className = verdict.ranks ? "ok" : "waiting";
+  line.textContent = verdict.explanation;
   panel.append(line);
+
   const chain = document.createElement("ul");
   chain.className = "chain";
-  for (const link of v.chain) {
+  for (const link of verdict.chain) {
     const li = document.createElement("li");
     li.dataset.status = link.status;
     li.textContent = link.key + (link.detail ? " — " + link.detail : "");
     chain.append(li);
   }
   panel.append(chain);
-  // No lens, no ranked paper. The button says so rather than producing
-  // something built a different way and calling it the reader's paper.
-  $("generate").disabled = !v.ranks;
-  if (!v.ranks) {
-    const waiting = document.createElement("p");
-    waiting.className = "waiting";
-    waiting.textContent = "We will tell you as soon as your lens is ready.";
-    panel.append(waiting);
-  }
 }
 
 // ------------------------------------------------------------- generating

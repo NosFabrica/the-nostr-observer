@@ -377,3 +377,66 @@ class HighlightTest {
         assertTrue(text.contains("The surrounding passage"), text.take(300))
     }
 }
+
+/**
+ * The second chain: can you host your paper?
+ *
+ * It fails independently of the lens, and it is asked at PRE-FLIGHT. The
+ * kind 10063 check used to happen at publish time — after an edition had been
+ * generated and paid for — so a reader learned they had nowhere to put their
+ * paper at the single most expensive moment to find out.
+ */
+class StorageChainTest {
+    @Test
+    fun `not asked yet is checking, never a refusal`() {
+        assertEquals("checking", Readiness.storage(Readiness.Storage()).state)
+    }
+
+    @Test
+    fun `no server list is blocked, and says so in words`() {
+        val v = Readiness.storage(Readiness.Storage(serverListSeen = false))
+        assertEquals("no-blossom-server", v.state)
+        assertEquals(Readiness.Status.BROKEN, v.chain.first { it.key == "blossomServers" }.status)
+        assertTrue(Readiness.explainStorage(v).contains("still read today's edition"))
+    }
+
+    @Test
+    fun `a list naming nothing usable reads differently from no list`() {
+        // Same distinction the relay list draws. One is "you never published
+        // one"; the other is "the one you published names nothing we can use".
+        val absent = Readiness.storage(Readiness.Storage(serverListSeen = false))
+        val useless = Readiness.storage(Readiness.Storage(serverListSeen = true))
+        assertEquals("absent", absent.chain.first().detail)
+        assertEquals("list names no usable server", useless.chain.first().detail)
+    }
+
+    @Test
+    fun `a server makes it publishable, with consent still unasked`() {
+        val v = Readiness.storage(Readiness.Storage(serverListSeen = true, servers = listOf("https://b.example.com")))
+        assertEquals("can-publish", v.state)
+        // Consent cannot be pre-flighted: asking means a signer prompt for an
+        // upload the reader has not requested.
+        assertEquals(Readiness.Status.WAITING, v.chain.first { it.key == "uploadConsent" }.status)
+    }
+
+    @Test
+    fun `having published before is the only evidence of consent we get`() {
+        val v =
+            Readiness.storage(
+                Readiness.Storage(serverListSeen = true, servers = listOf("https://b.example.com"), publishedBefore = true),
+            )
+        assertEquals(Readiness.Status.OK, v.chain.first { it.key == "uploadConsent" }.status)
+    }
+
+    @Test
+    fun `a broken lens does not break storage, or the reverse`() {
+        // The whole reason there are two chains. A reader with a perfect lens
+        // and no media server can READ their paper; one with a server and no
+        // lens has nothing to put on it.
+        val storageFine = Readiness.storage(Readiness.Storage(serverListSeen = true, servers = listOf("https://b.example.com")))
+        val lensBroken = Readiness.assess(Readiness.Facts(writeRelays = emptyList(), relayListSeen = false))
+        assertEquals("can-publish", storageFine.state)
+        assertEquals("no-relay-list", lensBroken.state)
+        assertTrue(lensBroken.chain.none { it.key.startsWith("blossom") }, "the lens chain must not mention storage")
+    }
+}

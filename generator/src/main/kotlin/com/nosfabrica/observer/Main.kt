@@ -88,9 +88,18 @@ fun main(args: Array<String>) =
             val press = Press(relays, relayUrl, effort(flags["--effort"]))
 
             if (flags.containsKey("--check")) {
-                val (_, verdict) = press.readiness(observer, until - WINDOW_SECONDS)
+                val (facts, verdict) = press.readiness(observer, until - WINDOW_SECONDS)
                 step("Reading $relayUrl through $observer")
                 report(verdict)
+                // The second chain, asked at pre-flight like the first. A reader
+                // with a perfect lens and no media server can read their paper
+                // and not publish it, and should learn that here rather than
+                // after one has been written.
+                val store = press.storage(observer, facts.writeRelays.orEmpty())
+                step("Storage: ${store.state} - ${Readiness.explainStorage(store)}")
+                store.chain.forEach { link ->
+                    println("    ${symbol(link.status)} ${link.key}${link.detail?.let { " ($it)" } ?: ""}")
+                }
                 return@use
             }
 

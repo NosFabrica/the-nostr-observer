@@ -76,9 +76,9 @@ class App(
     val drafts = Drafts(db)
     val continuities = Continuities(db)
     val published = Published(db)
-    val announce = Announce(relays, config.searchRelay)
     val blossom = Blossom()
     val press = Press(relays, config.searchRelay, effort(config.effort))
+    val announce = Announce(relays, config.searchRelay, press)
     val editions = Editions(press, drafts, continuities, scope)
 
     val pending = Pendings()
