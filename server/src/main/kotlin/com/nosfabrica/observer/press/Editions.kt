@@ -12,6 +12,8 @@ import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.time.Instant
+import java.time.ZoneId
+import java.time.ZoneOffset
 
 /**
  * What the browser is told while an edition is being made.
@@ -57,7 +59,24 @@ class Editions(
     private val json = Json { encodeDefaults = true }
     private val running = java.util.concurrent.ConcurrentHashMap<String, String>()
 
-    fun start(pubkey: String): String {
+    /**
+     * The reader's own timezone, or UTC if they did not say.
+     *
+     * Whatever the browser reports lands here, so it is checked against the
+     * tz database before it becomes a `ZoneId` -- an unknown id throws, and a
+     * thrown exception inside a launched coroutine fails an edition for a
+     * reason nobody would guess from the message.
+     */
+    internal fun zoneOf(name: String?): ZoneId =
+        name
+            ?.takeIf { it in ZoneId.getAvailableZoneIds() }
+            ?.let(ZoneId::of)
+            ?: ZoneOffset.UTC
+
+    fun start(
+        pubkey: String,
+        timezone: String? = null,
+    ): String {
         var started: String? = null
 
         // compute(), not get-then-put. Check-then-act here is a race between two
@@ -76,13 +95,14 @@ class Editions(
         // Launched outside compute: the mapping function must be short and must
         // not call back into the map, and a coroutine that finishes fast enough
         // to call running.remove() from inside it would deadlock.
-        started?.let { fresh -> scope.launch(Dispatchers.IO) { run(fresh, pubkey) } }
+        started?.let { fresh -> scope.launch(Dispatchers.IO) { run(fresh, pubkey, zoneOf(timezone)) } }
         return id
     }
 
     private suspend fun run(
         id: String,
         pubkey: String,
+        zone: ZoneId,
     ) {
         val lines = mutableListOf<Line>()
 
@@ -100,6 +120,7 @@ class Editions(
                     observer = pubkey,
                     until = Instant.now().epochSecond,
                     continuity = continuities.of(pubkey),
+                    zone = zone,
                 ) { step ->
                     val (text, detail) = describe(step)
                     say(text, detail)

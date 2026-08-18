@@ -23,6 +23,7 @@ private val USAGE =
       --out <file>     where to write the edition (default edition.html)
       --until <epoch>  end of the 24h window (default: now)
       --effort <lvl>   low | medium | high | xhigh | max (default high)
+      --timezone <id>  the reader's zone, e.g. America/New_York (default: this machine's)
       --dry-run        pull, prune and shortlist, but do not call the model
       --check          report the readiness chain and stop
 
@@ -66,6 +67,18 @@ fun main(args: Array<String>) =
         val relayUrl = flags["--relay"] ?: DEFAULT_RELAY
         val out = File(flags["--out"] ?: "edition.html")
         val until = flags["--until"]?.toLongOrNull() ?: Instant.now().epochSecond
+
+        // The paper is dated in the reader's day. On a CLI run this machine is
+        // the closest thing to a reader there is; a bad id is worth stopping
+        // for, because silently printing UTC dates a paper wrong for half the
+        // world and nothing downstream would notice.
+        val zone =
+            flags["--timezone"]?.let { name ->
+                runCatching { java.time.ZoneId.of(name) }.getOrElse {
+                    System.err.println("Not a timezone: $name (try America/New_York, Europe/Lisbon, UTC)")
+                    exitProcess(2)
+                }
+            } ?: java.time.ZoneId.systemDefault()
 
         // quartz owns NIP-19 decoding, but NOT this guard, and the difference
         // matters. `decodePublicKeyAsHexOrNull` decodes ANY 32-byte bech32
@@ -116,7 +129,7 @@ fun main(args: Array<String>) =
                     return@use
                 }
 
-                val edition = press.edition(observer, until, onStep = ::show)
+                val edition = press.edition(observer, until, zone = zone, onStep = ::show)
                 out.writeText(edition.html)
                 step("Wrote ${out.path} (${edition.html.length} bytes)")
 

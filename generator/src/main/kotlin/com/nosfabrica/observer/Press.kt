@@ -14,6 +14,8 @@ import com.nosfabrica.observer.safe.Validator
 import com.nosfabrica.observer.write.Continuity
 import com.nosfabrica.observer.write.Writer
 import java.io.Closeable
+import java.time.ZoneId
+import java.time.ZoneOffset
 
 /** 24 hours, fixed. Settled in the plan; not a knob. */
 const val WINDOW_SECONDS = 24L * 60 * 60
@@ -293,6 +295,15 @@ class Press(
         observer: String,
         until: Long,
         continuity: Continuity = Continuity(),
+        /**
+         * The reader's own timezone, for the date and the window stamp.
+         *
+         * Defaults to UTC, which is honest and wrong for nearly everybody --
+         * every caller should say. It cannot be deferred to the page: a
+         * published edition carries no script, by design and by its own CSP, so
+         * there is nothing in it that could read a viewer's clock.
+         */
+        zone: ZoneId = ZoneOffset.UTC,
         onStep: (Step) -> Unit = {},
     ): Edition {
         val (corpus, art, digest) = gather(observer, until, onStep)
@@ -313,7 +324,7 @@ class Press(
         // about than the one below: a second generation costs a dollar, the
         // fallback costs the day's typography, and the reader gets a page.
         onStep(Step.Writing)
-        var draft = writer.write(corpus, digest, art, continuity)
+        var draft = writer.write(corpus, digest, art, continuity, zone)
         onStep(Step.Written(draft.html.length, draft.inputTokens, draft.outputTokens, draft.costUsd()))
         var sanitized = sanitizer.sanitize(draft.html)
         onStep(Step.Cleaned(sanitized.removed))
@@ -322,7 +333,7 @@ class Press(
 
         if (!proof.ok) {
             onStep(Step.Writing)
-            draft = writer.write(corpus, digest, art, continuity)
+            draft = writer.write(corpus, digest, art, continuity, zone)
             onStep(Step.Written(draft.html.length, draft.inputTokens, draft.outputTokens, draft.costUsd()))
             sanitized = sanitizer.sanitize(draft.html)
             onStep(Step.Cleaned(sanitized.removed))

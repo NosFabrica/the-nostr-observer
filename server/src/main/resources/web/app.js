@@ -130,7 +130,14 @@ async function generate() {
   $("generate").disabled = true;
   $("result").hidden = true;
   $("progress").innerHTML = "";
-  const res = await fetch("/api/editions", { method: "POST" });
+  // The one fact only the browser has. A published edition carries no script,
+  // so it cannot work out the reader's clock when they open it -- the zone has
+  // to travel with the request and be printed into the page.
+  const res = await fetch("/api/editions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }),
+  });
   const data = await res.json();
   if (!res.ok) {
     $("generate").disabled = false;

@@ -8,6 +8,7 @@ import com.nosfabrica.observer.corpus.Art
 import com.nosfabrica.observer.corpus.Digest
 import com.nosfabrica.observer.nostr.Corpus
 import java.time.Instant
+import java.time.ZoneId
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 
@@ -58,6 +59,7 @@ class Writer(
         digest: Digest.Rendered,
         art: List<Art>,
         continuity: Continuity,
+        zone: ZoneId = ZoneOffset.UTC,
     ): Draft {
         val params =
             MessageCreateParams
@@ -70,7 +72,7 @@ class Writer(
                 .thinking(ThinkingConfigAdaptive.builder().build())
                 .outputConfig(OutputConfig.builder().effort(effort).build())
                 .system(systemPrompt + "\n\n## House stylesheet\n\n```css\n" + houseCss + "\n```\n")
-                .addUserMessage(userMessage(corpus, digest, art, continuity))
+                .addUserMessage(userMessage(corpus, digest, art, continuity, zone))
                 .build()
 
         val text = StringBuilder()
@@ -111,20 +113,44 @@ class Writer(
         return if (at != null) s.substring(at) else s
     }
 
-    private val day = DateTimeFormatter.ofPattern("EEEE, d MMMM yyyy").withZone(ZoneOffset.UTC)
+    /**
+     * The paper is dated in the READER's day, not in ours.
+     *
+     * A page whose only clock is UTC is dated wrong for most of the world for
+     * part of every day: an edition closing at 02:00 UTC is Monday's paper in
+     * Auckland and Sunday's in Los Angeles, and printing "Monday" to both makes
+     * one of them wrong. The zone is supplied by the caller because the
+     * generator has no way to know it -- the CLI takes the machine's, the
+     * server takes the reader's browser's.
+     *
+     * It cannot be done in the page instead. The published edition carries no
+     * script, by design and by its own Content-Security-Policy, so there is
+     * nothing in it that could read a viewer's clock. Baking the reader's zone
+     * in at generation is the whole of what is available, and it is the right
+     * answer anyway: a newspaper is printed for a city and dated in that city's
+     * time.
+     */
+    private val day = DateTimeFormatter.ofPattern("EEEE, MMMM d, yyyy")
 
-    private fun userMessage(
+    /** The closing time, with the zone named, so "02:04 EDT" needs no footnote. */
+    private val clock = DateTimeFormatter.ofPattern("HH:mm zzz")
+
+    internal fun userMessage(
         corpus: Corpus,
         digest: Digest.Rendered,
         art: List<Art>,
         continuity: Continuity,
+        zone: ZoneId,
     ): String =
         buildString {
             append("# Today's edition\n\n")
-            append("Date: ").append(day.format(Instant.ofEpochSecond(corpus.until))).append("\n")
-            append("Window: 24 hours to ")
-                .append(DateTimeFormatter.ISO_INSTANT.format(Instant.ofEpochSecond(corpus.until)))
-                .append("\n")
+            val closed = Instant.ofEpochSecond(corpus.until).atZone(zone)
+            // Both already in the reader's own zone, and both handed over
+            // formatted. The model is not asked to convert a timestamp: it has
+            // no reliable way to know the offset on the day, and getting it
+            // wrong prints a paper dated tomorrow.
+            append("Date: ").append(day.format(closed)).append("\n")
+            append("Window: the 24 hours ending ").append(clock.format(closed)).append(", the reader's local time\n")
             append("Reader: ")
                 .append(corpus.byline(corpus.observer))
                 .append(" (")

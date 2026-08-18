@@ -70,8 +70,8 @@ day; the headlines are the summary of the day.
 Set them exactly like this, with nothing else in them:
 
     <div class="folio">
-      <span>24h to 05:04 UTC</span>
       <span>Tuesday, August 18, 2026</span>
+      <span>24h to 22:04 EDT</span>
     </div>
 
     <header class="masthead"> … </header>
@@ -82,11 +82,10 @@ Set them exactly like this, with nothing else in them:
       <span>234 voices</span>
     </div>
 
-Each row is three slots: left, CENTRED, right. The second span is centred on
-the page, under the middle of the nameplate, so put there the thing the row is
-about — the date on the folio, the size of the day on the dateline. The folio's
-third slot is empty today; leave it empty rather than inventing something to
-fill it.
+Each row is three slots: left, CENTRED, right. The centred slot is the thing
+the row is about — the date on the folio, the size of the day on the dateline.
+The folio carries only two spans, and the stylesheet puts them in the middle
+and on the right; do not add a third to fill the gap.
 
 Every span is a few words. Three of them share one narrow line, so a span that
 runs to a sentence wraps and takes the row with it.
@@ -94,7 +93,11 @@ runs to a sentence wraps and takes the row with it.
 - **The date carries its day of the week.** "Tuesday, August 18, 2026" — a
   front page says what day it is, and a reader opening yesterday's edition
   should be able to tell at a glance.
-- **The window is a stamp, not a sentence.** "24h to 05:04 UTC".
+- **The window is a stamp, not a sentence.** "24h to 22:04 EDT".
+- **The date and the closing time are the READER's, and they are given to you
+  formatted.** Print them as handed over. Never convert a time yourself and
+  never print UTC: you cannot know what offset was in force on the day, and the
+  page has no script to work it out when somebody opens it.
 - **Name the reader, by name only.** Never print their pubkey. They know who
   they are, and a hex string is furniture nobody reads.
 - **No prices, no tickers, no block heights.** A number that moves is a story or

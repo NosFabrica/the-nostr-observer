@@ -50,6 +50,19 @@ private data class Started(
     val draft: String,
 )
 
+/**
+ * What the browser knows and the server does not.
+ *
+ * The published page carries no script, so it cannot read a viewer's clock;
+ * the reader's timezone has to be baked in when the edition is written, and
+ * this request is the only moment anything in the system is in a position to
+ * observe it. Optional, and UTC without it.
+ */
+@Serializable
+private data class Wanted(
+    val timezone: String? = null,
+)
+
 @Serializable
 private data class Status(
     val state: String,
@@ -239,7 +252,10 @@ fun Application.routes(app: App) {
 
         post("/api/editions") {
             val session = signedIn(app) ?: return@post call.respond(HttpStatusCode.Unauthorized, Problem("not signed in"))
-            call.respond(Started(app.editions.start(session.pubkey)))
+            // A missing or unparseable body is a request with no preference,
+            // not a bad request: the timezone is the only thing in it.
+            val wanted = runCatching { Json.decodeFromString<Wanted>(call.receiveText()) }.getOrNull()
+            call.respond(Started(app.editions.start(session.pubkey, wanted?.timezone)))
         }
 
         get("/api/editions/{id}") {
