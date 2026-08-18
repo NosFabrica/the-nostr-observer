@@ -163,14 +163,14 @@ it sets, so on the published copy the sanitizer is the only protection there is.
 | Stage | What it does | Status |
 |---|---|---|
 | Pre-flight | The lens readiness chain, gathered live and decided by the port. No lens, no edition — the chain says which link is unmet | built |
-| Pull | One websocket, `REQ` per kind, `since` = 24h, `search: "observer:<pk> sort:rank"`. Kinds 1, 20, 1063, 9802, 30023, 30402, 30818, 31923, 32267 | proven |
+| Pull | One websocket, one `REQ` per DESK in parallel, `since` = 24h, `search: "observer:<pk> sort:rank filter:rank:gte:20"`. Fourteen desks: 1, 20, 30311, 1068, 21+34235, 22+34236, 1063, 9802, 30023, 30402, 30818, 31922+31923, 32267, 30617 | built |
 | Identify | Batch `kind 0` for every author seen, 100 per REQ, newest wins | proven |
 | Control run | Same query, observer token removed — the "Instrument" panel. A relay query, not a model call | proven |
 | Budget | Prune to a token target. A rich lens returns far more than a sparse one in the same 24 hours, so the cap is on *volume*, not time | built |
 | Art shortlist | Read `imeta` for url, MIME, dimensions and alt text. No fetching, no resizing | built |
-| Generate | One call. Fixed system prompt + continuity block + digest + art shortlist → a complete document | built, unverified against the API |
+| Generate | One call. Fixed system prompt + continuity block + digest + art shortlist → a complete document | built, run against the real API |
 | Sanitize & validate | Allowlist pass; every quote a verbatim substring of a source event; art resolved from ids; open-web links unwrapped | built |
-| Proof | Render the candidate headlessly. No horizontal overflow, both themes legible, no empty sections. Regenerate once on failure | proven |
+| Proof | Render the candidate headlessly at 390px and 1280px in both schemes. No horizontal overflow, body text at 4.5:1, no empty sections, no page whose classes resolve to nothing. Regenerate once, then fall back to the house layout | built |
 | Publish | On request only: upload the blob, update the manifest, record the address | new |
 
 Two orderings worth keeping. **Art is shortlisted before generation** — not to
@@ -444,10 +444,10 @@ through normal clients as well as the nsite.
 | 2 | A published page carries a fabricated quote or injected headline under a real person's name — signed by the reader, on their server, unretractable. | Validator gates the publish button, not just the render. Adversarial fixture in CI from Phase 1. |
 | 3 | Signing friction kills the loop. Login is mandatory and publishing needs two more signatures; the NIP-46 mobile path is known-awkward. | Prototype the full mobile signer path in Phase 3 before building on it. Generate-then-publish, never publish-to-see. |
 | 4 | No shareable editions exist at launch, so a stranger has nothing to look at. | Seed real editions from consenting accounts. The shared paper is the only demo now. |
-| 5 | Free-form generation produces a broken page and there is no template to fall back on. | Proof render before the reader sees it; regenerate once, then fall back to house layout. |
+| 5 | Free-form generation produces a broken page and there is no template to fall back on. | **Built.** The proof render runs inside `Press.edition`, before anything is offered: render, regenerate once, then drop the author's stylesheet for the house layout. It found the real failure it was written for — an edition that shipped with no stylesheet at all and passed every other check. |
 | 6 | The reader's Blossom server is down or drops blobs; hotlinked art rots independently. | Keep our own copy of the page; write to every server in their 10063. Accept art rot — carry `alt` text so it degrades to a caption. |
 | 7 | Thin graphs produce embarrassing papers for exactly the new users we most want to impress. | Sections are earned, not fixed — a short honest paper beats nine empty columns. |
-| 8 | Uncertain: the store's reputation tensor has no self-edge, so a reader may score 0 under their own lens — yet the prototype returned 14 of the observer's own posts. | Verify across several observers. If own-posts are excluded, the personal columns need a separate unranked self-query. |
+| 8 | Uncertain: the store's reputation tensor has no self-edge, so a reader may score 0 under their own lens — yet the prototype returned 14 of the observer's own posts. | **Answered the other way.** The reader's own posts DO rank, highly, and that turned out to be the problem rather than the question: a paper is what other people did today. `Pull.belongs` drops them from every desk and keeps them in the control run. Still worth verifying across several observers that a reader with a thin graph is not scored 0 outright. |
 
 Retired along the way: unbounded windows (fixed at 24h), NSFW misclassification
 (we no longer classify), enumerable public URLs (no public URL space of our own),
