@@ -673,3 +673,39 @@ day; only the first half was built. The prompt now documents
 the same bounds — capped to a phrase, flattened to one line, stripped of markup,
 because it is the same one-day-latency channel from today's corpus into
 tomorrow's instructions.
+
+---
+
+## Postscript: video, and what the desks are for
+
+The nine desks were reviewed for removal and kept — they earn their place — and
+video was added beside them.
+
+**The spec and the network disagree, and the network wins.** NIP-71 moved video
+to `kind 21` and `kind 22`, deprecating `34235`/`34236`. Measured through the
+prototype observer over one 24-hour window at a trust floor of 20: the current
+kinds returned **nothing at all**, and the deprecated ones returned 6 and 37
+events. A desk asks for both. This is the exact mirror of the nsite decision in
+§7, where the deprecated `kind 34128` was the wrong choice and the current
+`15128`/`35128` was right — so the lesson is not "prefer old" or "prefer new",
+it is that the answer is a measurement.
+
+Video also made a desk span more than one kind for the first time, which is only
+safe because of the per-desk fan-out: while the desks shared one REQ, results
+had to be recovered by kind, and two desks claiming one kind is precisely the
+collision that filed the anonymous control run as news.
+
+**The page cannot play video and never will** — an edition is a static file on
+somebody else's media server. So the paper treats a video the way a newspaper
+treats a film: it writes about it, prints a still if there is one, and gives the
+running time. The prompt says so, and `DURATION` is now in the digest because it
+is the one fact a video's body text never carries.
+
+Two things had to be fixed before a still could actually appear. The poster is
+`imeta`'s `image` field, and it must NOT be sniffed: every real one measured was
+extension-less, so an `isImage` check rejected six of seven, and one real event
+carried a poster with no mime at all — the event's kind is the fact that holds.
+And the art shortlist was allocated first-come in corpus order, so notes and
+picture posts consumed all forty slots before video was reached; each desk now
+takes a few up front and rank order fills the rest. That is the same
+first-come starvation still outstanding in the digest's character budget.

@@ -7,25 +7,51 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 
 /**
- * The nine kinds a front page is made of, and why each earns a column.
+ * The desks a front page is made of, and why each earns a column.
  *
- * The list is the one the prototype edition was built from. It is not "every
- * kind the relay holds" — it is the kinds that turned out to carry a story.
+ * Not "every kind the relay holds" — the kinds that turned out to carry a
+ * story. A desk is one REQ, so a desk that returns nothing costs one
+ * subscription and answers "was there any today" honestly.
+ *
+ * A desk may span SEVERAL kinds, which is only safe because each is asked on
+ * its own subscription. While the desks shared one REQ, results had to be
+ * recovered by kind and two desks claiming the same kind would have collided —
+ * that is exactly the bug that filed the anonymous control run as news. Video
+ * is the desk that needs it; see [VIDEOS].
  */
 enum class Desk(
-    val kind: Int,
+    val kinds: List<Int>,
     val label: String,
     val limit: Int,
 ) {
-    NOTES(1, "notes", 400),
-    PICTURES(20, "picture posts", 60),
-    FILES(1063, "file metadata", 50),
-    HIGHLIGHTS(9802, "highlights", 50),
-    ARTICLES(30023, "long-form", 100),
-    CLASSIFIEDS(30402, "classifieds", 30),
-    WIKI(30818, "wiki entries", 30),
-    CALENDAR(31923, "calendar events", 100),
-    APPS(32267, "app releases", 30),
+    NOTES(listOf(1), "notes", 400),
+    PICTURES(listOf(20), "picture posts", 60),
+
+    /**
+     * Video: the current kinds and the deprecated ones together, because the
+     * deprecated ones are where the video actually is.
+     *
+     * NIP-71 moved video to `kind 21` (normal) and `kind 22` (short), replacing
+     * `34235` and `34236`. Measured through the prototype observer on
+     * 2026-08-18, one 24-hour window at a trust floor of 20:
+     *
+     *     kind 21 -> 0 events        kind 34235 -> 6 from 5 authors
+     *     kind 22 -> 0 events        kind 34236 -> 37 from 13 authors
+     *
+     * Asking only for the current kinds would have printed no video at all.
+     * Both are asked: the new ones cost nothing and will fill as clients
+     * migrate, the old ones carry today's. Re-measure before dropping either —
+     * the point of this note is that the answer was not what the spec says.
+     */
+    VIDEOS(listOf(21, 34235), "videos", 40),
+    SHORTS(listOf(22, 34236), "short videos", 40),
+    FILES(listOf(1063), "file metadata", 50),
+    HIGHLIGHTS(listOf(9802), "highlights", 50),
+    ARTICLES(listOf(30023), "long-form", 100),
+    CLASSIFIEDS(listOf(30402), "classifieds", 30),
+    WIKI(listOf(30818), "wiki entries", 30),
+    CALENDAR(listOf(31923), "calendar events", 100),
+    APPS(listOf(32267), "app releases", 30),
 }
 
 /** A byline, resolved from a kind 0 through quartz's own metadata reader. */
@@ -89,14 +115,14 @@ class Pull(
      * comparison this project makes.
      */
     private fun filter(
-        kind: Int,
+        kinds: List<Int>,
         since: Long,
         until: Long,
         limit: Int,
         observer: String?,
     ): Filter =
         Filter(
-            kinds = listOf(kind),
+            kinds = kinds,
             since = since,
             // BOTH ends. `until` was carried all the way into Corpus and never
             // put into a filter, so the window had a start and no finish: a
@@ -146,7 +172,7 @@ class Pull(
                 val asked =
                     desks.map { desk ->
                         desk to
-                            async { relays.fetch(searchRelay, filter(desk.kind, since, until, desk.limit, observer), idle = 25_000) }
+                            async { relays.fetch(searchRelay, filter(desk.kinds, since, until, desk.limit, observer), idle = 25_000) }
                     }
                 val controlAsked = async { controlRun(since, until) }
                 asked.associate { (desk, job) -> desk to job.await().take(desk.limit) } to controlAsked.await()
@@ -169,7 +195,7 @@ class Pull(
     private suspend fun controlRun(
         since: Long,
         until: Long,
-    ): List<Event> = relays.fetch(searchRelay, filter(Desk.NOTES.kind, since, until, Desk.NOTES.limit, null), idle = 25_000)
+    ): List<Event> = relays.fetch(searchRelay, filter(Desk.NOTES.kinds, since, until, Desk.NOTES.limit, null), idle = 25_000)
 
     companion object {
         /**

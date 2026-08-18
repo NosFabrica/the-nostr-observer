@@ -1,6 +1,7 @@
 package com.nosfabrica.observer.corpus
 
 import com.nosfabrica.observer.nostr.Corpus
+import com.nosfabrica.observer.nostr.Desk
 import com.nosfabrica.observer.nostr.values
 import com.vitorpamplona.quartz.nip01Core.core.Event
 
@@ -45,6 +46,9 @@ data class Art(
  *    missing image degrading to a caption and degrading to a gap.
  */
 object ArtDesk {
+    /** Kinds whose `imeta` describes a video, so an `image` beside it is a poster frame. */
+    private val VIDEO_KINDS = (Desk.VIDEOS.kinds + Desk.SHORTS.kinds).toSet()
+
     private val URL = Regex("""https?://\S+""")
     private val WHITESPACE = Regex("""\s+""")
     private val IMAGE_EXT = Regex("""\.(jpe?g|png|gif|webp|avif|bmp)(\?|$)""", RegexOption.IGNORE_CASE)
@@ -53,30 +57,87 @@ object ArtDesk {
     fun shortlist(
         corpus: Corpus,
         max: Int = 40,
+        perDeskFirst: Int = 4,
     ): List<Art> {
-        val out = mutableListOf<Art>()
+        // Two passes, and the second one is why video ever gets a picture.
+        //
+        // One pass in corpus order fills every slot from the desks that come
+        // first: notes and picture posts exhausted all forty before the video
+        // desks were reached, so a poster frame could not appear on the page no
+        // matter how good it was. Measured 2026-08-18, that was zero of the six
+        // posters available.
+        //
+        // So each desk gets a few slots up front, then rank order takes the
+        // rest. Within a desk the order is still the provider's ranking, which
+        // is the property worth keeping: the change is about which desks are
+        // reachable, not about preferring worse art.
+        val candidates = corpus.ranked.mapValues { (_, events) -> events.flatMap(::candidates) }
+        val taken = LinkedHashSet<Candidate>()
+
+        candidates.values.forEach { fromDesk -> taken += fromDesk.take(perDeskFirst) }
+        candidates.values.flatten().forEach { taken += it }
+
         val seen = mutableSetOf<String>()
-        // Ranked order is the provider's order, so taking the first N is taking
-        // the art from the posts this reader's own lens rated highest.
-        for (event in corpus.all()) {
-            for (fields in event.values("imeta")) {
-                val kv =
-                    fields
-                        .mapNotNull { field ->
-                            val at = field.indexOf(' ')
-                            if (at <= 0) null else field.substring(0, at) to field.substring(at + 1).trim()
-                        }.toMap()
-                val url = kv["url"] ?: continue
-                if (!seen.add(url)) continue
-                val mime = kv["m"]
-                if (!isImage(url, mime)) continue
-                val (w, h) = parseDim(kv["dim"])
-                out.add(art(out.size + 1, url, mime, w, h, kv["alt"], event, corpus))
-                if (out.size >= max) return out
-            }
+        val out = mutableListOf<Art>()
+        for (candidate in taken) {
+            if (!seen.add(candidate.url)) continue
+            out.add(art(out.size + 1, candidate, corpus))
+            if (out.size >= max) break
         }
         return out
     }
+
+    /** One `imeta` tag, read once, so the two passes above agree about it. */
+    private data class Candidate(
+        val url: String,
+        val mime: String?,
+        val width: Int?,
+        val height: Int?,
+        val alt: String?,
+        val event: Event,
+    )
+
+    private fun candidates(event: Event): List<Candidate> =
+        event.values("imeta").mapNotNull { fields ->
+            val kv =
+                fields
+                    .mapNotNull { field ->
+                        val at = field.indexOf(' ')
+                        if (at <= 0) null else field.substring(0, at) to field.substring(at + 1).trim()
+                    }.toMap()
+
+            // A newspaper prints a still from the film, not the film.
+            //
+            // A video's `imeta` names the VIDEO in `url` and, when the client
+            // bothered, a poster frame in `image`. Measured 2026-08-18: about
+            // one video in six carries one (6 of 37 on kind 34236, 1 of 6 on
+            // 34235), so most video stories are text and that is fine. What must
+            // never happen is the video url reaching an `<img src>`, which is
+            // why the poster is taken from a different field rather than by
+            // hoping the mime is wrong.
+            // A poster is NOT sniffed. The field is called `image` and it sits
+            // on a video, which is a declaration, not a hint -- and measured
+            // 2026-08-18 every real one was extension-less
+            // (`media.divine.video/7f4e79…`), so sniffing rejected six posters
+            // out of seven. `m` describes the video and says nothing about the
+            // poster, and one real kind-34235 carried a poster with no `m` at
+            // all, which is why the event's KIND decides and not the mime.
+            val poster =
+                kv["image"]?.takeIf { event.kind in VIDEO_KINDS || isVideo(kv["m"]) }
+            val url = poster ?: kv["url"] ?: return@mapNotNull null
+            // https only, because the sanitizer allows no other scheme in an
+            // `img src`. Art it would strip is a hole in the page, not a picture.
+            if (!url.startsWith("https://", ignoreCase = true)) return@mapNotNull null
+            val mime = if (poster != null) null else kv["m"]
+            if (poster == null && !isImage(url, mime)) return@mapNotNull null
+            // A poster's dimensions are the video's, and they describe the
+            // frame, so they still say whether it stands up or lies down.
+            val (w, h) = parseDim(kv["dim"])
+            Candidate(url, mime, w, h, kv["alt"], event)
+        }
+
+    /** A declared video mime, which is what makes an `image` field a poster rather than decoration. */
+    internal fun isVideo(mime: String?): Boolean = mime != null && mime.startsWith("video/", ignoreCase = true)
 
     /**
      * A declared MIME wins outright, in both directions. Only when nothing was
@@ -84,6 +145,7 @@ object ArtDesk {
      * rejection rather than an unknown — the failure we are avoiding is putting a
      * `.mov` in an `<img>`, which renders as a broken box.
      */
+
     internal fun isImage(
         url: String,
         mime: String?,
@@ -109,15 +171,10 @@ object ArtDesk {
 
     private fun art(
         n: Int,
-        url: String,
-        mime: String?,
-        w: Int?,
-        h: Int?,
-        alt: String?,
-        event: Event,
+        candidate: Candidate,
         corpus: Corpus,
     ): Art {
-        val byline = corpus.byline(event.pubKey)
+        val event = candidate.event
         // The caption the generator sees is what the poster actually wrote, with
         // the media URL stripped back out — clients paste the URL into the body
         // as well as the tag, and "look at this https://blossom…" is not a caption.
@@ -129,15 +186,15 @@ object ArtDesk {
                 .take(280)
         return Art(
             id = "art-$n",
-            url = url,
-            mime = mime,
-            width = w,
-            height = h,
-            alt = alt?.takeIf { it.isNotBlank() },
+            url = candidate.url,
+            mime = candidate.mime,
+            width = candidate.width,
+            height = candidate.height,
+            alt = candidate.alt?.takeIf { it.isNotBlank() },
             eventId = event.id,
             pubkey = event.pubKey,
-            byline = byline,
-            caption = body.ifBlank { alt.orEmpty() },
+            byline = corpus.byline(event.pubKey),
+            caption = body.ifBlank { candidate.alt.orEmpty() },
         )
     }
 }

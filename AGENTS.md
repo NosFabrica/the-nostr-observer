@@ -196,6 +196,28 @@ API key. A full run reads `ANTHROPIC_API_KEY` from the environment.
   to another deployment — no longer silently deletes every earlier edition on
   the next publish.
 
+## Video (2026-08-18)
+
+- **The current NIP-71 kinds are empty; the deprecated ones carry the video.**
+  Measured through the prototype observer, one 24-hour window at floor 20:
+  `kind 21` → 0, `kind 22` → 0, `kind 34235` → 6 from 5 authors, `kind 34236` →
+  37 from 13. A desk asks for both. This is the mirror of the nsite decision,
+  where the CURRENT kind was right — so check, do not assume.
+- **A desk may span several kinds now**, which is only safe because each desk is
+  one REQ. While they shared a REQ, results were recovered by kind and two desks
+  claiming one kind collided — that was the bug that filed the control run as
+  news.
+- **A video's poster is `imeta`'s `image` field, and it is never sniffed.**
+  Every real one measured was extension-less (`media.divine.video/7f4e79…`), so
+  an `isImage` check rejected six of seven. `m` describes the video and says
+  nothing about the poster, and one real 34235 had a poster and no `m` at all —
+  so the event's KIND decides. About one video in six carries a poster; the rest
+  are text stories, which is fine.
+- **Art slots are allocated per desk first, then by rank.** One pass in corpus
+  order gave all forty to notes and pictures, so a video poster could not reach
+  the page however good it was. Each desk takes up to four, then rank order
+  fills the rest.
+
 ## Found by audit (2026-08-18), second pass
 
 - **`until` never reached a filter.** It was threaded from the CLI into `Corpus`

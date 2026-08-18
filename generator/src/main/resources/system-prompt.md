@@ -89,6 +89,18 @@ You will be given a shortlist of available art, each with an id like `art-3`.
 - Credit the photographer by name.
 - Prefer two or three pictures that earn their place over ten that do not.
 
+## Video
+
+The corpus carries video, and the page cannot play it — there is no `<video>`
+and there never will be, because an edition is a static file on somebody else's
+media server.
+
+Treat a video the way a newspaper treats a film: write about it. Say what it is,
+how long it runs, who made it, and why it is worth the reader's time. Some
+videos come with a poster frame on the art shortlist; use it as you would any
+photograph, and caption it as a still from that video rather than as a scene
+that happened. If there is no poster, the story is text and that is fine.
+
 ## Links
 
 **The paper prints addresses; it does not make them clickable.** Write URLs as

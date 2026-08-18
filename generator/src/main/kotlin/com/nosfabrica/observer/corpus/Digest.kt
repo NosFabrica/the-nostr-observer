@@ -102,6 +102,11 @@ class Digest(
         event.value("title")?.let { sb.append("TITLE: ").append(it.take(200)).append("\n") }
         event.value("summary")?.let { sb.append("SUMMARY: ").append(it.take(600)).append("\n") }
         event.value("location")?.let { sb.append("LOCATION: ").append(it.take(120)).append("\n") }
+        // Length is most of what a reader needs to decide about a video, and
+        // it is the one fact the body text never carries.
+        event.value("duration")?.toIntOrNull()?.takeIf { it > 0 }?.let {
+            sb.append("DURATION: ").append(if (it < 60) "${it}s" else "${it / 60}m ${it % 60}s").append("\n")
+        }
         if (art.isNotEmpty()) {
             sb.append("ART: ").append(art.joinToString(", ") { it.id }).append("\n")
         }
@@ -151,8 +156,15 @@ class Digest(
         val perAuthor =
             when (desk) {
                 Desk.NOTES -> 20
+
                 Desk.ARTICLES -> 4
+
                 Desk.CALENDAR -> 6
+
+                // Video is posted in runs -- one account uploading a day's
+                // clips is the normal shape, not the exception.
+                Desk.SHORTS -> 5
+
                 else -> 8
             }
         val counts = mutableMapOf<String, Int>()

@@ -34,6 +34,83 @@ class ArtDeskTest {
     }
 
     @Test
+    fun `a video contributes its poster frame, never its video url`() {
+        // A newspaper prints a still from the film. The `imeta` names the video
+        // in `url` and the poster in `image`; taking the wrong one puts an mp4
+        // in an <img> and renders a broken box under a caption.
+        val event =
+            Fixtures.event(
+                "v1",
+                Fixtures.ALICE,
+                "Late-night kitchen crafting",
+                kind = 34236,
+                tags =
+                    listOf(
+                        listOf(
+                            "imeta",
+                            "url https://media.example.com/clip.mp4",
+                            "m video/mp4",
+                            // NO extension, which is how every real one arrives.
+                            "image https://media.example.com/7f4e797e1ef33ffbb26530d1235e7f6c",
+                            "dim 1080x1920",
+                        ),
+                    ),
+            )
+        val art = ArtDesk.shortlist(Fixtures.corpus(listOf(event)))
+        assertEquals(1, art.size)
+        assertEquals("https://media.example.com/7f4e797e1ef33ffbb26530d1235e7f6c", art.single().url)
+        assertTrue(art.single().portrait, "the poster describes the video's frame")
+    }
+
+    @Test
+    fun `a poster is taken on kind alone, even with no mime declared`() {
+        // A real kind 34235 carried a poster and no `m` at all. Deciding on the
+        // mime would have dropped it; the event's kind is the fact that holds.
+        val event =
+            Fixtures.event(
+                "v3",
+                Fixtures.ALICE,
+                "A documentary",
+                kind = 34235,
+                tags = listOf(listOf("imeta", "url https://media.example.com/film", "image https://img.example.com/still")),
+            )
+        assertEquals("https://img.example.com/still", ArtDesk.shortlist(Fixtures.corpus(listOf(event))).single().url)
+    }
+
+    @Test
+    fun `art the sanitizer would strip is not offered`() {
+        // The sanitizer allows only https in an `img src`, so an http poster
+        // would leave a hole where a picture was promised.
+        val event =
+            Fixtures.event(
+                "v4",
+                Fixtures.ALICE,
+                "A clip",
+                kind = 34236,
+                tags =
+                    listOf(
+                        listOf("imeta", "url http://media.example.com/clip.mp4", "m video/mp4", "image http://img.example.com/still"),
+                    ),
+            )
+        assertTrue(ArtDesk.shortlist(Fixtures.corpus(listOf(event))).isEmpty())
+    }
+
+    @Test
+    fun `a video with no poster contributes no art at all`() {
+        // Measured 2026-08-18: about five videos in six carry no poster. They
+        // become text stories rather than broken figures.
+        val event =
+            Fixtures.event(
+                "v2",
+                Fixtures.ALICE,
+                "A clip",
+                kind = 34236,
+                tags = listOf(listOf("imeta", "url https://media.example.com/clip.mp4", "m video/mp4")),
+            )
+        assertTrue(ArtDesk.shortlist(Fixtures.corpus(listOf(event))).isEmpty())
+    }
+
+    @Test
     fun `shortlist takes images and leaves video behind`() {
         val list = ArtDesk.shortlist(Fixtures.corpus())
         assertEquals(1, list.size, "one still among two videos: ${list.map { it.url }}")
