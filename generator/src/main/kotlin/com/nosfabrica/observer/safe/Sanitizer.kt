@@ -40,10 +40,33 @@ class Sanitizer(
      * this throws away one link.
      */
     private val corpusEventIds: Set<String> = emptySet(),
+    /**
+     * The house stylesheet, which SHIPS WITH THE PAGE.
+     *
+     * It did not, and the first real edition was the thing that showed it. The
+     * writer is handed this as reference in the system prompt and told that
+     * most days need no `<style>` block of their own — so it wrote none, used
+     * `class="sheet"`, `class="masthead"`, `class="folio"` and the rest, and
+     * the published file contained no CSS at all. Every class resolved to
+     * nothing. A newspaper rendered as a column of unstyled text.
+     *
+     * It goes FIRST so the author's own block, when there is one, overrides it
+     * by ordinary cascade rather than by fighting specificity.
+     */
+    private val houseCss: String = read("/house.css"),
 ) {
     /** id -> real URL. The only image sources that will survive. */
     private val byId: Map<String, Art> = art.associateBy { it.id }
     private val allowedUrls: Set<String> = art.map { it.url }.toSet()
+
+    private companion object {
+        fun read(path: String): String =
+            Sanitizer::class.java
+                .getResourceAsStream(path)
+                ?.bufferedReader()
+                ?.readText()
+                ?: error("missing resource $path — the stylesheet ships with the jar")
+    }
 
     data class Result(
         val html: String,
@@ -60,6 +83,11 @@ class Sanitizer(
 
         val title = doc.title().ifBlank { "Edition" }
         val css = extractCss(doc, removed)
+        // Ours, and it goes through the same pass anyway. The day somebody adds
+        // a webfont to the house sheet is the day every published edition calls
+        // a third party on open, and "we wrote it" is not a property the reader
+        // of a hosted page can check.
+        val house = cleanCss(houseCss, removed)
         resolveArt(doc, removed)
         unwrapExternalLinks(doc, removed)
         noteRemovals(doc, removed)
@@ -67,7 +95,7 @@ class Sanitizer(
         val cleanedBody = Cleaner(safelist()).clean(doc).body()
         cleanInlineStyles(cleanedBody, removed)
 
-        return Result(rebuild(title, css, cleanedBody.html()), removed)
+        return Result(rebuild(title, house, css, cleanedBody.html()), removed)
     }
 
     // ---------------------------------------------------------------- art ---
@@ -275,6 +303,7 @@ class Sanitizer(
 
     private fun rebuild(
         title: String,
+        house: String,
         css: String,
         body: String,
     ): String =
@@ -289,6 +318,8 @@ class Sanitizer(
             append("\">\n")
             append("<meta name=\"referrer\" content=\"no-referrer\">\n")
             append("<title>").append(escape(title)).append("</title>\n")
+            // House first, author second: the cascade is the override mechanism.
+            if (house.isNotBlank()) append("<style>\n").append(house).append("\n</style>\n")
             if (css.isNotBlank()) append("<style>\n").append(css).append("\n</style>\n")
             append("</head>\n<body>\n").append(body).append("\n</body>\n</html>\n")
         }

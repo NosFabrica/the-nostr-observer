@@ -148,3 +148,43 @@ class SanitizerTest {
         assertEquals(1, Regex("<title>").findAll(r.html).count())
     }
 }
+
+/**
+ * The stylesheet has to be IN the page.
+ *
+ * Found by the first real end-to-end run and not by any fixture. The writer is
+ * handed the house stylesheet as reference and told most days need no `<style>`
+ * of their own, so it wrote none and used `class="sheet"`, `class="masthead"`,
+ * `class="folio"` — and the published file carried no CSS at all. Every class
+ * resolved to nothing and the edition was a column of unstyled text.
+ */
+class HouseStyleTest {
+    private fun clean(body: String) = Sanitizer(Fixtures.art()).sanitize("<html><body>$body</body></html>").html
+
+    @Test
+    fun `a page that brings no css of its own still gets the house one`() {
+        val html = clean("""<div class="sheet"><header class="masthead"><h1>The Nostr Observer</h1></header></div>""")
+        assertTrue(html.contains("<style>"), "no stylesheet at all")
+        assertTrue(html.contains(".masthead"), "the house rules are not in the page")
+    }
+
+    @Test
+    fun `the author's css comes after the house css, so it wins`() {
+        val html = clean("""<style>.masthead { color: rebeccapurple }</style><div class="masthead">x</div>""")
+        val house = html.indexOf(".sheet")
+        val authors = html.indexOf("rebeccapurple")
+        assertTrue(house in 0..<authors, "the author's block must come last to override by cascade")
+    }
+
+    @Test
+    fun `the house css goes through the same url pass as anyone else's`() {
+        // Ours, and checked anyway. An earlier version of this test asserted
+        // that no `@import` came out — which was true only because none had
+        // ever been put in, so it tested nothing. This one feeds a house sheet
+        // that DOES call home and asserts it is stripped.
+        val hostile = "@import url(https://evil.example.com/x.css);\n.sheet { background: url(https://evil.example.com/beacon.png) }"
+        val result = Sanitizer(Fixtures.art(), emptySet(), hostile).sanitize("<html><body><p>x</p></body></html>")
+        assertFalse(result.html.contains("evil.example.com"), "the house sheet reaches every reader of a published edition")
+        assertTrue(result.removed.any { it.contains("@import") }, result.removed.toString())
+    }
+}
