@@ -159,11 +159,10 @@ class Writer(
             append("Edition code: ").append(corpus.code()).append("\n")
             append("Date: ").append(day.format(closed)).append("\n")
             append("Window: the 24 hours ending ").append(clock.format(closed)).append(", the reader's local time\n")
-            append("Reader: ")
-                .append(corpus.byline(corpus.observer))
-                .append(" (")
-                .append(corpus.observer.take(8))
-                .append("…)\n")
+            // Their name, or their npub if they have not published one. The hex
+            // used to be here too, and a brief that carries a key is a page that
+            // eventually prints one.
+            append("Reader: ").append(corpus.byline(corpus.observer)).append("\n")
             // Said precisely, because the model puts these on the masthead and a
             // reader takes them for the day. They are three different numbers:
             // what the lens surfaced, what we asked the relay for, and what the

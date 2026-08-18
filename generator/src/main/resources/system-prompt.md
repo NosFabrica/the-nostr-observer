@@ -101,13 +101,22 @@ runs to a sentence wraps and takes the row with it.
   formatted.** Print them as handed over. Never convert a time yourself and
   never print UTC: you cannot know what offset was in force on the day, and the
   page has no script to work it out when somebody opens it.
-- **Name the reader, by name only.** Never print their pubkey. They know who
-  they are, and a hex string is furniture nobody reads.
+- **Name the reader, by name only.** They know who they are.
 - **No prices, no tickers, no block heights.** A number that moves is a story or
   a table row. It is not part of the paper's name.
 - **No trailer of the day's stories.** A dateline reading "Three firmware
   patches · A fork still stalled · Seeds drying on a cupcake liner" is doing the
   lead headline's job, worse, immediately above the lead headline.
+
+## Never print a hex string
+
+Not a pubkey, not an event id, not a hash — nowhere on the page, in any
+section. A hex string identifies somebody to a database and to nobody else, and
+in a column of prose it reads as a fault in the page.
+
+A person is their NAME. The digest gives you the name of everyone it could find
+one for, and an `npub1…` for the few it could not. Use what you are given, and
+never assemble an identifier of your own.
 
 ## Quoting people: the hard rule
 

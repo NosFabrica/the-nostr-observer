@@ -183,15 +183,21 @@ class Editions(
                 pair("Reading your web of trust", step.relay)
             }
 
+            // The reader is watching a progress list, not reading a status
+            // page. `Lens: READY` and "unranked posts" are how this code talks
+            // to itself; the sentence beside them already says the same thing
+            // in words, so the label says the plain half and the detail carries
+            // the rest.
             is Press.Step.Lensed -> {
-                pair("Lens: ${step.verdict.state}", Readiness.explain(step.verdict))
+                pair("Checked your web of trust", Readiness.explain(step.verdict))
             }
 
             is Press.Step.Pulled -> {
                 pair(
                     "Read ${step.events} posts from ${step.voices} people" +
-                        (step.surfaced?.let { " of $it your lens surfaced" } ?: ""),
-                    "${step.overlap} of ${step.control} unranked posts made it in",
+                        (step.surfaced?.let { " of $it we could see" } ?: ""),
+                    "reading the same window without your web of trust returns ${step.control} posts, " +
+                        "${step.overlap} of them the same",
                 )
             }
 

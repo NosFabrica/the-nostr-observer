@@ -400,7 +400,7 @@ class StorageChainTest {
         val v = Readiness.storage(Readiness.Storage(serverListSeen = false))
         assertEquals("no-blossom-server", v.state)
         assertEquals(Readiness.Status.BROKEN, v.chain.first { it.key == "blossomServers" }.status)
-        assertTrue(Readiness.explainStorage(v).contains("still read today's edition"))
+        assertTrue(Readiness.explainStorage(v).contains("still read today's paper"))
     }
 
     @Test

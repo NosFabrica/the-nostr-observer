@@ -1,6 +1,7 @@
 package com.nosfabrica.observer.press
 
 import com.nosfabrica.observer.WINDOW_SECONDS
+import com.nosfabrica.observer.nostr.Names
 import com.nosfabrica.observer.nostr.Readiness
 import com.nosfabrica.observer.press.auth.Sessions
 import com.nosfabrica.observer.press.auth.SignIn
@@ -39,9 +40,22 @@ import java.time.format.DateTimeFormatter
 private const val COOKIE = "observer_session"
 private val json = Json { ignoreUnknownKeys = true }
 
+/**
+ * Who is signed in, said the way a person is said.
+ *
+ * No hex leaves here — the console has nothing else to show, so anything this
+ * omits becomes a key on somebody's screen.
+ *
+ * [name] is their `npub`, and deliberately not their `kind 0` name: resolving
+ * that means a relay round trip, and sign-in is not the place for one. It made
+ * signing in wait on the network, and it made the access-control tests next
+ * door wait on it too — which is how an access-control test stops running. The
+ * name arrives with the readiness check a moment later, and the console
+ * upgrades the label then.
+ */
 @Serializable
 private data class Who(
-    val pubkey: String,
+    val name: String,
     val signer: String,
 )
 
@@ -90,6 +104,8 @@ private data class Verdict(
 /** Both chains, because they fail independently and a reader should see which. */
 @Serializable
 private data class Preflight(
+    /** Their `kind 0` name, resolved here because this call is already on the network. */
+    val name: String,
     val lens: Verdict,
     val storage: Verdict,
 )
@@ -175,7 +191,7 @@ fun Application.routes(app: App) {
                     val kind = if (signer == "NIP46") Sessions.Signer.NIP46 else Sessions.Signer.NIP07
                     val token = app.sessions.open(result.pubkey, kind)
                     call.response.cookies.append(sessionCookie(app, token))
-                    call.respond(Who(result.pubkey, kind.name))
+                    call.respond(Who(Names.short(result.pubkey), kind.name))
                 }
             }
         }
@@ -198,7 +214,7 @@ fun Application.routes(app: App) {
                     val token = app.sessions.open(connected.pubkey, Sessions.Signer.NIP46)
                     app.bunkers.adopt(token, connected)
                     call.response.cookies.append(sessionCookie(app, token))
-                    call.respond(Who(connected.pubkey, Sessions.Signer.NIP46.name))
+                    call.respond(Who(Names.short(connected.pubkey), Sessions.Signer.NIP46.name))
                 }.onFailure {
                     call.respond(HttpStatusCode.BadGateway, Problem(it.message ?: "could not reach that signer"))
                 }
@@ -206,7 +222,7 @@ fun Application.routes(app: App) {
 
         get("/api/session") {
             val session = signedIn(app) ?: return@get call.respond(HttpStatusCode.Unauthorized, Problem("not signed in"))
-            call.respond(Who(session.pubkey, session.signer))
+            call.respond(Who(Names.short(session.pubkey), session.signer))
         }
 
         post("/api/session/end") {
@@ -232,6 +248,10 @@ fun Application.routes(app: App) {
                 )
             call.respond(
                 Preflight(
+                    // Their own profile lives on their own relays, which this
+                    // call has just learned, so it costs one more filter on
+                    // hosts we are already talking to.
+                    name = app.press.nameOf(session.pubkey, facts.writeRelays.orEmpty()),
                     lens =
                         Verdict(
                             state = lens.state,
@@ -323,8 +343,8 @@ fun Application.routes(app: App) {
                 return@post call.respond(
                     HttpStatusCode.Conflict,
                     Problem(
-                        "You have no Blossom servers listed (kind 10063). The paper is published to your " +
-                            "servers, so there is nowhere to put it yet.",
+                        "You have not set up anywhere to store files. Your paper is published to your own " +
+                            "storage, so there is nowhere to put it yet — add one in your usual Nostr app.",
                     ),
                 )
             }
@@ -419,6 +439,9 @@ fun Application.routes(app: App) {
             // Only after a server actually holds the blob. A manifest pointing at
             // a hash nobody stores is a 404 with a signature on it.
             val announced = app.announce.publish(manifest, pending.relays)
+            // Stored as the `a`-tag coordinate, which is what it is; shown as
+            // `naddr1…`, which is what a person can paste. Neither is hex on a
+            // screen.
             val naddr = "35128:${session.pubkey}:${Templates.SITE}"
             if (announced.any { it.ok }) {
                 app.published.record(session.pubkey, pending.day, pending.sha, naddr, pending.servers)
@@ -429,7 +452,7 @@ fun Application.routes(app: App) {
                 PublishReport(
                     ok = announced.any { it.ok },
                     day = pending.day,
-                    naddr = naddr,
+                    naddr = Templates.address(session.pubkey) ?: naddr,
                     uploads = uploads.map { Outcome(it.server, it.ok, it.detail) },
                     relays = announced.map { Outcome(it.relay, it.ok, it.message) },
                 ),

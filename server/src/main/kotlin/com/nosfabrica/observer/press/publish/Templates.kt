@@ -2,6 +2,7 @@ package com.nosfabrica.observer.press.publish
 
 import com.vitorpamplona.quartz.nip01Core.core.Event
 import com.vitorpamplona.quartz.nip01Core.signers.EventTemplate
+import com.vitorpamplona.quartz.nip19Bech32.entities.NAddress
 import com.vitorpamplona.quartz.nip5aStaticWebsites.NamedSiteEvent
 import com.vitorpamplona.quartz.nip5aStaticWebsites.siteAggregateHash
 import com.vitorpamplona.quartz.nip5aStaticWebsites.sitePaths
@@ -27,6 +28,16 @@ import com.vitorpamplona.quartz.nipB7Blossom.BlossomAuthorizationEvent
 object Templates {
     /** The site's `d` tag. One named site per reader, so their other nsites are untouched. */
     const val SITE = "observer"
+
+    /**
+     * The reader's site as an `naddr1…`.
+     *
+     * The same thing as `35128:<pubkey>:observer`, which is the correct form
+     * for an `a` tag and the wrong form for a person: it is sixty-four
+     * characters of hex with punctuation. This is what gets shown, and what a
+     * reader could paste into any Nostr client.
+     */
+    fun address(pubkey: String): String? = runCatching { NAddress.create(NamedSiteEvent.KIND, pubkey, SITE, emptyList()) }.getOrNull()
 
     /**
      * BUD-01 upload authorization: what may be uploaded, by whom, until when.

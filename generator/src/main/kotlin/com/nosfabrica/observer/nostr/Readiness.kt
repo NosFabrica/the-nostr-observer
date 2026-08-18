@@ -138,8 +138,8 @@ object Readiness {
             }
 
             "no-blossom-server" -> {
-                "You have no media server listed (kind 10063), so there is nowhere to put your paper. " +
-                    "Add one in your usual client — you can still read today's edition without it."
+                "You have not set up anywhere to store files, so there is nowhere to publish to. " +
+                    "Add one in your usual Nostr app — you can still read today's paper without it."
             }
 
             else -> {
@@ -209,7 +209,7 @@ object Readiness {
             waitingBelow("scores", "ranked")
             return Verdict("no-rank-service", Tone.BLOCKED, null, chain.toList())
         }
-        chain.add(Link("scoreList", Status.OK, "${f.rankService.take(8)} @ ${f.rankRelay ?: "no hint"}"))
+        chain.add(Link("scoreList", Status.OK, "${Names.short(f.rankService)} @ ${f.rankRelay ?: "no hint"}"))
 
         // --- link 3: have the scores arrived? -------------------------------
         val scores = f.scores ?: return checking()
@@ -277,43 +277,40 @@ object Readiness {
     fun explain(v: Verdict): String =
         when (v.state) {
             "checking" -> {
-                "Checking whether this relay can rank for you."
+                "Checking your web of trust."
             }
 
             "no-relay-list" -> {
-                "You have no relay list (kind 10002) anywhere we can see, so nothing about you is ever fetched. " +
-                    "Publish one from your usual client — this is the only link that cannot fix itself."
+                "Your account has not said which relays it uses, so nothing about you can be found. " +
+                    "Set that up in your usual Nostr app — it is the one thing we cannot do for you."
             }
 
             "no-usable-relays" -> {
-                "Your relay list names no relay we can reach. Check the URLs in it."
+                "None of your relays are answering. Check them in your usual Nostr app."
             }
 
             "no-score-list" -> {
-                "You have not named a scoring service yet (kind 10040). That is the one thing standing between " +
-                    "you and a paper, and we can set it up for you."
+                "You have not chosen who works out your web of trust. That is the last step, and we can do it for you."
             }
 
             "no-rank-service" -> {
-                "Your kind 10040 names no public `30382:rank` service with a relay hint — a followers-only, " +
-                    "private or hintless entry cannot rank. We can republish it."
+                "The scoring service you chose is not one we can read from. We can point it somewhere that works."
             }
 
             "no-scores-yet" -> {
-                "Your scoring service has been named but none of its cards have reached this relay yet. " +
-                    "Nothing for you to do; this is us waiting."
+                "Your web of trust is being worked out. Nothing for you to do — this is us waiting."
             }
 
             "projection-pending" -> {
-                "Your scores are here but not yet projected. This clears on its own."
+                "Almost there. This clears on its own."
             }
 
             "importing" -> {
-                "Importing your provider's scores" + (v.percent?.let { " — ${(it * 100).roundToInt()}%" } ?: "") + "."
+                "Reading your web of trust" + (v.percent?.let { " — ${(it * 100).roundToInt()}%" } ?: "") + "."
             }
 
             "posts-behind" -> {
-                "Ready. (Your own posts are still catching up, which changes nothing about ranking.)"
+                "Ready."
             }
 
             "ready" -> {

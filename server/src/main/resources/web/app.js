@@ -69,7 +69,9 @@ async function signInWithBunker() {
 
 function arrive(who) {
   state.me = who;
-  $("me").textContent = who.pubkey.slice(0, 8) + "… (" + who.signer + ")";
+  // A name, or an npub if they have not published one. The server sends one
+  // string precisely so there is nothing here that could print a key.
+  $("me").textContent = who.name;
   $("signin").hidden = true;
   $("desk").hidden = false;
   readiness();
@@ -84,44 +86,85 @@ async function signOut() {
 
 async function readiness() {
   const panel = $("readiness");
-  panel.textContent = "Checking your lens…";
+  panel.textContent = "Checking…";
   const res = await fetch("/api/readiness");
   if (!res.ok) return (panel.textContent = "");
   const pre = await res.json();
   panel.innerHTML = "";
 
-  // Two chains, drawn separately, because they fail independently: no media
-  // server is not a broken lens, and a reader with one and not the other should
-  // be able to see which.
-  drawChain(panel, pre.lens);
-  drawChain(panel, pre.storage);
+  // Sign-in showed their npub because it had not been on the network yet. Now
+  // it has, so they get their name.
+  if (pre.name) $("me").textContent = pre.name;
 
-  // No lens, no ranked paper. The button says so rather than producing
-  // something built a different way and calling it the reader's paper.
-  $("generate").disabled = !pre.lens.ranks;
-  if (!pre.lens.ranks) {
-    const waiting = document.createElement("p");
-    waiting.className = "waiting";
-    waiting.textContent = "We will tell you as soon as your lens is ready.";
-    panel.append(waiting);
+  // ONE SENTENCE, then the button. The chains used to be drawn in full,
+  // always, with their internal link names showing -- `relayList — declared=0`,
+  // `scoreList`, `uploadConsent`. That is a debug view of a state machine, and
+  // it was the first thing a reader saw after signing in. What they need is
+  // whether they can print, and if not, the one thing to go and do.
+  const ready = pre.lens.ranks;
+  const line = document.createElement("p");
+  line.className = ready ? "ok" : "waiting";
+  line.textContent = ready ? "Ready to print." : pre.lens.explanation;
+  panel.append(line);
+
+  // Storage is only worth a line when it is the thing standing in the way. A
+  // reader who can read today's paper does not need to hear about media
+  // servers until they try to publish it.
+  if (ready && !pre.storage.ranks) {
+    const storage = document.createElement("p");
+    storage.className = "note";
+    storage.textContent = pre.storage.explanation;
+    panel.append(storage);
   }
+
+  panel.append(details(pre));
+  $("generate").disabled = !ready;
 }
 
-function drawChain(panel, verdict) {
-  const line = document.createElement("p");
-  line.className = verdict.ranks ? "ok" : "waiting";
-  line.textContent = verdict.explanation;
-  panel.append(line);
+/** The chains, for anyone who wants them. Closed by default, and it stays closed. */
+function details(pre) {
+  const box = document.createElement("details");
+  const summary = document.createElement("summary");
+  summary.textContent = "What we checked";
+  box.append(summary);
+  drawChain(box, "Your web of trust", pre.lens);
+  drawChain(box, "Somewhere to publish", pre.storage);
+  return box;
+}
+
+// The internal names of the links, said in words. The keys are how the code
+// talks about a state machine; they are not how a person is told what is
+// missing from their account.
+const LINKS = {
+  relayList: "your relay list",
+  scoreList: "your chosen scoring service",
+  scores: "your trust scores",
+  ranked: "ranking your feed",
+  posts: "your own posts",
+  blossomServers: "your media servers",
+  uploadConsent: "permission to upload",
+};
+
+function drawChain(box, title, verdict) {
+  const head = document.createElement("p");
+  head.className = "note";
+  head.textContent = title + " — " + verdict.explanation;
+  box.append(head);
 
   const chain = document.createElement("ul");
   chain.className = "chain";
   for (const link of verdict.chain) {
     const li = document.createElement("li");
     li.dataset.status = link.status;
-    li.textContent = link.key + (link.detail ? " — " + link.detail : "");
+    li.textContent = LINKS[link.key] || link.key;
+    if (link.detail) {
+      const small = document.createElement("small");
+      small.textContent = link.detail;
+      li.append(small);
+    }
     chain.append(li);
   }
-  panel.append(chain);
+  box.append(chain);
 }
 
 // ------------------------------------------------------------- generating
@@ -204,10 +247,18 @@ function showEdition(summary) {
   panel.innerHTML = "";
 
   const stat = document.createElement("p");
-  stat.textContent =
-    `${summary.events} posts from ${summary.voices} people, through your web of trust. ` +
-    `Of the ${summary.control} posts an unranked read returned for the same window, ${summary.overlap} made it in.`;
+  stat.textContent = `${summary.events} posts from ${summary.voices} people you trust.`;
   panel.append(stat);
+
+  // The comparison is the product's whole argument, and it was the lead
+  // sentence -- two clauses of methodology before the reader had seen their
+  // paper. It is still here, said in one line, underneath.
+  const against = document.createElement("p");
+  against.className = "note";
+  against.textContent =
+    `Reading the same window without your web of trust returns ${summary.control} posts. ` +
+    `${summary.overlap} of them made this page.`;
+  panel.append(against);
 
   const preview = document.createElement("a");
   preview.href = "/draft/" + state.draft;

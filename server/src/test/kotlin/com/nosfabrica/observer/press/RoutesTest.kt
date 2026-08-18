@@ -1,5 +1,6 @@
 package com.nosfabrica.observer.press
 
+import com.nosfabrica.observer.nostr.Names
 import com.vitorpamplona.quartz.nip01Core.core.Event
 import com.vitorpamplona.quartz.nip01Core.core.toHexKey
 import com.vitorpamplona.quartz.nip01Core.crypto.KeyPair
@@ -96,7 +97,13 @@ class RoutesTest {
                     setBody(body)
                 }
             assertEquals(HttpStatusCode.OK, response.status, response.bodyAsText())
-            assertTrue(response.bodyAsText().contains(reader.pubKey.toHexKey()))
+            // The reader is named by npub, and the hex never leaves the server.
+            // This used to assert the opposite -- that the response CONTAINED
+            // the hex key -- which is the thing being fixed, so the test failed
+            // the moment the fix landed. That is the only reason to trust it.
+            val said = response.bodyAsText()
+            assertTrue(said.contains(Names.short(reader.pubKey.toHexKey())), said)
+            assertFalse(said.contains(reader.pubKey.toHexKey()), "no hex on the wire: $said")
         }
     }
 

@@ -4,6 +4,7 @@ import com.vitorpamplona.quartz.nip01Core.core.Event
 import com.vitorpamplona.quartz.nip01Core.metadata.MetadataEvent
 import com.vitorpamplona.quartz.nip01Core.relay.filters.Filter
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import java.security.MessageDigest
 import java.util.HexFormat
@@ -97,7 +98,8 @@ data class Byline(
     val name: String?,
     val nip05: String?,
 ) {
-    fun display(): String = name?.takeIf { it.isNotBlank() } ?: pubkey.take(8)
+    /** Their name if they published one, and their npub if they did not. Never hex. */
+    fun display(): String = name?.takeIf { it.isNotBlank() } ?: Names.short(pubkey)
 
     companion object {
         fun from(event: Event): Byline? {
@@ -146,7 +148,7 @@ data class Corpus(
 
     fun all(): List<Event> = ranked.values.flatten()
 
-    fun byline(pubkey: String): String = profiles[pubkey]?.display() ?: pubkey.take(8)
+    fun byline(pubkey: String): String = profiles[pubkey]?.display() ?: Names.short(pubkey)
 
     /**
      * A short code for this edition, printed top-left of the folio.
@@ -363,12 +365,31 @@ class Pull(
         const val DEFAULT_TRUST_FLOOR = 20
     }
 
-    /** kind 0 for everyone we will name. Newest wins; batched because 244 authors is normal. */
-    suspend fun profiles(pubkeys: List<String>): Map<String, Byline> {
+    /**
+     * kind 0 for everyone we will name. Newest wins; batched because 244
+     * authors is normal.
+     *
+     * [hosts] are asked alongside the search relay, for the one case the search
+     * relay cannot serve: a reader's OWN profile, which lives wherever they put
+     * it and may never have been indexed here. Everybody else in the corpus was
+     * found through this relay in the first place.
+     */
+    suspend fun profiles(
+        pubkeys: List<String>,
+        hosts: List<String> = emptyList(),
+    ): Map<String, Byline> {
         if (pubkeys.isEmpty()) return emptyMap()
         val filters = pubkeys.chunked(100).map { ReadinessProbe.profileFilter(it) }
         val best = mutableMapOf<String, Byline>()
-        relays.fetch(searchRelay, filters, idle = 20_000).forEach { event ->
+        val found =
+            coroutineScope {
+                (listOf(searchRelay) + hosts.take(3))
+                    .distinct()
+                    .map { host -> async { runCatching { relays.fetch(host, filters, idle = 20_000) }.getOrDefault(emptyList()) } }
+                    .awaitAll()
+                    .flatten()
+            }
+        found.forEach { event ->
             val p = Byline.from(event) ?: return@forEach
             val seen = best[p.pubkey]
             if (seen == null || seen.createdAt < p.createdAt) best[p.pubkey] = p

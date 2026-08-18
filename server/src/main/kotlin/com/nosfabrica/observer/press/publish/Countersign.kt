@@ -37,7 +37,7 @@ object Countersign {
         expectedPubkey: String,
     ): Result {
         if (signed.pubKey != expectedPubkey) {
-            return Result.No("signed by ${signed.pubKey.take(8)}, not the signed-in reader")
+            return Result.No("signed by a different key than the one signed in")
         }
         if (signed.kind != template.kind) return Result.No("kind ${signed.kind}, expected ${template.kind}")
         if (signed.createdAt != template.createdAt) return Result.No("created_at was changed")

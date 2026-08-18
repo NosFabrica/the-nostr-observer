@@ -2,6 +2,7 @@ package com.nosfabrica.observer.corpus
 
 import com.nosfabrica.observer.nostr.Corpus
 import com.nosfabrica.observer.nostr.Desk
+import com.nosfabrica.observer.nostr.Names
 import com.nosfabrica.observer.nostr.client
 import com.nosfabrica.observer.nostr.hashtags
 import com.nosfabrica.observer.nostr.value
@@ -135,11 +136,14 @@ class Digest(
         // A highlight is somebody ELSE's sentence. Saying so in the byline is
         // the whole fix: see [highlight].
         sb.append("\n--- ").append(if (desk == Desk.HIGHLIGHTS) "HIGHLIGHTED BY " else "")
-        sb.append(profile?.display() ?: event.pubKey.take(8))
+        sb.append(profile?.display() ?: Names.short(event.pubKey))
         profile?.nip05?.let { sb.append(" <").append(it).append(">") }
         sb.append(" · ").append(stamp.format(Instant.ofEpochSecond(event.createdAt))).append("Z")
         event.client()?.let { sb.append(" · via ").append(it) }
-        sb.append(" · event ").append(event.id).append("\n")
+        // `note1…`, not the raw id. If the writer ever prints a citation, this
+        // is the form a reader can paste; a 64-character hex string in a column
+        // of prose reads as a fault in the page.
+        sb.append(" · event ").append(Names.note(event.id) ?: event.id).append("\n")
 
         // `name` and `description` are what a git repository calls these.
         (event.value("title") ?: event.value("name"))?.let { sb.append("TITLE: ").append(it.take(200)).append("\n") }

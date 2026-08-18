@@ -15,11 +15,7 @@
     <main>
       <section id="signin" hidden>
         <h2>Sign in</h2>
-        <p>
-          You can only make your own paper. That is the whole abuse story: nobody
-          can mint an edition about somebody else, so there is no crawlable pile
-          of other people's editions to protect.
-        </p>
+        <p>Sign in with your Nostr key. You can only make your own paper, never somebody else's.</p>
         <div class="row">
           <button id="nip07">Use my extension</button>
           <span class="or">or</span>
@@ -31,7 +27,7 @@
 
       <section id="desk" hidden>
         <h2>Today's edition</h2>
-        <p class="who">Signed in as <span id="me"></span> <button id="signout" class="link">sign out</button></p>
+        <p class="who"><span id="me"></span> · <button id="signout" class="link">sign out</button></p>
 
         <div id="readiness" class="panel"></div>
 
@@ -45,11 +41,7 @@
     </main>
 
     <footer>
-      <p>
-        Reads the last 24 hours through your own web of trust. Publishes to your
-        own Blossom servers, under your own key. We keep the address and the
-        hash.
-      </p>
+      <p>Your last 24 hours, read through the people you trust. Published under your own key, to your own servers.</p>
     </footer>
 
     <script type="module" src="/app.js"></script>

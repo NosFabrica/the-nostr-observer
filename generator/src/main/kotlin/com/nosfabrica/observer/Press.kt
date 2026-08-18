@@ -5,6 +5,8 @@ import com.nosfabrica.observer.corpus.Art
 import com.nosfabrica.observer.corpus.ArtDesk
 import com.nosfabrica.observer.corpus.Digest
 import com.nosfabrica.observer.nostr.Corpus
+import com.nosfabrica.observer.nostr.Names
+import com.nosfabrica.observer.nostr.Pull
 import com.nosfabrica.observer.nostr.Readiness
 import com.nosfabrica.observer.nostr.ReadinessProbe
 import com.nosfabrica.observer.nostr.Relays
@@ -185,6 +187,22 @@ class Press(
         /** A page that fails the check is never offered for publication. */
         val publishable: Boolean get() = report.ok
     }
+
+    /**
+     * What to call this reader, so nothing ever has to print their key.
+     *
+     * Their `kind 0` if they published one, and their `npub` if they did not.
+     * Asked of the search relay and their own hosts together, because a profile
+     * lives wherever they put it.
+     */
+    suspend fun nameOf(
+        observer: String,
+        hosts: List<String> = emptyList(),
+    ): String =
+        Pull(relays, searchRelay)
+            .profiles(listOf(observer), hosts)[observer]
+            ?.display()
+            ?: Names.short(observer)
 
     /** Where this reader's own events go, without running the whole chain to find out. */
     suspend fun writeRelaysOf(observer: String): List<String> = ReadinessProbe(relays, searchRelay).writeRelaysOf(observer)
