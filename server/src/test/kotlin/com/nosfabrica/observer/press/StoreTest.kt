@@ -1,6 +1,8 @@
 package com.nosfabrica.observer.press
 
 import com.nosfabrica.observer.press.auth.Sessions
+import com.nosfabrica.observer.press.publish.Pendings
+import com.nosfabrica.observer.press.publish.Templates
 import com.nosfabrica.observer.press.store.Continuities
 import com.nosfabrica.observer.press.store.Db
 import com.nosfabrica.observer.press.store.Drafts
@@ -170,5 +172,43 @@ class SessionTest {
         val sessions = Sessions()
         val reader = "a".repeat(64)
         assertNotEquals(sessions.open(reader, Sessions.Signer.NIP07), sessions.open(reader, Sessions.Signer.NIP46))
+    }
+}
+
+class PendingsTest {
+    private fun template() = Templates.uploadAuth("a".repeat(64), 10, 1, 2)
+
+    @Test
+    fun `a prepared template survives long enough to be signed`() {
+        val pendings = Pendings()
+        pendings["draft"] = Pendings.Pending(template(), template(), emptyList(), emptyList(), "a".repeat(64), "2026-08-18")
+        assertNotNull(pendings["draft"])
+    }
+
+    @Test
+    fun `an abandoned prepare does not live forever`() {
+        // Every Prepare the reader then walked away from used to leave an entry
+        // nothing removed. The upload authorization inside is dead after ten
+        // minutes anyway, so the entry was a leak holding something unusable.
+        val pendings = Pendings(ttlSeconds = -1)
+        pendings["draft"] = Pendings.Pending(template(), template(), emptyList(), emptyList(), "a".repeat(64), "2026-08-18")
+        assertNull(pendings["draft"])
+        pendings.sweep()
+        assertEquals(0, pendings.size())
+    }
+}
+
+class SessionSweepTest {
+    @Test
+    fun `expired sessions are removed even if nobody presents them`() {
+        // Expiry that only happens on access is not expiry. A reader who signs
+        // in once from a phone and never comes back leaves a row that nothing
+        // ever looks at again, so nothing ever removes it.
+        val sessions = Sessions(ttlSeconds = -1)
+        sessions.open("a".repeat(64), Sessions.Signer.NIP07)
+        sessions.open("b".repeat(64), Sessions.Signer.NIP46)
+        assertEquals(2, sessions.size())
+        assertEquals(2, sessions.sweep())
+        assertEquals(0, sessions.size())
     }
 }

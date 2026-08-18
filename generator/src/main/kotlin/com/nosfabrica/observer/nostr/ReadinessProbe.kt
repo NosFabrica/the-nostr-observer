@@ -51,6 +51,16 @@ class ReadinessProbe(
             val writes = writeRelays(relayList)
             val provider = rankProvider(scoreEvent.await())
 
+            // COUNTs, ONE AT A TIME, and this is not an oversight.
+            //
+            // Running the four concurrently is the obvious optimisation and it
+            // was tried: `--check` went from answering in about three seconds to
+            // hanging until it was killed, repeatably, against this relay. The
+            // likely reason is already written down in AGENTS.md -- the store
+            // sends an AUTH challenge before it answers a COUNT even though
+            // `auth_required` is false -- and four handshakes racing on one
+            // socket is not something this project gets to fix from the outside.
+            // The fetches above genuinely do run in parallel; these do not.
             val scores =
                 provider?.let { (service, hint) ->
                     val cards = Filter(kinds = listOf(ContactCardEvent.KIND), authors = listOf(service))
@@ -78,6 +88,15 @@ class ReadinessProbe(
                 posts = posts,
             )
         }
+
+    /**
+     * Just the reader's write relays, for callers that need only those.
+     *
+     * Publishing needs to know where a manifest goes, and it used to find out by
+     * running the whole readiness chain: two NIP-50 searches and four COUNTs
+     * against a shared relay, to read one kind 10002. One fetch answers it.
+     */
+    suspend fun writeRelaysOf(observer: String): List<String> = writeRelays(one(AdvertisedRelayListEvent.KIND, observer))
 
     /**
      * NIP-65 write relays, via quartz.

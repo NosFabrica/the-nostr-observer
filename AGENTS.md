@@ -81,6 +81,16 @@ API key. A full run reads `ANTHROPIC_API_KEY` from the environment.
   frame reads the challenge as the answer.
 - **A NIP-50 search with no `since` times out** on this store; the same search
   with a 24-hour `since` answers immediately.
+- **COUNTs must go one at a time.** Issuing the readiness chain's four COUNTs
+  concurrently was tried and `--check` went from ~3s to hanging. Probably the
+  AUTH challenge above, racing on one socket. The fetches around them do run in
+  parallel; the counts do not.
+- **The relay goes through spells of not answering COUNTs at all.** Seen
+  2026-08-18: `--check` blocked until killed on roughly half of consecutive
+  runs, and reproduced identically on the previous commit, so it is the store
+  and not the client. `Relays.deadline` bounds every read so a request handler
+  cannot block forever, but the underlying cause is undiagnosed. **This is the
+  reason not to hammer it** — the audit itself did, and should not have.
 - **Neither `nip85.nosfabrica.com` nor `scores.brainstorm.world` exposes an HTTP
   API.** Both answer NIP-11 as plain strfry relays, so minting a lens is an
   operator step, not a call.
@@ -122,6 +132,34 @@ API key. A full run reads `ANTHROPIC_API_KEY` from the environment.
 - **An empty `kind 10063` is a hard stop, not a default.** Substituting a server
   of our own would make us the host of a page whose whole promise is that the
   reader hosts it.
+
+## Found by audit (2026-08-18) — do not reintroduce
+
+- **Never rebuild our own URL from request headers.** Sign-in compares a NIP-98
+  signature's `u` tag against the URL of the request. That check was made
+  against `Host` / `X-Forwarded-Host`, both of which the caller chooses: any
+  site can ask a visitor to sign an event for a URL it controls and replay it
+  here with a matching header to be signed in as them. It is now
+  `Config.publicUrl`, and two tests hold it shut. **A deployment MUST set
+  `OBSERVER_PUBLIC_URL`** or every sign-in is rejected.
+- **The two halves of the link rule must agree.** The permalink regex allowed
+  `nevent1…` in a branch that captured nothing, so `groupValues[1]` was empty
+  for every real citation. The sanitizer kept those links and the validator
+  rejected them — and a validator failure throws away the entire edition. njump
+  citations are decoded through quartz's NIP-19 parser now, and the sanitizer
+  takes the corpus so an unknown citation loses one link instead of the paper.
+- **Check-then-act on a shared map is a race.** Two clicks on the generate
+  button started two editions and two model bills. `ConcurrentHashMap.compute`,
+  with a test that fails on the old code.
+- **A TTL enforced only on access is a leak.** Drafts, sessions and pending
+  templates all expired only when something happened to touch them. A timer
+  sweeps them now, which also took a per-poll `DELETE` off the read path.
+- **One `Writer` per edition leaked an HTTP client** (connection pool and
+  threads) for the life of the process. It is one per `Press` now.
+- **The archive is not ours alone.** The manifest is rebuilt from the reader's
+  own kind 35128 merged with our index, so losing our database — or moving them
+  to another deployment — no longer silently deletes every earlier edition on
+  the next publish.
 
 ## Quartz behaviours worth knowing here
 

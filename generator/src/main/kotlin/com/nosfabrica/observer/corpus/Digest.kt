@@ -54,23 +54,33 @@ class Digest(
             dropped += events.size - pruned.size
             if (pruned.isEmpty()) continue
 
+            // Rendered first, counted second. The header used to be written
+            // before the events and claimed `pruned.size` of them, which stopped
+            // being true the moment the budget cut the desk short -- and the
+            // header is one of the few things in the digest the writer is
+            // entitled to treat as fact.
+            val desked = StringBuilder()
+            var here = 0
+            for (event in pruned) {
+                if (sb.length + desked.length > budgetChars) {
+                    dropped++
+                    continue
+                }
+                here++
+                renderEvent(desked, desk, event, corpus, artByEvent[event.id].orEmpty())
+            }
+            if (here == 0) continue
+            kept += here
+
             sb
                 .append("\n\n===== ")
                 .append(desk.label.uppercase())
                 .append(" (")
-                .append(pruned.size)
+                .append(here)
                 .append(" of ")
                 .append(events.size)
                 .append(") =====\n")
-
-            for (event in pruned) {
-                if (sb.length > budgetChars) {
-                    dropped++
-                    continue
-                }
-                kept++
-                renderEvent(sb, desk, event, corpus, artByEvent[event.id].orEmpty())
-            }
+                .append(desked)
         }
         return Rendered(sb.toString().trim(), kept, dropped, sb.length)
     }
@@ -121,7 +131,7 @@ class Digest(
                 Desk.CALENDAR, Desk.CLASSIFIEDS -> 400
                 else -> 1400
             }
-        val text = event.content.replace(Regex("\n{3,}"), "\n\n").trim()
+        val text = event.content.replace(BLANK_LINES, "\n\n").trim()
         return if (text.length <= limit) text else text.take(limit) + " …[trimmed]"
     }
 
@@ -159,12 +169,20 @@ class Digest(
         return out
     }
 
+    // Compiled once. These run per event over a few hundred events per edition,
+    // and Regex(...) inside the loop recompiles the pattern every time.
+    private companion object {
+        val BLANK_LINES = Regex("\n{3,}")
+        val URL = Regex("""https?://\S+""")
+        val WHITESPACE = Regex("""\s+""")
+    }
+
     /** Same author, same words — whitespace, case and links normalised away. */
     private fun fingerprint(event: Event): String {
         val text =
             event.content
-                .replace(Regex("""https?://\S+"""), "")
-                .replace(Regex("""\s+"""), " ")
+                .replace(URL, "")
+                .replace(WHITESPACE, " ")
                 .trim()
                 .lowercase()
         return if (text.length < 12) "" else event.pubKey + "|" + text.take(200)

@@ -62,17 +62,25 @@ class Editions(
         pubkey: String,
         forceProvisional: Boolean,
     ): String {
-        running[pubkey]?.let { existing ->
-            if (drafts.of(existing, pubkey)?.state == Drafts.State.RUNNING) return existing
-        }
-        val id = drafts.open(pubkey)
-        running[pubkey] = id
+        var started: String? = null
 
-        // Detached on purpose: the HTTP request that starts a run must return
-        // immediately with the id, and the run outlives it. It is bound to the
-        // application scope so a shutdown cancels it rather than leaving a model
-        // call billing against nothing.
-        scope.launch(Dispatchers.IO) { run(id, pubkey, forceProvisional) }
+        // compute(), not get-then-put. Check-then-act here is a race between two
+        // clicks on a slow button, and losing it means two model calls and two
+        // bills for one edition. ConcurrentHashMap.compute holds the bin lock
+        // for this key, so the check and the claim are one step.
+        val id =
+            running.compute(pubkey) { _, existing ->
+                if (existing != null && drafts.of(existing, pubkey)?.state == Drafts.State.RUNNING) {
+                    existing
+                } else {
+                    drafts.open(pubkey).also { started = it }
+                }
+            }!!
+
+        // Launched outside compute: the mapping function must be short and must
+        // not call back into the map, and a coroutine that finishes fast enough
+        // to call running.remove() from inside it would deadlock.
+        started?.let { fresh -> scope.launch(Dispatchers.IO) { run(fresh, pubkey, forceProvisional) } }
         return id
     }
 
@@ -139,6 +147,11 @@ class Editions(
         } catch (refused: Press.Refused) {
             say("Stopped", refused.message)
             drafts.failed(id, refused.message, json.encodeToString(lines))
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            // A shutdown is not an edition that failed. Recording it as one
+            // would leave a FAILED draft the reader is told to retry, on a
+            // process that is going away.
+            throw cancelled
         } catch (failure: Exception) {
             // The reader gets the class and the message, not a stack trace: the
             // interesting half of a failure here is nearly always "which relay"

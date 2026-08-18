@@ -45,6 +45,8 @@ data class Art(
  *    missing image degrading to a caption and degrading to a gap.
  */
 object ArtDesk {
+    private val URL = Regex("""https?://\S+""")
+    private val WHITESPACE = Regex("""\s+""")
     private val IMAGE_EXT = Regex("""\.(jpe?g|png|gif|webp|avif|bmp)(\?|$)""", RegexOption.IGNORE_CASE)
     private val VIDEO_EXT = Regex("""\.(mp4|mov|webm|m4v|avi|mkv)(\?|$)""", RegexOption.IGNORE_CASE)
 
@@ -121,8 +123,8 @@ object ArtDesk {
         // as well as the tag, and "look at this https://blossom…" is not a caption.
         val body =
             event.content
-                .replace(Regex("""https?://\S+"""), " ")
-                .replace(Regex("""\s+"""), " ")
+                .replace(URL, " ")
+                .replace(WHITESPACE, " ")
                 .trim()
                 .take(280)
         return Art(

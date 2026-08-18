@@ -3,7 +3,7 @@
 // one of them is a fetch and a bit of DOM.
 
 const $ = (id) => document.getElementById(id);
-const state = { me: null, draft: null, poll: null, prepared: null };
+const state = { me: null, draft: null, poll: null, misses: 0 };
 
 // ---------------------------------------------------------------- sign in
 
@@ -121,13 +121,25 @@ async function generate() {
     return note(data.error);
   }
   state.draft = data.draft;
+  state.misses = 0;
   state.poll = setInterval(pollDraft, 2000);
   pollDraft();
 }
 
 async function pollDraft() {
-  const res = await fetch("/api/editions/" + state.draft);
+  // A dropped connection must not silently poll forever. Give up after a run of
+  // failures and say so, rather than leaving a spinner that means nothing.
+  let res;
+  try {
+    res = await fetch("/api/editions/" + state.draft);
+  } catch (e) {
+    if (++state.misses < 5) return;
+    clearInterval(state.poll);
+    $("generate").disabled = false;
+    return showFailure("Lost contact with the server. Your edition may still be running -- reload to check.");
+  }
   if (!res.ok) return;
+  state.misses = 0;
   const status = await res.json();
   drawProgress(JSON.parse(status.progress || "[]"));
   if (status.state === "RUNNING") return;
@@ -235,11 +247,14 @@ async function publishEdition(button) {
       status.className = "waiting";
       return (status.textContent = "Signing was refused.");
     }
+    status.textContent = "Uploading and announcing…";
   } else {
+    // The signing happens inside the request below, on the server, so this
+    // message has to stand for the whole wait -- the reader is looking at
+    // their phone, not at this.
     status.textContent = "Your signer will ask twice. Approve both on your device…";
   }
 
-  status.textContent = "Uploading and announcing…";
   const res = await fetch("/api/editions/" + state.draft + "/publish", {
     method: "POST",
     body,
@@ -255,6 +270,9 @@ async function publishEdition(button) {
 }
 
 function drawReport(status, report) {
+  // A second publish must not leave the first one's list sitting underneath it.
+  status.nextElementSibling?.remove();
+
   status.textContent = report.ok
     ? `Published as ${report.naddr} for ${report.day}.`
     : "Uploaded, but no relay accepted the manifest, so nobody can find it yet.";

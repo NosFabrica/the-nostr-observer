@@ -14,6 +14,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.OkHttpClient
 import java.io.Closeable
 import java.time.Duration
@@ -64,10 +65,15 @@ class Relays(
     ): List<Event> {
         val relay = RelayUrlNormalizer.normalize(url)
         val batches = batches(filters)
-        if (batches.size == 1) return client.fetchAll(relay, batches.first(), idle)
-        return coroutineScope {
-            batches.map { async { client.fetchAll(relay, it, idle) } }.awaitAll().flatten()
-        }
+        return deadline(idle) {
+            if (batches.size == 1) {
+                client.fetchAll(relay, batches.first(), idle)
+            } else {
+                coroutineScope {
+                    batches.map { async { client.fetchAll(relay, it, idle) } }.awaitAll().flatten()
+                }
+            }
+        } ?: emptyList()
     }
 
     suspend fun fetch(
@@ -116,9 +122,9 @@ class Relays(
         filter: Filter,
         idle: Long = idleMs,
     ): Long? =
-        runCatching {
-            client.count(RelayUrlNormalizer.normalize(url), filter, idle)?.count?.toLong()
-        }.getOrNull()
+        deadline(idle) {
+            runCatching { client.count(RelayUrlNormalizer.normalize(url), filter, idle)?.count?.toLong() }.getOrNull()
+        }
 
     companion object {
         /**
@@ -175,6 +181,33 @@ class Relays(
             return out
         }
     }
+
+    /**
+     * A wall clock over the idle clock, as a belt-and-braces bound.
+     *
+     * Honest about what this is: a GUARD, not a fix for a diagnosed bug. On
+     * 2026-08-18 `--check` against `search-staging` began intermittently
+     * blocking until killed, in runs where the relay had apparently stopped
+     * answering COUNTs. It reproduced on the previous commit as well, so it is
+     * not something this code introduced, and it has NOT been reproduced
+     * locally — a socket that connects and then says nothing is already handled
+     * by quartz's idle clock, so the real shape is something else.
+     *
+     * What is defensible without knowing the shape: no relay read from a
+     * request handler should be able to block forever. `/api/readiness` is
+     * fetched on every page load, and an unbounded wait there is a held thread
+     * and a page that looks broken. Null and empty are already supported
+     * answers everywhere this is used — null is what drives `checking` rather
+     * than a guess — so giving up degrades honestly instead of inventing a
+     * number.
+     *
+     * If the underlying hang is ever pinned down, this stays anyway; it is the
+     * bound, not the diagnosis.
+     */
+    private suspend fun <T> deadline(
+        idle: Long,
+        block: suspend CoroutineScope.() -> T,
+    ): T? = withTimeoutOrNull(idle * 2 + 5_000, block)
 
     override fun close() {
         scope.cancel()

@@ -96,9 +96,13 @@ class Drafts(
     fun of(
         id: String,
         pubkey: String,
-    ): Draft? {
-        sweep()
-        return db
+    ): Draft? =
+        // No sweep here. The browser polls this every two seconds while an
+        // edition is being written, and a DELETE on the read path made each of
+        // those a write transaction. The expiry is enforced by the WHERE clause
+        // below, which is what correctness needs; actually removing the rows is
+        // the housekeeping timer's job.
+        db
             .read(
                 """
                 SELECT id, pubkey, state, progress, html, sha256, summary, error, created_at
@@ -120,10 +124,9 @@ class Drafts(
                     createdAt = rs.getLong(9),
                 )
             }.firstOrNull()
-    }
 
     /** Expiry that actually deletes. A TTL nobody enforces is a retention policy of "forever". */
-    fun sweep() = db.write("DELETE FROM drafts WHERE expires_at <= ?", Instant.now().epochSecond)
+    fun sweep(): Int = db.write("DELETE FROM drafts WHERE expires_at <= ?", Instant.now().epochSecond)
 
     private companion object {
         val RANDOM = SecureRandom()

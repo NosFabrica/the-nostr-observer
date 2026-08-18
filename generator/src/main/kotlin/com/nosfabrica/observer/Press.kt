@@ -33,6 +33,16 @@ class Press(
     private val effort: OutputConfig.Effort = OutputConfig.Effort.HIGH,
 ) {
     /**
+     * One writer, not one per edition.
+     *
+     * Each `Writer` lazily builds an `AnthropicOkHttpClient`, and each of those
+     * owns a connection pool and thread pools. Building one per edition leaks
+     * both for the life of the process, which a CLI run never notices and a
+     * server does.
+     */
+    private val writer by lazy { Writer(effort = effort) }
+
+    /**
      * Progress, as it happens.
      *
      * A full edition is a minute of relay reads and several minutes of
@@ -126,6 +136,9 @@ class Press(
         /** A page that fails the check is never offered for publication. */
         val publishable: Boolean get() = report.ok
     }
+
+    /** Where this reader's own events go, without running the whole chain to find out. */
+    suspend fun writeRelaysOf(observer: String): List<String> = ReadinessProbe(relays, searchRelay).writeRelaysOf(observer)
 
     suspend fun readiness(
         observer: String,
@@ -225,10 +238,10 @@ class Press(
         val (corpus, art, digest) = gather(observer, until, forceProvisional, onStep)
 
         onStep(Step.Writing)
-        val draft = Writer(effort = effort).write(corpus, digest, art, continuity)
+        val draft = writer.write(corpus, digest, art, continuity)
         onStep(Step.Written(draft.html.length, draft.inputTokens, draft.outputTokens, draft.costUsd()))
 
-        val sanitized = Sanitizer(art).sanitize(draft.html)
+        val sanitized = Sanitizer(art, corpus.all().map { it.id }.toSet()).sanitize(draft.html)
         onStep(Step.Cleaned(sanitized.removed))
 
         val report = Validator(corpus, art).validate(sanitized.html)

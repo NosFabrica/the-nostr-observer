@@ -42,6 +42,9 @@ class RoutesTest {
                 // come back. Saying so here is the same as saying it in a
                 // deployment that terminates TLS in front.
                 insecureCookies = true,
+                // What the test client actually calls us. Sign-in compares
+                // against this and not against anything in the request.
+                publicUrl = "http://localhost",
             ),
         )
 
@@ -124,6 +127,45 @@ class RoutesTest {
                     setBody(body)
                 }
             assertEquals(HttpStatusCode.Unauthorized, response.status)
+        }
+    }
+
+    @Test
+    fun `a forwarded host header cannot move the goalposts`(
+        @TempDir dir: Path,
+    ) = runTest {
+        testApplication {
+            application { routes(app(dir)) }
+            // The attack: any site can ask a visitor to sign a NIP-98 event for
+            // a URL that site controls. If we reconstruct our own identity from
+            // request headers, evil.example.com signs the victim in HERE by
+            // replaying that event with a matching X-Forwarded-Host.
+            val body = """{"signer":"NIP07"}"""
+            val response =
+                client.post("/api/session") {
+                    header("Authorization", auth("https://evil.example.com/api/session", "POST", body))
+                    header("X-Forwarded-Host", "evil.example.com")
+                    header("X-Forwarded-Proto", "https")
+                    setBody(body)
+                }
+            assertEquals(HttpStatusCode.Unauthorized, response.status, response.bodyAsText())
+        }
+    }
+
+    @Test
+    fun `a host header cannot move them either`(
+        @TempDir dir: Path,
+    ) = runTest {
+        testApplication {
+            application { routes(app(dir)) }
+            val body = """{"signer":"NIP07"}"""
+            val response =
+                client.post("/api/session") {
+                    header("Authorization", auth("http://evil.example.com/api/session", "POST", body))
+                    header("Host", "evil.example.com")
+                    setBody(body)
+                }
+            assertEquals(HttpStatusCode.Unauthorized, response.status, response.bodyAsText())
         }
     }
 

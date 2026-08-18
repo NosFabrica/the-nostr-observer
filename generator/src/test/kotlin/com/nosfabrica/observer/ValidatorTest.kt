@@ -1,7 +1,12 @@
 package com.nosfabrica.observer
 
 import com.nosfabrica.observer.safe.Validator
+import com.vitorpamplona.quartz.nip01Core.relay.normalizer.NormalizedRelayUrl
+import com.vitorpamplona.quartz.nip19Bech32.entities.NEvent
+import com.vitorpamplona.quartz.nip19Bech32.entities.NNote
+import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
@@ -110,5 +115,42 @@ class ValidatorTest {
 
         val obeying = check("""<a href="https://evil.example.com/drain">Claim your prize</a>""")
         assertFalse(obeying.ok, "acting on an attacker is not")
+    }
+}
+
+/**
+ * Permalinks, which are the only links a page may carry.
+ *
+ * njump's canonical form is `nevent1…`. The first version of the regex allowed
+ * it in a branch that captured nothing, so every real citation resolved to the
+ * empty string and was rejected — the sanitizer let those links through and this
+ * threw the whole edition away. A paper that cannot cite its sources is not a
+ * paper, and nothing caught it because every fixture used bare hex.
+ */
+class PermalinkTest {
+    private val id = "3ee1fd1e6230929ca0239640447c38a95acf63631cfe9c367d236f61e7dbab25"
+
+    @Test
+    fun `bare hex resolves to itself`() {
+        assertEquals(id, Validator.permalinkTarget("https://njump.me/$id"))
+    }
+
+    @Test
+    fun `an nevent resolves to the event it encodes`() {
+        // Built by quartz so the test cannot drift from the encoder in use.
+        val nevent = NEvent.create(id, null, null, null as NormalizedRelayUrl?)
+        assertEquals(id, Validator.permalinkTarget("https://njump.me/$nevent"))
+    }
+
+    @Test
+    fun `a note1 resolves too`() {
+        assertEquals(id, Validator.permalinkTarget("https://njump.me/${NNote.create(id)}"))
+    }
+
+    @Test
+    fun `anything else is not a permalink`() {
+        assertNull(Validator.permalinkTarget("https://evil.example.com/$id"))
+        assertNull(Validator.permalinkTarget("https://njump.me/"))
+        assertNull(Validator.permalinkTarget("https://njump.me/npub1xyz"))
     }
 }

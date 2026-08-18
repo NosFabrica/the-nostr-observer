@@ -3,7 +3,9 @@ package com.nosfabrica.observer.press.publish
 import com.vitorpamplona.quartz.nip01Core.core.Event
 import com.vitorpamplona.quartz.nipB7Blossom.BlossomAuthorizationEvent
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -47,8 +49,14 @@ class Blossom(
         blob: ByteArray,
         auth: Event,
     ): List<Upload> =
-        withContext(Dispatchers.IO) {
-            servers.map { server -> put(server, blob, auth) }
+        // At once. These are independent hosts and one of them being slow is not
+        // a reason for the reader to wait on it before the next one is even
+        // asked; three servers at the 60s call timeout was three minutes in
+        // series. Order is preserved so the report lines up with the list.
+        coroutineScope {
+            servers
+                .map { server -> async(Dispatchers.IO) { put(server, blob, auth) } }
+                .awaitAll()
         }
 
     private fun put(

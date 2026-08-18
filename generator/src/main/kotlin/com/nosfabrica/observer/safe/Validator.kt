@@ -2,7 +2,9 @@ package com.nosfabrica.observer.safe
 
 import com.nosfabrica.observer.corpus.Art
 import com.nosfabrica.observer.nostr.Corpus
-import com.nosfabrica.observer.nostr.values
+import com.vitorpamplona.quartz.nip19Bech32.Nip19Parser
+import com.vitorpamplona.quartz.nip19Bech32.entities.NEvent
+import com.vitorpamplona.quartz.nip19Bech32.entities.NNote
 import org.jsoup.Jsoup
 import java.text.Normalizer
 
@@ -54,8 +56,37 @@ class Validator(
     enum class Kind { QUOTE, IMAGE, LINK }
 
     companion object {
+        // Compiled once: normalize() runs on every source event at construction
+        // and on every quote in the page.
+        private val WHITESPACE = Regex("""\s+""")
+
         /** The one external shape a link may take: a permalink to an event we read. */
-        val PERMALINK = Regex("""^https://njump\.me/(?:nevent1\w+|([0-9a-f]{64}))""", RegexOption.IGNORE_CASE)
+        val PERMALINK = Regex("""^https://njump\.me/(nevent1\w+|note1\w+|[0-9a-f]{64})""", RegexOption.IGNORE_CASE)
+
+        /**
+         * The event a permalink points at, or null if it points at nothing.
+         *
+         * njump's canonical form is `nevent1…`, not bare hex, so this has to
+         * decode. It did not, once: the regex allowed `nevent1…` in a branch
+         * that captured nothing, so `groupValues[1]` came back empty for every
+         * one of them and the id was compared against the empty string. The
+         * sanitizer kept those links and this rejected them, which means an
+         * edition citing its sources the normal way failed its own check and was
+         * never offered for publication. Two halves of one rule, disagreeing.
+         */
+        internal fun permalinkTarget(href: String): String? {
+            val body = PERMALINK.find(href)?.groupValues?.get(1) ?: return null
+            if (body.length == 64 && body.all { it.isDigit() || it.lowercaseChar() in 'a'..'f' }) return body.lowercase()
+            return Nip19Parser
+                .parseAll(body)
+                .firstNotNullOfOrNull {
+                    when (it) {
+                        is NEvent -> it.hex
+                        is NNote -> it.hex
+                        else -> null
+                    }
+                }?.lowercase()
+        }
     }
 
     data class Violation(
@@ -107,7 +138,7 @@ class Validator(
         for (a in doc.select("a[href]")) {
             val href = a.attr("href")
             if (!href.startsWith("http", ignoreCase = true)) continue
-            val id = PERMALINK.find(href)?.groupValues?.get(1)
+            val id = permalinkTarget(href)
             if (id == null || id !in corpusEventIds) {
                 violations.add(
                     Violation(Kind.LINK, "only permalinks back to a source event may be links", href.take(120)),
@@ -163,7 +194,7 @@ class Validator(
             .replace('—', '-')
             .replace(' ', ' ')
             .replace("…", "...")
-            .replace(Regex("""\s+"""), " ")
+            .replace(WHITESPACE, " ")
             .trim()
             .lowercase()
 }

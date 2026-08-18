@@ -3,6 +3,8 @@ package com.nosfabrica.observer.nostr
 import com.vitorpamplona.quartz.nip01Core.core.Event
 import com.vitorpamplona.quartz.nip01Core.metadata.MetadataEvent
 import com.vitorpamplona.quartz.nip01Core.relay.filters.Filter
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 
 /**
  * The nine kinds a front page is made of, and why each earns a column.
@@ -119,11 +121,17 @@ class Pull(
         // the control run is NOT in this batch: it is kind 1 too, and merged in
         // here its anonymous results would land in the ranked notes. On a
         // measured window that would have been 209 spam posts filed as news.
-        val all = relays.fetch(searchRelay, desks.map { filter(it.kind, since, it.limit, lens) }, idle = 25_000)
+        // The control run goes out at the same time, on its own subscription:
+        // it is a separate query for a separate reason, not a slower one. Run in
+        // series it added a whole idle window to every edition.
+        val (all, control) =
+            coroutineScope {
+                val desksAsked = async { relays.fetch(searchRelay, desks.map { filter(it.kind, since, it.limit, lens) }, idle = 25_000) }
+                val controlAsked = async { controlRun(since) }
+                desksAsked.await() to controlAsked.await()
+            }
         val byKind = all.groupBy { it.kind }
         val ranked = desks.associateWith { desk -> byKind[desk.kind].orEmpty().take(desk.limit) }
-
-        val control = controlRun(since)
 
         // Every author we are about to print, plus everyone the control run
         // names -- the Instrument panel prints the spammer's own text, and a hex

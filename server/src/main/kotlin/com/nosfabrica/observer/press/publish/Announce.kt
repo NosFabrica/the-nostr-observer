@@ -5,6 +5,9 @@ import com.vitorpamplona.quartz.nip01Core.core.Event
 import com.vitorpamplona.quartz.nip01Core.relay.filters.Filter
 import com.vitorpamplona.quartz.nip5aStaticWebsites.NamedSiteEvent
 import com.vitorpamplona.quartz.nipB7Blossom.BlossomServersEvent
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 
 /**
  * Where a reader's paper lives, according to the reader.
@@ -87,16 +90,19 @@ class Announce(
         return NamedSiteEvent(newest.id, newest.pubKey, newest.createdAt, newest.tags, newest.content, newest.sig)
     }
 
+    // The reader's own relays and ours, asked together: a 10063 lives where they
+    // put it and the search relay mirrors only the kinds it was asked to, so we
+    // need every answer anyway. Asked in series, four hosts meant four idle
+    // windows -- forty seconds to read one small event.
     private suspend fun anyOf(
         hosts: List<String>,
         filter: Filter,
-    ): List<Event> {
-        val out = mutableListOf<Event>()
-        // The reader's own relays first, then ours: a 10063 lives where they put
-        // it, and the search relay mirrors only the kinds it was asked to.
-        for (host in hosts.take(3) + listOf(readRelay)) {
-            runCatching { out += relays.fetch(host, filter, idle = 10_000) }
+    ): List<Event> =
+        coroutineScope {
+            (hosts.take(3) + readRelay)
+                .distinct()
+                .map { host -> async { runCatching { relays.fetch(host, filter, idle = 10_000) }.getOrDefault(emptyList()) } }
+                .awaitAll()
+                .flatten()
         }
-        return out
-    }
 }

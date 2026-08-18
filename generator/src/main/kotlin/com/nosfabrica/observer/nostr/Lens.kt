@@ -3,6 +3,9 @@ package com.nosfabrica.observer.nostr
 import com.vitorpamplona.quartz.nip01Core.core.Event
 import com.vitorpamplona.quartz.nip01Core.relay.filters.Filter
 import com.vitorpamplona.quartz.nip02FollowList.ContactListEvent
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 
 /**
  * How a reader's corpus gets chosen.
@@ -146,10 +149,15 @@ class Follows(
         pubkeys: List<String>,
     ): List<Event> {
         val filters = pubkeys.chunked(40).map { followFilter(it) }
-        val out = mutableListOf<Event>()
-        for (host in hosts) {
-            runCatching { out += relays.fetch(host, filters, idle = 15_000) }
-        }
+        // All three hosts at once. In series this was three fifteen-second idle
+        // windows on the slow path of a first-time reader's very first edition.
+        val out =
+            coroutineScope {
+                hosts
+                    .map { host -> async { runCatching { relays.fetch(host, filters, idle = 15_000) }.getOrDefault(emptyList()) } }
+                    .awaitAll()
+                    .flatten()
+            }
         // Newest list per author: the same person answered by two relays is one
         // vote, not two, and the stale copy must not be the one that counts.
         return out.groupBy { it.pubKey }.values.mapNotNull { copies -> copies.maxByOrNull { it.createdAt } }

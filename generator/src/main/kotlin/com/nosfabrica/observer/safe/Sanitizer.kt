@@ -30,6 +30,16 @@ import org.jsoup.safety.Safelist
  */
 class Sanitizer(
     art: List<Art>,
+    /**
+     * Events this edition actually read, so a citation can be checked here too.
+     *
+     * Empty means "do not check membership", which is what the shape-only tests
+     * want. A real run passes the corpus, because the alternative is that a
+     * permalink to an event nobody read survives this pass and then fails the
+     * validator — and a validator failure throws away the WHOLE edition, where
+     * this throws away one link.
+     */
+    private val corpusEventIds: Set<String> = emptySet(),
 ) {
     /** id -> real URL. The only image sources that will survive. */
     private val byId: Map<String, Art> = art.associateBy { it.id }
@@ -111,7 +121,8 @@ class Sanitizer(
         for (a in doc.select("a[href]").toList()) {
             val href = a.attr("href")
             if (!href.startsWith("http", ignoreCase = true)) continue
-            if (Validator.PERMALINK.containsMatchIn(href)) continue
+            val cited = Validator.permalinkTarget(href)
+            if (cited != null && (corpusEventIds.isEmpty() || cited in corpusEventIds)) continue
             removed.add("link to ${href.take(60)} (unwrapped to text)")
             a.unwrap()
         }

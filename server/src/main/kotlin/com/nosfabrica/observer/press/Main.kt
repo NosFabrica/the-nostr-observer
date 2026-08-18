@@ -8,6 +8,7 @@ import com.nosfabrica.observer.press.auth.Sessions
 import com.nosfabrica.observer.press.auth.SignIn
 import com.nosfabrica.observer.press.publish.Announce
 import com.nosfabrica.observer.press.publish.Blossom
+import com.nosfabrica.observer.press.publish.Pendings
 import com.nosfabrica.observer.press.store.Continuities
 import com.nosfabrica.observer.press.store.Db
 import com.nosfabrica.observer.press.store.Drafts
@@ -16,6 +17,11 @@ import io.ktor.server.engine.embeddedServer
 import io.ktor.server.netty.Netty
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import org.slf4j.LoggerFactory
 
 /**
  * Everything the app needs, read once from the environment.
@@ -29,6 +35,19 @@ data class Config(
     val port: Int = env("PORT")?.toIntOrNull() ?: 8080,
     val host: String = env("HOST") ?: "0.0.0.0",
     val database: String = env("OBSERVER_DB") ?: "observer.db",
+    /**
+     * What this server is called from outside. NOT derived from the request.
+     *
+     * A NIP-98 signature names the URL it is for, and that check is only worth
+     * anything if the URL it is compared against is OURS. Reconstructing it from
+     * `Host` or `X-Forwarded-Host` hands the comparison to the caller: any site
+     * can ask a visitor to sign an event for a URL that site controls, and then
+     * replay it here with a matching header to be signed in as them. That was a
+     * real hole here, and it is what these two tests hold shut.
+     *
+     * The default is only right for local work. A deployment must set this.
+     */
+    val publicUrl: String = env("OBSERVER_PUBLIC_URL") ?: "http://localhost:${env("PORT")?.toIntOrNull() ?: 8080}",
     val searchRelay: String = env("OBSERVER_RELAY") ?: "wss://search-staging.brainstorm.world",
     val effort: String = env("OBSERVER_EFFORT") ?: "high",
     /**
@@ -62,14 +81,35 @@ class App(
     val press = Press(relays, config.searchRelay, effort(config.effort))
     val editions = Editions(press, drafts, continuities, scope)
 
+    val pending = Pendings()
+
     /**
-     * Templates issued but not yet signed, held only in memory.
+     * Everything that expires, swept on a timer rather than on access.
      *
-     * They exist to be compared against what comes back, so they need to
-     * survive a round trip through a signer and nothing longer. Losing them on
-     * restart costs the reader one press of Prepare.
+     * Drafts, sessions and pending templates all have a TTL, and all three used
+     * to be enforced only when something happened to touch the row. That is not
+     * expiry: a reader who abandons a draft, or signs in once from a phone and
+     * never returns, leaves a row nothing ever looks at again. It also takes the
+     * per-poll DELETE off the read path.
      */
-    val pending = java.util.concurrent.ConcurrentHashMap<String, Pending>()
+    fun housekeeping() =
+        scope.launch {
+            while (isActive) {
+                delay(10 * 60 * 1000L)
+                runCatching {
+                    val gone = drafts.sweep() + sessions.sweep() + pending.sweep()
+                    if (gone > 0) log.info("swept $gone expired record(s)")
+                }.onFailure { log.warn("housekeeping failed", it) }
+            }
+        }
+
+    fun close() {
+        scope.cancel()
+        relays.close()
+        db.close()
+    }
+
+    private val log = LoggerFactory.getLogger(App::class.java)
 
     private fun effort(name: String) =
         when (name.lowercase()) {
@@ -84,8 +124,18 @@ class App(
 fun main() {
     val app = App()
     println("observer-press on ${app.config.host}:${app.config.port}, reading ${app.config.searchRelay}")
+    println("  public url ${app.config.publicUrl} (sign-in signatures must name it)")
+    if (System.getenv("OBSERVER_PUBLIC_URL").isNullOrBlank()) {
+        println("  OBSERVER_PUBLIC_URL is unset: every sign-in will be rejected unless readers reach this exact address")
+    }
     if (System.getenv("ANTHROPIC_API_KEY").isNullOrBlank()) {
         println("  no ANTHROPIC_API_KEY: readiness and previews will work, generation will not")
     }
-    embeddedServer(Netty, port = app.config.port, host = app.config.host) { routes(app) }.start(wait = true)
+    app.housekeeping()
+
+    val server = embeddedServer(Netty, port = app.config.port, host = app.config.host) { routes(app) }
+    // Sockets and the database file get closed on the way out. Without this a
+    // restart leaves a WAL to recover and relay connections to time out.
+    Runtime.getRuntime().addShutdownHook(Thread { app.close() })
+    server.start(wait = true)
 }

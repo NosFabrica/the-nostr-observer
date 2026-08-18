@@ -61,6 +61,24 @@ class Sessions(
         if (!token.isNullOrBlank()) live.remove(hash(token))
     }
 
+    /**
+     * Drop what has expired.
+     *
+     * [of] already refuses an expired entry, but only for a token somebody
+     * still presents. A reader who signs in from a phone and never comes back
+     * leaves a row that nothing ever looks at again, so nothing ever removes
+     * it: expiry that only happens on access is not expiry, it is a leak with
+     * a policy attached.
+     */
+    fun sweep(): Int {
+        val now = Instant.now().epochSecond
+        val before = live.size
+        live.entries.removeIf { it.value.expiresAt <= now }
+        return before - live.size
+    }
+
+    fun size() = live.size
+
     private fun hash(token: String) =
         HexFormat.of().formatHex(
             MessageDigest.getInstance("SHA-256").digest(token.toByteArray()),

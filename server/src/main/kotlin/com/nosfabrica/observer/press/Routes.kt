@@ -5,6 +5,7 @@ import com.nosfabrica.observer.nostr.Readiness
 import com.nosfabrica.observer.press.auth.Sessions
 import com.nosfabrica.observer.press.auth.SignIn
 import com.nosfabrica.observer.press.publish.Countersign
+import com.nosfabrica.observer.press.publish.Pendings
 import com.nosfabrica.observer.press.publish.Templates
 import com.nosfabrica.observer.press.store.Drafts
 import com.vitorpamplona.quartz.nip01Core.core.Event
@@ -141,7 +142,7 @@ fun Application.routes(app: App) {
                 val result =
                     app.signIn.verify(
                         header = call.request.headers["Authorization"],
-                        url = call.fullUrl(),
+                        url = call.fullUrl(app),
                         method = "POST",
                         body = body.toByteArray(),
                     )
@@ -271,9 +272,11 @@ fun Application.routes(app: App) {
 
             // Their relays, from their own kind 10002, asked again rather than
             // remembered: this is where the manifest is going, and a stale copy
-            // publishes the paper to an address they have moved away from.
-            val (facts, _) = app.press.readiness(session.pubkey, Instant.now().epochSecond - WINDOW_SECONDS)
-            val writeRelays = facts.writeRelays.orEmpty()
+            // publishes the paper to an address they have moved away from. One
+            // fetch, not the whole readiness chain -- which is what this did,
+            // spending two NIP-50 searches and four COUNTs on a shared relay to
+            // read a single event.
+            val writeRelays = app.press.writeRelaysOf(session.pubkey)
             val servers = app.announce.servers(session.pubkey, writeRelays)
             if (servers.isEmpty()) {
                 return@post call.respond(
@@ -289,12 +292,28 @@ fun Application.routes(app: App) {
             val sha = draft.sha256 ?: return@post call.respond(HttpStatusCode.Conflict, Problem("draft has no hash"))
             val now = Instant.now().epochSecond
             val day = DAY.format(Instant.ofEpochSecond(now).atOffset(ZoneOffset.UTC))
-            val paths = (listOf("/index.html" to sha, "/$day" to sha) + app.published.paths(session.pubkey)).distinctBy { it.first }
+            // The archive, from THEIR copy as well as ours.
+            //
+            // A kind 35128 replaces, so the manifest must carry every day the
+            // reader has ever published. Rebuilding it from our index alone made
+            // our database the sole record of their archive: lose it, or move
+            // them to another deployment, and the next publish silently deletes
+            // every earlier edition. Their own site event is the durable copy,
+            // so it is merged in and ours only fills the gaps.
+            val theirs =
+                app.announce
+                    .existing(session.pubkey, writeRelays)
+                    ?.paths()
+                    ?.map { it.path to it.hash }
+                    .orEmpty()
+            val paths =
+                (listOf("/index.html" to sha, "/$day" to sha) + app.published.paths(session.pubkey) + theirs)
+                    .distinctBy { it.first }
 
             val upload = Templates.uploadAuth(sha, blob.size.toLong(), now, now + 600)
             val manifest =
                 Templates.manifest(paths, servers, app.continuities.of(session.pubkey).masthead, now)
-            app.pending[draft.id] = Pending(upload, manifest, servers, writeRelays, sha, day)
+            app.pending[draft.id] = Pendings.Pending(upload, manifest, servers, writeRelays, sha, day)
             call.respond(ToSign(upload.toJson(), manifest.toJson(), servers, writeRelays, sha))
         }
 
@@ -387,16 +406,6 @@ fun Application.routes(app: App) {
     }
 }
 
-/** Held between prepare and publish so the signed events have something to be checked against. */
-data class Pending(
-    val upload: com.vitorpamplona.quartz.nip01Core.signers.EventTemplate<Event>,
-    val manifest: com.vitorpamplona.quartz.nip01Core.signers.EventTemplate<Event>,
-    val servers: List<String>,
-    val relays: List<String>,
-    val sha: String,
-    val day: String,
-)
-
 private val DAY = DateTimeFormatter.ofPattern("yyyy-MM-dd")
 
 private fun sessionCookie(
@@ -434,8 +443,9 @@ private const val CSP =
     "default-src 'none'; img-src https: data:; style-src 'unsafe-inline'; " +
         "font-src https:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
 
-private fun ApplicationCall.fullUrl(): String {
-    val scheme = request.headers["X-Forwarded-Proto"] ?: request.local.scheme
-    val host = request.headers["X-Forwarded-Host"] ?: request.headers["Host"] ?: request.local.serverHost
-    return "$scheme://$host${request.uri}"
-}
+// Our own address, from configuration, never from the request.
+//
+// See Config.publicUrl: every header a client could supply here is a header the
+// client chooses, and a NIP-98 signature compared against a caller-supplied URL
+// checks nothing at all.
+private fun ApplicationCall.fullUrl(app: App): String = app.config.publicUrl.trimEnd('/') + request.uri
