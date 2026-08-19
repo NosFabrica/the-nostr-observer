@@ -37,7 +37,7 @@ class EditionsTest {
             Editions(
                 press,
                 Runs(),
-                Announce(relays, "wss://unreachable.invalid", press),
+                Announce(relays, press),
                 Continuities(db),
                 CoroutineScope(SupervisorJob()),
             )

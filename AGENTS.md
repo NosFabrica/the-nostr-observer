@@ -185,6 +185,14 @@ API key. A full run reads `ANTHROPIC_API_KEY` from the environment.
   `nostr.build` answers `text/html` with a 400 whose sentence is nonsense
   ("expected application/json"); send `application/octet-stream` and it gives
   the honest 415. Both arrive in `X-Reason`, which is why that header is read.
+- **The archive is read from the reader's relays and nowhere else.** It used to
+  ask `hosts.take(3) + searchRelay`, which was wrong twice: an edition could be
+  listed because OUR relay resolves it while theirs do not — "resolves for us
+  and for nobody else", dressed as a working feature — and a publish goes to
+  every write relay while the read looked at three, so an edition that landed
+  on the fourth was invisible. `ReadinessProbe.blossomServers` still asks ours
+  as well, deliberately: that read only decides where to try uploading, and a
+  wrong answer there fails loudly at the upload rather than misleading anybody.
 - **A refused upload destroys something, and the console says so.** The page is
   written, checked and paid for, and it lives in `Runs` memory and nowhere
   else. So that path sets the run `FAILED` (leaving it `SIGNING` meant the next

@@ -87,7 +87,7 @@ class App(
     val continuities = Continuities(db)
     val blossom = Blossom()
     val press = Press(relays, config.searchRelay, effort(config.effort))
-    val announce = Announce(relays, config.searchRelay, press)
+    val announce = Announce(relays, press)
     val editions = Editions(press, runs, announce, continuities, scope)
 
     /**

@@ -108,9 +108,15 @@ class ReadinessProbe(
         hosts: List<String>,
     ): List<String> {
         val filter = Filter(kinds = listOf(BlossomServersEvent.KIND), authors = listOf(observer))
+        // All of their relays, and ours as well -- which is deliberately NOT
+        // what `Announce.editions` does. That read decides what a reader is
+        // told they have published, so an answer only our relay can give is a
+        // lie about where their paper is. This one only decides where to try
+        // uploading, and finding their server list on one more host cannot
+        // mislead anyone: a wrong list fails at the upload, loudly.
         val events =
             coroutineScope {
-                (hosts.take(3) + searchRelay)
+                (hosts + searchRelay)
                     .distinct()
                     .map { host -> async { runCatching { relays.fetch(host, filter, idle = 10_000) }.getOrDefault(emptyList()) } }
                     .awaitAll()

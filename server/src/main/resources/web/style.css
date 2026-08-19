@@ -102,6 +102,20 @@ button.link {
   font-size: inherit;
 }
 
+/* There was NO rule for links at all, so every one in this console was the
+   user agent's default blue: 1.95:1 on the dark background, measured. Ink and
+   an underline instead -- the underline is the affordance, and it carries in
+   both themes and to anyone who cannot separate the colours. */
+a {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+}
+
+a:hover {
+  text-decoration-thickness: 2px;
+}
+
 input[type="text"] {
   font: inherit;
   padding: 0.5rem;
@@ -257,6 +271,38 @@ footer {
 .issues small {
   display: block;
   color: var(--quiet);
-  font-size: 0.72rem;
+  font-size: 0.78rem;
   word-break: break-all;
+}
+
+/* The date leads and Remove sits at the far end, so the destructive control is
+   nowhere near the link somebody is aiming for. */
+.issue-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 1rem;
+}
+
+.issue-head button {
+  color: var(--quiet);
+  flex: none;
+}
+
+.issue-head button:hover {
+  color: var(--lost);
+  background: transparent;
+}
+
+/* The day's lead headline: what this paper was, under the date it was. */
+.issue-headline {
+  margin: 0.15rem 0 0.3rem;
+}
+
+/* Struck through rather than removed from the list. The row vanishing would
+   leave a reader unsure whether they pressed the right one. */
+.issues li.removed .issue-head a,
+.issues li.removed .issue-headline {
+  text-decoration: line-through;
+  color: var(--quiet);
 }

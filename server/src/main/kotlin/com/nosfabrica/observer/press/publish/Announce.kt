@@ -20,7 +20,6 @@ import kotlinx.coroutines.coroutineScope
  */
 class Announce(
     private val relays: Relays,
-    private val readRelay: String,
     private val press: com.nosfabrica.observer.Press,
 ) {
     /**
@@ -77,6 +76,20 @@ class Announce(
      *
      * Relays cannot prefix-match a `d` tag, so this asks for their sites and
      * sorts ours out here. A reader has a few hundred at most.
+     *
+     * IT READS EXACTLY WHERE THE MANIFEST WAS SENT, and nowhere else. Two
+     * things used to be wrong about that. Our own search relay was in the list,
+     * so an edition could appear in a reader's archive because WE have it while
+     * their relays do not — which is the "resolves for us and for nobody else"
+     * failure this whole design exists to prevent, wearing the costume of a
+     * working feature. And the reader's own list was cut to three while a
+     * publish goes to all of them, so an edition that landed on their fourth
+     * relay was invisible here.
+     *
+     * The cost is that a reader whose relays are slow or down sees a short
+     * archive rather than a padded one. That is the right way round: a missing
+     * row is a relay problem they can see and fix, and a row that only we can
+     * resolve is a lie we told them about where their paper is.
      */
     suspend fun editions(
         pubkey: String,
@@ -110,19 +123,20 @@ class Announce(
     )
 
     /**
-     * The reader's own relays and ours, asked together.
+     * The reader's relays, all of them, asked at once.
      *
-     * A site lives where they put it, and our search relay mirrors only the
-     * kinds it was asked to, so we need every answer anyway. Asked at once:
-     * four hosts in series is four idle windows, forty seconds to read a
-     * handful of small events.
+     * At once because these are independent hosts and one slow relay is not a
+     * reason to wait before asking the next: in series, five hosts is five idle
+     * windows to read a handful of small events. A host that fails contributes
+     * nothing rather than failing the read, which is what makes reading all of
+     * them affordable.
      */
     private suspend fun anyOf(
         hosts: List<String>,
         filter: Filter,
     ): List<Event> =
         coroutineScope {
-            (hosts.take(3) + readRelay)
+            hosts
                 .distinct()
                 .map { host -> async { runCatching { relays.fetch(host, filter, idle = 10_000) }.getOrDefault(emptyList()) } }
                 .awaitAll()

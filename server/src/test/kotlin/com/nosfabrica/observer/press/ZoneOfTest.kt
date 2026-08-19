@@ -31,7 +31,7 @@ class ZoneOfTest {
         return Editions(
             press,
             Runs(),
-            Announce(relays, "wss://unreachable.invalid", press),
+            Announce(relays, press),
             Continuities(db),
             CoroutineScope(SupervisorJob()),
         )

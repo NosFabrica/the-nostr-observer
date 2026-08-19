@@ -82,23 +82,125 @@ async function archive() {
 
   const list = $("issues");
   list.innerHTML = "";
-  for (const edition of past) {
-    const li = document.createElement("li");
-    const link = document.createElement("a");
-    link.textContent = edition.day;
-    // A top-level navigation, so no server has to allow us in from here.
-    link.href = edition.url || "#";
-    link.target = "_blank";
-    link.rel = "noopener";
-    li.append(link);
-    if (edition.address) {
-      const addr = document.createElement("small");
-      addr.textContent = edition.address;
-      li.append(addr);
-    }
-    list.append(li);
-  }
+  for (const edition of past) list.append(issue(edition));
   $("archive").hidden = false;
+}
+
+// One back issue: when it was, what it said, and how to take it down.
+function issue(edition) {
+  const li = document.createElement("li");
+
+  const head = document.createElement("div");
+  head.className = "issue-head";
+  const link = document.createElement("a");
+  link.textContent = readableDay(edition.day);
+  // A top-level navigation, so no server has to allow us in from here.
+  link.href = edition.url || "#";
+  link.target = "_blank";
+  link.rel = "noopener";
+  head.append(link);
+
+  const remove = document.createElement("button");
+  remove.className = "link";
+  remove.textContent = "Remove";
+  remove.onclick = () => removeEdition(edition.day, li);
+  head.append(remove);
+  li.append(head);
+
+  // WHICH PAPER THIS WAS. The manifest carries the day's lead headline for
+  // exactly this: a column of dates says nothing about what was in any of
+  // them, and the alternative is fetching every past page to read its <h1>.
+  if (edition.headline) {
+    const said = document.createElement("p");
+    said.className = "issue-headline";
+    said.textContent = edition.headline;
+    li.append(said);
+  }
+
+  if (edition.address) {
+    const addr = document.createElement("small");
+    addr.textContent = edition.address;
+    li.append(addr);
+  }
+  return li;
+}
+
+// "18 August 2026" reads; "2026-08-18" is a sort key. Parsed at local midnight
+// so the date cannot slip a day on the way through a timezone.
+function readableDay(day) {
+  const at = new Date(day + "T00:00:00");
+  if (isNaN(at)) return day;
+  return at.toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+}
+
+// Take one edition off the network: a NIP-09 deletion, signed by the reader.
+//
+// Two calls, like publishing. The server builds the kind 5 so it has something
+// to compare the signature against; a flow where this file invents its own
+// deletion and the server relays it can check nothing.
+async function removeEdition(day, li) {
+  // Said in full before it happens. "Delete?" would be a promise we cannot
+  // keep: the deletion travels to their relays, and the page itself is a
+  // content-addressed file on their media server that anyone holding the hash
+  // can still fetch. Content-addressed storage does not really forget.
+  const sure = window.confirm(
+    `Remove the edition for ${readableDay(day)}?\n\n` +
+      "Your relays will be asked to delete it, so it leaves your archive and anyone reading " +
+      "your relays stops seeing it. The file stays on your media server, where anyone who " +
+      "already has its address can still open it.",
+  );
+  if (!sure) return;
+
+  const said = document.createElement("p");
+  said.className = "aside";
+  said.textContent = "Asking your signer…";
+  li.append(said);
+
+  const asked = await fetch("/api/archive/" + day + "/remove", { method: "POST" });
+  if (!asked.ok) {
+    said.className = "lost";
+    said.textContent = (await asked.json()).error;
+    return;
+  }
+  const toSign = await asked.json();
+
+  let body = "{}";
+  if (state.me.signer === "NIP07") {
+    try {
+      const signed = await window.nostr.signEvent(JSON.parse(toSign.upload));
+      // The server reuses one shape for "here is a signed event"; a removal is
+      // one event, so the second slot is empty rather than absent.
+      body = JSON.stringify({ upload: JSON.stringify(signed), manifest: "" });
+    } catch (e) {
+      said.textContent = "Signing was refused, so nothing was removed.";
+      return;
+    }
+  }
+  said.textContent = "Telling your relays…";
+
+  const done = await fetch("/api/archive/" + day + "/removed", {
+    method: "POST",
+    body,
+    headers: { "Content-Type": "application/json" },
+  });
+  const report = await done.json();
+  if (!done.ok) {
+    said.className = "lost";
+    said.textContent = report.error;
+    return;
+  }
+  if (!report.ok) {
+    // Every relay refused, so it is still there. Saying "removed" here would
+    // be the archive telling them something their relays disagree with.
+    said.className = "lost";
+    said.textContent = "No relay accepted the removal, so this edition is still published.";
+    return;
+  }
+  li.classList.add("removed");
+  // Nothing left to press. A second kind 5 for the same address is a no-op that
+  // costs the reader another signer prompt to find that out.
+  li.querySelectorAll(".issue-head button").forEach((b) => (b.disabled = true));
+  said.textContent = "Removed from your relays. The file itself stays on your media server.";
 }
 
 function arrive(who) {

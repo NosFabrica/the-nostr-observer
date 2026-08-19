@@ -71,7 +71,7 @@ fun main(args: Array<String>) =
             // throwaway reader's setup events there would be leaving test data
             // on a shared machine other people are reading from.
             val press = Press(relays, relay)
-            val announce = Announce(relays, relay, press)
+            val announce = Announce(relays, press)
             val now = Instant.now().epochSecond
 
             // 1. Be a reader: say where the outbox is and where files go.
