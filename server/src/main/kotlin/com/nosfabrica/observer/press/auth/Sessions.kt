@@ -70,21 +70,37 @@ class Sessions(
      * it: expiry that only happens on access is not expiry, it is a leak with
      * a policy attached.
      */
-    fun sweep(): Int {
+    fun sweep(): List<String> {
         val now = Instant.now().epochSecond
-        val before = live.size
-        live.entries.removeIf { it.value.expiresAt <= now }
-        return before - live.size
+        val gone = live.entries.filter { it.value.expiresAt <= now }.map { it.key }
+        gone.forEach(live::remove)
+        // The KEYS, not a count, because something else is holding resources
+        // under them: a NIP-46 session owns an open subscription to the
+        // reader's signer, and expiring the session without closing that leaves
+        // it connected for the life of the process.
+        return gone
     }
 
     fun size() = live.size
 
-    private fun hash(token: String) =
-        HexFormat.of().formatHex(
-            MessageDigest.getInstance("SHA-256").digest(token.toByteArray()),
-        )
+    private fun hash(token: String) = fingerprint(token)
 
-    private companion object {
-        val RANDOM = SecureRandom()
+    companion object {
+        private val RANDOM = SecureRandom()
+
+        /**
+         * A session's identity, without the session's credentials.
+         *
+         * Public because [com.nosfabrica.observer.press.auth.Bunkers] keys on
+         * it too. It used to key on the raw cookie value, which quietly undid
+         * the reason this class hashes at all -- a live map of working cookies,
+         * next door to the one that deliberately holds none -- and it meant
+         * nothing could pair a swept session with the signer connection it
+         * owned, because the two were filed under different names.
+         */
+        fun fingerprint(token: String): String =
+            HexFormat.of().formatHex(
+                MessageDigest.getInstance("SHA-256").digest(token.toByteArray()),
+            )
     }
 }

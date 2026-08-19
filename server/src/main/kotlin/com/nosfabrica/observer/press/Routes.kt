@@ -31,6 +31,8 @@ import io.ktor.server.routing.RoutingContext
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
 import io.ktor.server.routing.routing
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -294,24 +296,47 @@ fun Application.routes(app: App) {
         get("/api/readiness") {
             val session = signedIn(app) ?: return@get call.respond(HttpStatusCode.Unauthorized, Problem("not signed in"))
             val (facts, lens) = app.press.readiness(session.pubkey, Instant.now().epochSecond - WINDOW_SECONDS)
-            // Asked here, before an edition exists. Learning you have nowhere to
-            // publish AFTER paying for a paper is the failure the second chain
-            // is for, and that is exactly where the check used to sit.
-            val store =
-                app.press.storage(
-                    session.pubkey,
-                    facts.writeRelays.orEmpty(),
-                    // From their own site event. Null when we could not read
-                    // it, which is honestly "we do not know" and draws the same
-                    // chain as a reader who has never published.
-                    publishedBefore = app.announce.editions(session.pubkey, facts.writeRelays.orEmpty()).isNotEmpty(),
-                )
+            // Their name and their servers are two different reads against the
+            // same handful of hosts, and they ran one after the other: every
+            // page load paid a full round trip to a relay it was already
+            // waiting on. Neither needs the other's answer.
+            val (name, store) =
+                coroutineScope {
+                    val named = async { app.press.nameOf(session.pubkey, facts.writeRelays.orEmpty()) }
+                    // Asked here, before an edition exists. Learning you have
+                    // nowhere to publish AFTER paying for a paper is the failure
+                    // the second chain is for, and that is exactly where the
+                    // check used to sit.
+                    val stored =
+                        async {
+                            app.press.storage(
+                                session.pubkey,
+                                facts.writeRelays.orEmpty(),
+                                // NOT ASKED, and worth saying why. This used to
+                                // run `announce.editions` -- a fan-out across
+                                // every one of the reader's relays, fetching
+                                // every site event they have ever published --
+                                // on every page load, to decide between the
+                                // words "has published before" and "asked at
+                                // publish" on one link of a chain inside a
+                                // closed <details>. Both branches of
+                                // `Readiness.storage` return the identical
+                                // verdict, and the console asks `/api/archive`
+                                // moments later, which runs the same query
+                                // again.
+                                //
+                                // Null is the honest value: we did not look.
+                                publishedBefore = null,
+                            )
+                        }
+                    named.await() to stored.await()
+                }
             call.respond(
                 Preflight(
                     // Their own profile lives on their own relays, which this
                     // call has just learned, so it costs one more filter on
                     // hosts we are already talking to.
-                    name = app.press.nameOf(session.pubkey, facts.writeRelays.orEmpty()),
+                    name = name,
                     lens =
                         Verdict(
                             state = lens.state,
@@ -368,7 +393,7 @@ fun Application.routes(app: App) {
                 call.parameters["day"]?.takeIf { Templates.dayOf(Templates.site(it)) != null }
                     ?: return@post call.respond(HttpStatusCode.BadRequest, Problem("that is not a day"))
             val template = Templates.deletion(session.pubkey, day, Instant.now().epochSecond)
-            app.removals[session.pubkey + "/" + day] = template
+            app.removals[session.pubkey] = Removal(day, template)
             call.respond(ToSign(template.toJson(), "", emptyList(), app.press.writeRelaysOf(session.pubkey), ""))
         }
 
@@ -376,7 +401,9 @@ fun Application.routes(app: App) {
             val session = signedIn(app) ?: return@post call.respond(HttpStatusCode.Unauthorized, Problem("not signed in"))
             val day = call.parameters["day"].orEmpty()
             val template =
-                app.removals[session.pubkey + "/" + day]
+                app.removals[session.pubkey]
+                    ?.takeIf { it.day == day }
+                    ?.template
                     ?: return@post call.respond(HttpStatusCode.Conflict, Problem("nothing to remove"))
 
             val body = call.receiveText()
@@ -398,7 +425,7 @@ fun Application.routes(app: App) {
 
             val relays = app.press.writeRelaysOf(session.pubkey)
             val announced = app.announce.publish(signed, relays)
-            app.removals.remove(session.pubkey + "/" + day)
+            app.removals.remove(session.pubkey)
             call.respond(
                 PublishReport(
                     ok = announced.any { it.ok },

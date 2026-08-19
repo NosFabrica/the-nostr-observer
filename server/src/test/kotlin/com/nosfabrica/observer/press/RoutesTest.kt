@@ -301,6 +301,45 @@ class RoutesTest {
     }
 
     @Test
+    fun `a reader can only have one removal outstanding`(
+        @TempDir dir: Path,
+    ) = runTest {
+        testApplication {
+            val instance = app(dir)
+            application { routes(instance) }
+            val body = """{"signer":"NIP07"}"""
+            val cookie =
+                client
+                    .post("/api/session") {
+                        header("Authorization", auth("http://localhost/api/session", "POST", body))
+                        setBody(body)
+                    }.headers["Set-Cookie"]!!
+                    .substringBefore(";")
+
+            // Any well-formed date is accepted, and the map used to be keyed by
+            // reader AND day with nothing to remove an entry that was never
+            // signed. A signed-in reader could therefore mint one per day of the
+            // calendar, forever, and the note beside it said a sweep would cost
+            // more than the leak.
+            repeat(40) { i ->
+                val day = "20%02d-01-01".format(i)
+                assertEquals(
+                    HttpStatusCode.OK,
+                    client.post("/api/archive/$day/remove") { header("Cookie", cookie) }.status,
+                )
+            }
+            assertEquals(1, instance.removals.size, "one reader, one outstanding removal")
+
+            // And the one that is held is the last one asked for -- asking about
+            // an earlier day is answered, not silently signed.
+            assertEquals(
+                HttpStatusCode.Conflict,
+                client.post("/api/archive/2000-01-01/removed") { header("Cookie", cookie) }.status,
+            )
+        }
+    }
+
+    @Test
     fun `a page we no longer hold says so rather than pretending`(
         @TempDir dir: Path,
     ) = runTest {

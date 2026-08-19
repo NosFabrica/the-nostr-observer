@@ -5,6 +5,8 @@ import com.microsoft.playwright.BrowserType
 import com.microsoft.playwright.Playwright
 import com.microsoft.playwright.options.ColorScheme
 import java.io.Closeable
+import java.util.concurrent.ExecutionException
+import java.util.concurrent.Executors
 
 /**
  * Does the page actually read?
@@ -44,26 +46,63 @@ class Proof(
 
     data class Report(
         val findings: List<Finding>,
-        /** Null when no browser could be started, which is NOT a failed page. */
+        /** False when no browser could be started, which is NOT a failed page. */
         val ran: Boolean,
+        /** Why it did not run, when that is knowable. */
+        val why: String? = null,
     ) {
         val ok: Boolean get() = findings.isEmpty()
 
         fun summary(): String =
             when {
-                !ran -> "not rendered (no browser)"
+                !ran -> "not rendered (" + (why ?: "no browser") + ")"
                 ok -> "renders clean"
                 else -> "${findings.size} problem(s): " + findings.joinToString("; ") { it.what }
             }
     }
 
-    private val playwright: Playwright? = runCatching { Playwright.create() }.getOrNull()
+    /**
+     * ONE THREAD OWNS THE BROWSER, and every call queues behind it.
+     *
+     * Playwright is not concurrent, and this class is a singleton on a server
+     * that serves several readers. Measured, four threads calling [check] on
+     * one instance: one succeeded and three threw --
+     * `Object doesn't exist: tracing@…` and
+     * `Cannot find object to call __adopt__: browser-context@…`. On the server
+     * that exception lands in the catch-all in `Editions.run`, so the second
+     * reader to press print loses an edition they have already paid the model
+     * for, for no reason they could ever discover.
+     *
+     * A lock would serialise it too. A thread is better because it also keeps
+     * every Playwright object on the thread that created it, which is the
+     * model the library actually documents -- rather than relying on this
+     * version happening to tolerate being called from elsewhere.
+     *
+     * The cost is nil: a render is ~150ms against an edition that takes
+     * minutes, and two readers printing at the same second are not waiting on
+     * each other for anything they would notice.
+     */
+    private val driver =
+        Executors.newSingleThreadExecutor { work ->
+            Thread(work, "proof-render").apply { isDaemon = true }
+        }
+
+    private fun <T> onDriver(block: () -> T): T =
+        try {
+            driver.submit(block).get()
+        } catch (wrapped: ExecutionException) {
+            throw wrapped.cause ?: wrapped
+        }
+
+    private val playwright: Playwright? = onDriver { runCatching { Playwright.create() }.getOrNull() }
 
     private val browser: Browser? =
-        playwright?.let {
-            runCatching {
-                it.chromium().launch(BrowserType.LaunchOptions().setHeadless(true))
-            }.getOrNull()
+        onDriver {
+            playwright?.let {
+                runCatching {
+                    it.chromium().launch(BrowserType.LaunchOptions().setHeadless(true))
+                }.getOrNull()
+            }
         }
 
     /**
@@ -73,7 +112,16 @@ class Proof(
      * confidence, not a gate the reader's paper depends on being able to run —
      * a deployment without Chromium should lose the check and keep the paper.
      */
-    fun check(html: String): Report {
+    fun check(html: String): Report =
+        // A browser that misbehaves must not cost an edition either. By the
+        // time this runs the model has been paid; an empty finding list with
+        // `ran = false` degrades to "we could not look", which is what it is,
+        // and stops the ladder above from buying a second draft to fix a
+        // problem it has no evidence of.
+        runCatching { onDriver { render(html) } }
+            .getOrElse { Report(emptyList(), ran = false, why = it.message ?: it::class.simpleName) }
+
+    private fun render(html: String): Report {
         val page = browser?.newPage() ?: return Report(emptyList(), ran = false)
         val findings = mutableListOf<Finding>()
         try {
@@ -311,7 +359,13 @@ class Proof(
     }
 
     override fun close() {
-        runCatching { browser?.close() }
-        runCatching { playwright?.close() }
+        // On the thread that made them, then the thread itself.
+        runCatching {
+            onDriver {
+                runCatching { browser?.close() }
+                runCatching { playwright?.close() }
+            }
+        }
+        driver.shutdown()
     }
 }

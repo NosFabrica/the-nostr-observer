@@ -93,7 +93,22 @@ class SessionSweepTest {
         sessions.open("a".repeat(64), Sessions.Signer.NIP07)
         sessions.open("b".repeat(64), Sessions.Signer.NIP46)
         assertEquals(2, sessions.size())
-        assertEquals(2, sessions.sweep())
+        assertEquals(2, sessions.sweep().size)
         assertEquals(0, sessions.size())
+    }
+
+    @Test
+    fun `the sweep names sessions the way their signer connection is filed`() {
+        // A NIP-46 session owns an open subscription to the reader's signer,
+        // and `Bunkers` has to be told to close it. It could not be: `Bunkers`
+        // was keyed by the raw cookie and this by its SHA-256, so the two maps
+        // had no name in common and an expired session stayed connected for
+        // the life of the process. They agree now, and this is the agreement.
+        val sessions = Sessions(ttlSeconds = -1)
+        val token = sessions.open("a".repeat(64), Sessions.Signer.NIP46)
+        assertEquals(listOf(Sessions.fingerprint(token)), sessions.sweep())
+        // And the fingerprint is not the token, which is the other half of why
+        // it is the fingerprint.
+        assertNotEquals(token, Sessions.fingerprint(token))
     }
 }

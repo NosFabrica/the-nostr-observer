@@ -21,6 +21,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import org.slf4j.LoggerFactory
+import java.time.Instant
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -63,6 +64,13 @@ data class Config(
     }
 }
 
+/** A deletion handed to a signer, and the day it names. */
+data class Removal(
+    val day: String,
+    val template: EventTemplate<Event>,
+    val issuedAt: Long = Instant.now().epochSecond,
+)
+
 /** Everything wired together, in one place, so a test can build it differently. */
 class App(
     val config: Config = Config(),
@@ -76,14 +84,21 @@ class App(
     val runs = Runs()
 
     /**
-     * Deletion requests issued but not yet signed.
+     * The one deletion this reader has asked for and not yet signed.
      *
-     * Same reason the templates for a publish are held: they exist to be
-     * compared against what comes back, and they need to survive a round trip
-     * through a signer and nothing longer. Small enough that a sweep would cost
-     * more than the leak.
+     * Same reason the templates for a publish are held: it exists to be
+     * compared against what comes back, and it needs to survive a round trip
+     * through a signer and nothing longer.
+     *
+     * ONE PER READER, and swept. It used to be keyed by reader AND day, with a
+     * note saying a sweep would cost more than the leak -- true of anybody
+     * using this, and not true of anybody looping. `/api/archive/{day}/remove`
+     * accepts any well-formed date, so a signed-in reader could mint an entry
+     * per day of the calendar and nothing would ever remove one. Keyed by
+     * reader it is bounded by construction, which also happens to describe how
+     * removing works: one at a time.
      */
-    val removals = ConcurrentHashMap<String, EventTemplate<Event>>()
+    val removals = ConcurrentHashMap<String, Removal>()
     val continuities = Continuities(db)
     val blossom = Blossom()
     val press = Press(relays, config.searchRelay, effort(config.effort))
@@ -104,7 +119,12 @@ class App(
             while (isActive) {
                 delay(10 * 60 * 1000L)
                 runCatching {
-                    val gone = runs.sweep() + sessions.sweep()
+                    removals.entries.removeIf { it.value.issuedAt < Instant.now().epochSecond - 30 * 60 }
+                    val expired = sessions.sweep()
+                    // Closing the signer is the point, not tidiness: a NIP-46
+                    // session owns a live subscription to the reader's relay.
+                    expired.forEach(bunkers::forget)
+                    val gone = runs.sweep() + expired.size
                     if (gone > 0) log.info("swept $gone expired run(s) and session(s)")
                 }.onFailure { log.warn("housekeeping failed", it) }
             }

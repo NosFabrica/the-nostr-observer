@@ -305,6 +305,43 @@ fetch, since they signed nothing in the window and would otherwise be hex.
   the page however good it was. Each desk takes up to four, then rank order
   fills the rest.
 
+## Found by audit (2026-08-19), third pass
+
+- **Playwright is not concurrent, and `Proof` is a singleton.** `Press` holds one
+  browser and the server holds one `Press`, so two readers printing at the same
+  moment rendered through the same instance. Measured with four threads: one
+  succeeded, three threw `Object doesn't exist: tracing@…` and
+  `Cannot find object to call __adopt__: browser-context@…`. On the server that
+  landed in the catch-all in `Editions.run`, so the second reader lost an
+  edition the model had already been paid for. Every call now queues on one
+  owning thread, and `check` degrades to `ran = false` rather than throwing —
+  by the time it runs the money is spent, so a browser problem must not also
+  cost the paper. `ProofConcurrencyTest` holds the line.
+- **An expired session left its remote signer connected forever.** `Sessions`
+  keys on the SHA-256 of a token, deliberately; `Bunkers` keyed on the raw
+  cookie. So the two maps had no name in common, the sweeper could not close
+  what it expired, and a live subscription to the reader's signer outlived its
+  session for the life of the process — with a map of working cookies next door
+  to the one that carefully holds none. Both key on `Sessions.fingerprint` now
+  and `sweep()` returns those keys so housekeeping can close them.
+- **`removals` grew without bound on authenticated input.** It was keyed by
+  reader AND day, with a comment saying a sweep would cost more than the leak.
+  True of anybody using it; not true of anybody looping, since
+  `/api/archive/{day}/remove` takes any well-formed date and nothing removed an
+  entry that was never signed. One per reader now, and swept.
+- **`/api/readiness` fetched the reader's entire archive to pick a word.** It
+  ran `announce.editions` — a fan-out across every one of their relays, pulling
+  every site event they have ever published — to choose between "has published
+  before" and "asked at publish" on one link of a chain inside a closed
+  `<details>`. Both branches of `Readiness.storage` return the identical
+  verdict, and the console asks `/api/archive` moments later, which ran the same
+  query again. Removed. `nameOf` and `storage` on that route also ran one after
+  the other against the same hosts; they are concurrent now.
+- **`blossomServers` asks three of their relays; `editions` asks all of them.**
+  Same-looking code, opposite requirement, so it is written down in both: a
+  `kind 10063` is replaceable and every relay has the same one, while an archive
+  is a union and any relay may hold the only copy of a day.
+
 ## Found by audit (2026-08-18), second pass
 
 - **`until` never reached a filter.** It was threaded from the CLI into `Corpus`

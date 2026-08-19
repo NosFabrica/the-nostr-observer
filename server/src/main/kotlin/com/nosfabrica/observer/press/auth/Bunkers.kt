@@ -99,13 +99,24 @@ class Bunkers(
             }
         }
 
+    /**
+     * Filed under the session's fingerprint, never under its cookie.
+     *
+     * `Sessions` holds only the SHA-256 of a token so that a memory dump hands
+     * nobody a working cookie; this map held the raw value as its key, which
+     * undid that one field away. Keying both the same way also lets the sweeper
+     * close the signer a expired session left open -- before, the two maps had
+     * no name in common to join on.
+     */
     fun adopt(
         token: String,
         connected: Connected,
     ) {
-        open[token] = connected.remote
-        authUrls[token] = connected.authUrl
+        open[key(token)] = connected.remote
+        authUrls[key(token)] = connected.authUrl
     }
+
+    private fun key(token: String) = Sessions.fingerprint(token)
 
     /**
      * Sign a template through the reader's remote signer.
@@ -121,21 +132,32 @@ class Bunkers(
         timeoutMs: Long = 120_000,
     ): Result<Event> =
         runCatching {
-            val remote = open[token] ?: error("no signer connected for this session")
+            val remote = open[key(token)] ?: error("no signer connected for this session")
             withTimeout(timeoutMs) {
                 remote.sign<Event>(template.createdAt, template.kind, template.tags, template.content)
             }
         }
 
-    fun has(token: String) = open.containsKey(token)
+    fun has(token: String) = open.containsKey(key(token))
 
     /** An `auth_url` the signer wants a human to visit, if one is outstanding. */
-    fun authUrl(token: String): String? = authUrls[token]?.invoke()
+    fun authUrl(token: String): String? = authUrls[key(token)]?.invoke()
 
-    fun close(token: String) {
-        open.remove(token)?.closeSubscription()
-        authUrls.remove(token)
+    fun close(token: String) = forget(key(token))
+
+    /**
+     * Close by fingerprint, for the sweeper.
+     *
+     * An expired session's signer connection is not the reader's any more, and
+     * leaving it open holds a subscription on their relay for as long as this
+     * process lives.
+     */
+    fun forget(fingerprint: String) {
+        open.remove(fingerprint)?.closeSubscription()
+        authUrls.remove(fingerprint)
     }
+
+    fun size() = open.size
 
     private val authUrls = ConcurrentHashMap<String, () -> String?>()
 

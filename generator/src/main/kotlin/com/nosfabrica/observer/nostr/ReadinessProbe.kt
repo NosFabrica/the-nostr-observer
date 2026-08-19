@@ -108,15 +108,23 @@ class ReadinessProbe(
         hosts: List<String>,
     ): List<String> {
         val filter = Filter(kinds = listOf(BlossomServersEvent.KIND), authors = listOf(observer))
-        // All of their relays, and ours as well -- which is deliberately NOT
-        // what `Announce.editions` does. That read decides what a reader is
-        // told they have published, so an answer only our relay can give is a
-        // lie about where their paper is. This one only decides where to try
-        // uploading, and finding their server list on one more host cannot
-        // mislead anyone: a wrong list fails at the upload, loudly.
+        // A few of their relays, and ours as well -- deliberately NOT what
+        // `Announce.editions` does, and for two reasons.
+        //
+        // Ours is included because this read only decides where to try
+        // uploading. An answer we can give and their relays cannot cannot
+        // mislead anybody: a wrong server list fails at the upload, loudly and
+        // in front of the reader. The archive read makes a claim about what
+        // they have published, which is why it may not borrow ours.
+        //
+        // And three is enough here because a `kind 10063` is REPLACEABLE: every
+        // relay that has it has the same one, so asking a fourth is asking the
+        // same question again. An archive is a union -- each day is a separate
+        // event and any relay may be the only one holding one -- so that read
+        // has to ask everywhere. Same-looking code, opposite requirement.
         val events =
             coroutineScope {
-                (hosts + searchRelay)
+                (hosts.take(3) + searchRelay)
                     .distinct()
                     .map { host -> async { runCatching { relays.fetch(host, filter, idle = 10_000) }.getOrDefault(emptyList()) } }
                     .awaitAll()
