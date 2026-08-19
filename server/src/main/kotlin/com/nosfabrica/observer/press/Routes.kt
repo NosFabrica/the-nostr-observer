@@ -66,16 +66,29 @@ private data class Who(
 /**
  * One past edition, as the console needs it.
  *
- * [url] is where the page actually is: a Blossom server plus the blob's hash,
- * which any of the reader's servers will serve because the file is addressed by
- * its content. [address] is the same edition as an `naddr1…`, for pasting into
- * a Nostr client — and for the NIP-09 deletion that removes it.
+ * [address] is the edition as an `naddr1…`, for pasting into a Nostr client —
+ * and for the NIP-09 deletion that removes it.
+ *
+ * THERE IS NO `url` HERE, and the absence is the point. It used to carry
+ * `servers.first() + "/" + hash`, assembled here — the same guess this codebase
+ * had already caught itself making at upload, where BUD-02 hands back the URL
+ * and `blossom.primal.net` hands back one with `.html` on the end. At upload
+ * the fix was to take the descriptor's URL. There is no descriptor to take one
+ * from here: a manifest names servers and a hash, and the descriptor was a
+ * response to a request made on a different day, which we deliberately do not
+ * store.
+ *
+ * So the honest options were a link that may 404 or no link, and now that
+ * `/api/archive/{day}/view` reads the edition properly there is nothing for a
+ * guessed one to do. `Blossom.fetch` builds the same `server + "/" + hash` to
+ * FETCH with — but it checks what comes back against the signed hash, tries the
+ * next server when one fails, and says which ones did. That is a guess that
+ * catches itself. Handing the same string to a reader as a link is not.
  */
 @Serializable
 private data class Past(
     val day: String,
     val headline: String?,
-    val url: String?,
     val address: String?,
 )
 
@@ -376,13 +389,6 @@ fun Application.routes(app: App) {
                     Past(
                         day = edition.day,
                         headline = edition.headline,
-                        // The manifest names its own servers, so an edition
-                        // keeps resolving even after they change their list.
-                        url =
-                            edition.servers
-                                .firstOrNull()
-                                ?.trimEnd('/')
-                                ?.let { "$it/${edition.hash}" },
                         address = Templates.address(session.pubkey, edition.day),
                     )
                 },

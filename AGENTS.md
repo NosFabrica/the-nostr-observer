@@ -229,6 +229,16 @@ API key. A full run reads `ANTHROPIC_API_KEY` from the environment.
 - **`blossom.primal.net` appends `.html` to the URL it returns.** Concrete proof
   that `server + "/" + hash` was a guess: the hash alone also resolves there
   today, but nothing requires it to. Take the URL from the descriptor.
+- **The archive cannot take it from the descriptor, so it does not offer one at
+  all.** A manifest names servers and a hash; the descriptor was a response to a
+  request made on a different day and we deliberately store nothing. `Past` used
+  to carry `servers.first() + "/" + hash` assembled in the route — the same
+  guess, one layer along, on the side where there is no descriptor to correct it
+  with. It is gone: `/api/archive/{day}/view` reads the edition properly and a
+  guessed link had nothing left to do. `Blossom.fetch` builds that same string to
+  FETCH with, which is fine and is not the same thing — it checks the bytes
+  against the signed hash, moves to the next server on failure, and reports which
+  ones failed. A guess that catches itself is not a guess handed to a reader.
 - **The whole path has been run against the real network**, once, end to end:
   `./gradlew :server:liveRun`. It mints a throwaway key, publishes its `10002`
   and `10063`, then goes through `writeRelaysOf` -> `servers` -> upload ->
