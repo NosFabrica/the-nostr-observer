@@ -11,6 +11,7 @@ import com.nosfabrica.observer.press.publish.Templates
 import com.vitorpamplona.quartz.nip01Core.core.Event
 import io.ktor.http.ContentType
 import io.ktor.http.Cookie
+import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.application.Application
@@ -22,7 +23,9 @@ import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.server.plugins.statuspages.StatusPages
 import io.ktor.server.request.receiveText
 import io.ktor.server.request.uri
+import io.ktor.server.response.header
 import io.ktor.server.response.respond
+import io.ktor.server.response.respondBytes
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.RoutingContext
 import io.ktor.server.routing.get
@@ -161,6 +164,38 @@ private data class Outcome(
     val target: String,
     val ok: Boolean,
     val detail: String,
+)
+
+/**
+ * The edition exists, and nowhere will keep it.
+ *
+ * A refused upload is the one failure in this whole flow that costs the reader
+ * something they cannot get back: the page was written, it was paid for, and
+ * it is held in this process's memory and nowhere else. A grey line saying
+ * "no server accepted the upload" is a true sentence that leaves them not
+ * knowing the page is about to be gone.
+ *
+ * So this carries three things the plain [Problem] cannot: what each server
+ * actually said, whether we still hold the bytes, and for how long.
+ */
+@Serializable
+private data class Lost(
+    /** The headline sentence. Named `error` so any client that only knows [Problem] still says something true. */
+    val error: String,
+    val uploads: List<Outcome>,
+    /** True while the page can still be saved from `/api/editions/{id}/page`. */
+    val recoverable: Boolean,
+    /** Roughly how long that stays true. */
+    val minutes: Int,
+)
+
+@Serializable
+private data class Current(
+    val id: String,
+    val state: String,
+    val report: String? = null,
+    /** Whether the page is still here to be saved. */
+    val held: Boolean = false,
 )
 
 @Serializable
@@ -408,6 +443,54 @@ fun Application.routes(app: App) {
             )
         }
 
+        // The run this reader has going, if any.
+        //
+        // Only so that a reload can find its way back to a page we are still
+        // holding. Before this, a refused upload told the reader their edition
+        // was about to be lost and offered to save it — and pressing F5 threw
+        // away the offer while the bytes sat here for another half hour.
+        get("/api/editions/current") {
+            val session = signedIn(app) ?: return@get call.respond(HttpStatusCode.Unauthorized, Problem("not signed in"))
+            val run = app.runs.of(session.pubkey) ?: return@get call.respond(HttpStatusCode.NotFound, Problem("nothing running"))
+            call.respond(Current(run.id, run.state.name, run.report, run.html != null))
+        }
+
+        // The page itself, while we still have it.
+        //
+        // The one honest answer to a refused upload. The reader has a written,
+        // checked, paid-for edition that no server would keep, and it exists in
+        // this process's memory until the sweep takes it; without this it is
+        // simply lost, and a message saying so and offering nothing is a worse
+        // message.
+        //
+        // Sent as an attachment with `application/octet-stream`, NOT as
+        // `text/html`. An edition is model-written markup, and rendering it on
+        // this origin -- the origin that holds the session cookie -- would be
+        // handing it whatever the sanitizer missed. Off the machine as a file
+        // it opens on `file://`, where it belongs.
+        //
+        // Ownership is checked by `runs.of(id, pubkey)`, which compares the
+        // session rather than trusting the id; a run id in a URL is a bearer
+        // token otherwise.
+        get("/api/editions/{id}/page") {
+            val session = signedIn(app) ?: return@get call.respond(HttpStatusCode.Unauthorized, Problem("not signed in"))
+            val run =
+                app.runs.of(call.parameters["id"].orEmpty(), session.pubkey)
+                    ?: return@get call.respond(HttpStatusCode.NotFound, Problem("no such edition"))
+            val blob =
+                run.html
+                    ?: return@get call.respond(
+                        HttpStatusCode.Gone,
+                        Problem("that page is no longer here — it was published, or it has been swept"),
+                    )
+            call.response.header(
+                HttpHeaders.ContentDisposition,
+                """attachment; filename="observer-${run.day ?: "edition"}.html"""",
+            )
+            call.response.header("X-Content-Type-Options", "nosniff")
+            call.respondBytes(blob, ContentType.Application.OctetStream)
+        }
+
         // Upload, then announce. Nothing here decides whether to publish — that
         // was decided when the reader pressed print.
         post("/api/editions/{id}/publish") {
@@ -465,10 +548,37 @@ fun Application.routes(app: App) {
             val blob = run.html ?: return@post call.respond(HttpStatusCode.Conflict, Problem("this edition is no longer held"))
             val uploads = app.blossom.upload(run.servers, blob, auth)
             if (uploads.none { it.ok }) {
-                return@post call.respond(
-                    HttpStatusCode.BadGateway,
-                    Problem("no server accepted the upload: " + uploads.joinToString("; ") { "${it.server} ${it.detail}" }),
-                )
+                // NOT A RETRY. The authorization the reader just signed expires
+                // in ten minutes and is bound to this blob and this timestamp,
+                // so there is nothing to press again -- and leaving the run in
+                // SIGNING means the next poll asks their signer for two more
+                // signatures for a publish that cannot happen.
+                //
+                // Measured 2026-08-18: nostr.build and blossom.band, which
+                // between them are what a lot of readers have in their kind
+                // 10063, refuse `text/html` outright. That is policy rather
+                // than an outage, so the reader has to change something before
+                // reprinting, and needs to be told what.
+                run.error =
+                    "Your media servers refused this page, so it was not saved. " +
+                    "Many of them take only images and video."
+                run.state = Runs.State.FAILED
+                val lost =
+                    Lost(
+                        error = run.error!!,
+                        uploads = uploads.map { Outcome(it.server, it.ok, it.detail) },
+                        // The bytes are still here, which is the only reason
+                        // this is recoverable at all. `forget()` is not called
+                        // on this path and the sweep is what ends it.
+                        recoverable = run.html != null,
+                        minutes = (app.runs.ttlSeconds / 60).toInt(),
+                    )
+                // Kept on the run as well as answered, because the offer to save
+                // the page has to survive a reload. It does not survive closing
+                // the tab, and nothing can make it: the reader has thirty
+                // minutes and one browser.
+                run.report = json.encodeToString(lost)
+                return@post call.respond(HttpStatusCode.BadGateway, lost)
             }
 
             // Only after a server actually holds the blob. A manifest pointing at

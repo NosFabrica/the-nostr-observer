@@ -1,9 +1,12 @@
 package com.nosfabrica.observer.press
 
 import com.nosfabrica.observer.nostr.Names
+import com.nosfabrica.observer.press.publish.Blossom
+import com.nosfabrica.observer.press.publish.Templates
 import com.vitorpamplona.quartz.nip01Core.core.Event
 import com.vitorpamplona.quartz.nip01Core.core.toHexKey
 import com.vitorpamplona.quartz.nip01Core.crypto.KeyPair
+import com.vitorpamplona.quartz.nip01Core.signers.EventTemplate
 import com.vitorpamplona.quartz.nip01Core.signers.NostrSignerSync
 import io.ktor.client.request.get
 import io.ktor.client.request.header
@@ -13,6 +16,7 @@ import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.testing.testApplication
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.Json
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -79,6 +83,8 @@ class RoutesTest {
             assertEquals(HttpStatusCode.Unauthorized, client.post("/api/editions").status)
             assertEquals(HttpStatusCode.Unauthorized, client.get("/api/editions/anything").status)
             assertEquals(HttpStatusCode.Unauthorized, client.post("/api/editions/anything/publish").status)
+            assertEquals(HttpStatusCode.Unauthorized, client.get("/api/editions/anything/page").status)
+            assertEquals(HttpStatusCode.Unauthorized, client.get("/api/editions/current").status)
             assertEquals(HttpStatusCode.Unauthorized, client.get("/api/archive").status)
         }
     }
@@ -212,6 +218,112 @@ class RoutesTest {
             assertEquals(
                 HttpStatusCode.NotFound,
                 client.post("/api/editions/${theirs.id}/publish") { header("Cookie", cookie) }.status,
+            )
+            assertEquals(
+                HttpStatusCode.NotFound,
+                client.get("/api/editions/${theirs.id}/page") { header("Cookie", cookie) }.status,
+            )
+        }
+    }
+
+    @Test
+    fun `an edition nobody would store is not lost quietly`(
+        @TempDir dir: Path,
+    ) = runTest {
+        testApplication {
+            val instance = app(dir)
+            application { routes(instance) }
+            val body = """{"signer":"NIP07"}"""
+            val cookie =
+                client
+                    .post("/api/session") {
+                        header("Authorization", auth("http://localhost/api/session", "POST", body))
+                        setBody(body)
+                    }.headers["Set-Cookie"]!!
+                    .substringBefore(";")
+
+            val blob = "<main>today's paper</main>".toByteArray()
+            val sha = Blossom.sha256(blob)
+            val now = System.currentTimeMillis() / 1000
+            val (run, _) = instance.runs.open(reader.pubKey.toHexKey())
+            run.html = blob
+            run.day = "2026-08-18"
+            // A server that is not there stands in for a server that says no.
+            // Both are "nothing is stored", which is the only distinction this
+            // path draws -- and the one that matters, because the manifest must
+            // not go out either way.
+            run.servers = listOf("http://127.0.0.1:1")
+            run.upload = Templates.uploadAuth(sha, blob.size.toLong(), now, now + 600)
+            run.manifest = Templates.manifest("2026-08-18", sha, run.servers, "The Nostr Observer", null, now)
+            run.state = Runs.State.SIGNING
+
+            fun sign(t: EventTemplate<Event>) = NostrSignerSync(reader).sign<Event>(t.createdAt, t.kind, t.tags, t.content).toJson()
+            val signed = """{"upload":${Json.encodeToString(sign(run.upload!!))},"manifest":${Json.encodeToString(sign(run.manifest!!))}}"""
+
+            val response =
+                client.post("/api/editions/${run.id}/publish") {
+                    header("Cookie", cookie)
+                    setBody(signed)
+                }
+            assertEquals(HttpStatusCode.BadGateway, response.status, response.bodyAsText())
+            val said = response.bodyAsText()
+            // In words, and with the servers' own answers under it. "no server
+            // accepted the upload" is true and tells a reader nothing about
+            // whether to wait, pay, or list a different server.
+            assertTrue(said.contains("refused this page"), said)
+            assertTrue(said.contains("127.0.0.1"), said)
+            assertTrue(said.contains("\"recoverable\":true"), said)
+
+            // NOT left waiting to be signed. The authorization is bound to these
+            // bytes and expires in ten minutes, so a second attempt asks the
+            // reader's signer for two more signatures for a publish that cannot
+            // happen -- which is what a poll would have done.
+            assertEquals(Runs.State.FAILED, run.state)
+
+            // And the page is still here, which is the only reason the message
+            // is allowed to offer saving it.
+            val page = client.get("/api/editions/${run.id}/page") { header("Cookie", cookie) }
+            assertEquals(HttpStatusCode.OK, page.status)
+            assertEquals(String(blob), page.bodyAsText())
+            assertTrue(page.headers["Content-Disposition"]!!.contains("attachment"), page.headers.toString())
+            // Never as text/html. This origin holds the session cookie, and an
+            // edition is markup a model wrote.
+            assertFalse(page.headers["Content-Type"]!!.contains("text/html"), page.headers.toString())
+
+            // And a reload finds it again. Telling somebody their page is about
+            // to be lost, offering to save it, and then losing the offer to F5
+            // would be the same failure wearing a better message.
+            val resumed = client.get("/api/editions/current") { header("Cookie", cookie) }
+            assertEquals(HttpStatusCode.OK, resumed.status)
+            assertTrue(resumed.bodyAsText().contains("\"held\":true"), resumed.bodyAsText())
+            assertTrue(resumed.bodyAsText().contains("refused this page"), resumed.bodyAsText())
+        }
+    }
+
+    @Test
+    fun `a page we no longer hold says so rather than pretending`(
+        @TempDir dir: Path,
+    ) = runTest {
+        testApplication {
+            val instance = app(dir)
+            application { routes(instance) }
+            val body = """{"signer":"NIP07"}"""
+            val cookie =
+                client
+                    .post("/api/session") {
+                        header("Authorization", auth("http://localhost/api/session", "POST", body))
+                        setBody(body)
+                    }.headers["Set-Cookie"]!!
+                    .substringBefore(";")
+
+            // A published run has already forgotten its copy, on purpose.
+            val (run, _) = instance.runs.open(reader.pubKey.toHexKey())
+            run.state = Runs.State.PUBLISHED
+            run.forget()
+
+            assertEquals(
+                HttpStatusCode.Gone,
+                client.get("/api/editions/${run.id}/page") { header("Cookie", cookie) }.status,
             )
         }
     }

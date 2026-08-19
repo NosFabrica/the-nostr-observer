@@ -8,6 +8,7 @@
   --quiet: #6b6355;
   --ok: #2f6b3a;
   --waiting: #8a5a1b;
+  --lost: #a3301f;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -18,6 +19,7 @@
     --quiet: #9d9484;
     --ok: #8ec79a;
     --waiting: #d6a45e;
+    --lost: #f0907f;
   }
 }
 
@@ -127,6 +129,20 @@ input[type="text"] {
   color: var(--waiting);
 }
 
+/* Louder than `.waiting`, and only for the one failure that destroys something.
+   A refused upload leaves the reader holding a written, paid-for page that no
+   server would keep, and it stops existing when this run is swept -- that is
+   not the same kind of news as "a relay did not answer". */
+.lost {
+  color: var(--lost);
+  font-weight: bold;
+}
+
+.aside {
+  color: var(--quiet);
+  font-size: 0.9rem;
+}
+
 .chain,
 .panel ul {
   list-style: none;
@@ -142,9 +158,14 @@ input[type="text"] {
 }
 
 /* The readiness chain reads as a chain: one link stops it, and which one is
-   the entire message. Symbols rather than colour alone. */
-.chain li::before,
-.panel ul li::before {
+   the entire message. Symbols rather than colour alone.
+
+   `:where` because this is the FALLBACK, and it was beating the thing it falls
+   back to: `.panel ul li::before` outweighs `li[data-status]::before`, so every
+   row inside a panel drew a neutral dot no matter what it said -- a refused
+   upload and an accepted one looked the same. `:where` contributes no
+   specificity, so the status marker wins as it always meant to. */
+:where(.chain, .panel ul) li::before {
   position: absolute;
   left: 0;
   color: var(--quiet);

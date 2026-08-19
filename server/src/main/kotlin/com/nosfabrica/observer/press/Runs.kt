@@ -35,7 +35,7 @@ class Runs(
      * a sweep, every abandoned print — a declined prompt, a closed tab, a phone
      * that never answered — is a leak the size of an edition.
      */
-    private val ttlSeconds: Long = 30 * 60,
+    val ttlSeconds: Long = 30 * 60,
 ) {
     enum class State {
         /** The pipeline is working. */

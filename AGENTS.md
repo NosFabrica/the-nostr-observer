@@ -185,6 +185,16 @@ API key. A full run reads `ANTHROPIC_API_KEY` from the environment.
   `nostr.build` answers `text/html` with a 400 whose sentence is nonsense
   ("expected application/json"); send `application/octet-stream` and it gives
   the honest 415. Both arrive in `X-Reason`, which is why that header is read.
+- **A refused upload destroys something, and the console says so.** The page is
+  written, checked and paid for, and it lives in `Runs` memory and nowhere
+  else. So that path sets the run `FAILED` (leaving it `SIGNING` meant the next
+  poll asked the reader's signer for two more signatures for a publish that
+  cannot happen), answers with `Lost` rather than a one-line `Problem`, and
+  offers the bytes at `GET /api/editions/{id}/page` for as long as the sweep
+  leaves them. Served `application/octet-stream` as an attachment, never
+  `text/html`: this origin holds the session cookie, and an edition is markup a
+  model wrote. `GET /api/editions/current` exists only so a reload finds that
+  offer again.
 - **`blossom.primal.net` appends `.html` to the URL it returns.** Concrete proof
   that `server + "/" + hash` was a guess: the hash alone also resolves there
   today, but nothing requires it to. Take the URL from the descriptor.

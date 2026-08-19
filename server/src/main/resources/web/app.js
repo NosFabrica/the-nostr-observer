@@ -110,6 +110,24 @@ function arrive(who) {
   $("desk").hidden = false;
   readiness();
   archive();
+  resume();
+}
+
+// A page we are still holding, after a reload.
+//
+// Only the one case: a run that failed with the edition still in hand. A
+// reader who reloads after their servers refused the upload would otherwise
+// see a clean desk, with the page they paid for sitting on the server for
+// another half hour and no way to ask for it.
+async function resume() {
+  const res = await fetch("/api/editions/current");
+  if (!res.ok) return;
+  const current = await res.json();
+  if (current.state !== "FAILED" || !current.held || !current.report) return;
+  const report = JSON.parse(current.report);
+  if (!report.uploads) return;
+  state.draft = current.id;
+  showLost(report);
 }
 
 async function signOut() {
@@ -364,11 +382,61 @@ async function publishEdition(status) {
   const report = await res.json();
   $("generate").disabled = false;
   if (!res.ok) {
+    // A refused upload is not the same kind of failure as the rest. The others
+    // leave the reader where they started; this one leaves them holding a page
+    // that is about to stop existing, and the message has to say so.
+    if (report.uploads) return showLost(report);
     note.className = "waiting";
     note.textContent = report.error;
     return;
   }
   showPublished(report);
+}
+
+// The edition was written and nowhere would keep it.
+function showLost(report) {
+  const panel = $("result");
+  panel.hidden = false;
+  panel.innerHTML = "";
+
+  const line = document.createElement("p");
+  line.className = "lost";
+  line.textContent = report.error;
+  panel.append(line);
+
+  // Said plainly, because "it will be swept in 30 minutes" is our word for it
+  // and "close this tab and it is gone" is what actually happens to them.
+  const warning = document.createElement("p");
+  warning.textContent = report.recoverable
+    ? `It exists only here, for about ${report.minutes} more minutes. Save it now if you want to keep it — closing this tab loses it.`
+    : "It is no longer held here, so it cannot be saved.";
+  panel.append(warning);
+
+  if (report.recoverable) {
+    const save = document.createElement("a");
+    save.href = "/api/editions/" + state.draft + "/page";
+    save.className = "button";
+    save.textContent = "Save this page";
+    panel.append(save);
+  }
+
+  const what = document.createElement("p");
+  what.className = "aside";
+  what.textContent =
+    "To publish, add a media server that accepts web pages to your list in your usual Nostr app, " +
+    "then print again.";
+  panel.append(what);
+
+  // Their servers' own words. "It was refused" does not tell a reader whether
+  // to wait, pay, or use a different server -- the sentence does.
+  const list = document.createElement("ul");
+  for (const row of report.uploads) {
+    const li = document.createElement("li");
+    li.dataset.status = "BROKEN";
+    li.textContent = row.target + " — " + row.detail;
+    list.append(li);
+  }
+  panel.append(list);
 }
 
 // ------------------------------------------------------------------- boot
