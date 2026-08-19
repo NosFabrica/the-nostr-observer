@@ -527,6 +527,55 @@ fun Application.routes(app: App) {
             call.respondBytes(blob, ContentType.Application.OctetStream)
         }
 
+        // The page we are holding, to be read here.
+        //
+        // Same bytes as `/page`, which stays exactly as it was: that one is the
+        // save, this one is the read. It matters most for an edition that
+        // failed its own checks, because that page will never be published and
+        // so there is no copy anywhere else to link to.
+        get("/api/editions/{id}/view") {
+            val session = signedIn(app) ?: return@get call.respond(HttpStatusCode.Unauthorized, Problem("not signed in"))
+            val run =
+                app.runs.of(call.parameters["id"].orEmpty(), session.pubkey)
+                    ?: return@get call.respond(HttpStatusCode.NotFound, Problem("no such edition"))
+            val blob =
+                run.html
+                    ?: return@get call.respond(
+                        HttpStatusCode.Gone,
+                        Problem("that page is no longer here — it was published, or it has been swept"),
+                    )
+            call.respondPage(blob)
+        }
+
+        // A back issue, read here rather than downloaded from a blob store.
+        //
+        // We hold nothing: the manifest on the reader's relays names the hash
+        // and the servers, the blob comes back from the first server that has
+        // it, and it is checked against the hash the reader themselves signed
+        // before a byte of it is served. A day they never published, or one
+        // whose servers are all down, is a plain answer and not a blank page.
+        get("/api/archive/{day}/view") {
+            val session = signedIn(app) ?: return@get call.respond(HttpStatusCode.Unauthorized, Problem("not signed in"))
+            val day = call.parameters["day"].orEmpty()
+            val relays = app.press.writeRelaysOf(session.pubkey)
+            val edition =
+                app.announce
+                    .editions(session.pubkey, relays)
+                    .firstOrNull { it.day == day }
+                    ?: return@get call.respond(HttpStatusCode.NotFound, Problem("no edition for $day in your archive"))
+
+            val got = app.blossom.fetch(edition.servers, edition.hash)
+            val blob =
+                got.blob ?: return@get call.respond(
+                    HttpStatusCode.BadGateway,
+                    Problem(
+                        "none of your media servers would give this edition back: " +
+                            got.tried.joinToString("; ").ifBlank { "no servers are listed on it" },
+                    ),
+                )
+            call.respondPage(blob)
+        }
+
         // Upload, then announce. Nothing here decides whether to publish — that
         // was decided when the reader pressed print.
         post("/api/editions/{id}/publish") {
@@ -671,14 +720,46 @@ private fun RoutingContext.signedIn(app: App): Sessions.Entry? = app.sessions.of
 //
 // The pubkey is passed down into the store rather than compared here: a check
 // the caller performs is a check some future route forgets to perform.
-// The preview's own leash.
+// The view's own leash.
 //
 // `default-src 'none'` with images allowed anywhere is exactly the shape of the
 // page: it hotlinks art from whatever host published it and does nothing else.
 // No scripts, no frames, no form posts, no connections.
+//
+// `sandbox` IS THE PART THAT MATTERS, and it is why serving a page from this
+// origin is allowable at all. The rest of this header restricts what the page
+// may LOAD; it does nothing about the page being same-origin with the console
+// that holds the session cookie. As a response header `sandbox` puts the
+// document in an opaque origin however it is reached -- framed or navigated to
+// directly -- so `document.cookie` is empty, storage is inert and same-origin
+// reads are impossible. Without it this would be model-written markup running
+// alongside the session, which is the thing the download path was built to
+// avoid.
+//
+// No `allow-scripts`, no `allow-same-origin`, and never both: together they let
+// a page reach out and remove its own sandbox attribute.
 private const val CSP =
-    "default-src 'none'; img-src https: data:; style-src 'unsafe-inline'; " +
+    "sandbox; default-src 'none'; img-src https: data:; style-src 'unsafe-inline'; " +
         "font-src https:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+
+/**
+ * Serve one edition to be READ, rather than downloaded.
+ *
+ * A Blossom server stores blobs and hands them back with whatever
+ * `Content-Type` it likes, so a link straight at `server/hash` is a page on one
+ * host and a save dialog on another. Resolving the manifest and serving the
+ * blob as a page is what an nsite gateway does; this does it for one signed-in
+ * reader's own editions and holds nothing.
+ */
+private suspend fun ApplicationCall.respondPage(blob: ByteArray) {
+    response.header("Content-Security-Policy", CSP)
+    response.header("X-Content-Type-Options", "nosniff")
+    response.header("Referrer-Policy", "no-referrer")
+    // Not cached by anything in between: this is one reader's paper, served
+    // from an address that says nothing about whose it is.
+    response.header(HttpHeaders.CacheControl, "private, no-store")
+    respondBytes(blob, ContentType.Text.Html.withParameter("charset", "utf-8"))
+}
 
 // Our own address, from configuration, never from the request.
 //

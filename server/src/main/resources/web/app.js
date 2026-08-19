@@ -94,8 +94,15 @@ function issue(edition) {
   head.className = "issue-head";
   const link = document.createElement("a");
   link.textContent = readableDay(edition.day);
-  // A top-level navigation, so no server has to allow us in from here.
-  link.href = edition.url || "#";
+  // READ HERE, not at the blob.
+  //
+  // This used to point straight at `server/hash` on a Blossom server, which is
+  // blob storage: it hands back the bytes with whatever Content-Type it likes,
+  // so the same link was a page on one host and a save dialog on another. The
+  // manifest names the servers and the hash; resolving that and serving the
+  // result as a page is the job an nsite gateway does, and it is done for the
+  // reader's own editions at the route below.
+  link.href = "/api/archive/" + encodeURIComponent(edition.day) + "/view";
   link.target = "_blank";
   link.rel = "noopener";
   head.append(link);
@@ -447,8 +454,18 @@ function showFailure(error, status) {
     const warning = document.createElement("p");
     warning.textContent =
       "The page was written and it is here for about 30 more minutes. It was not published and it will not be — " +
-      "save it if you want to read what you paid for.";
+      "read it or save it if you want what you paid for.";
     panel.append(warning);
+
+    // Read comes first. This edition is never going to be published, so this
+    // route is the only way it is ever seen as a page rather than as a file.
+    const read = document.createElement("a");
+    read.href = "/api/editions/" + state.draft + "/view";
+    read.target = "_blank";
+    read.rel = "noopener";
+    read.className = "button";
+    read.textContent = "Read it";
+    panel.append(read);
 
     const save = document.createElement("a");
     save.href = "/api/editions/" + state.draft + "/page";
@@ -470,9 +487,13 @@ function showPublished(report) {
     : "Uploaded, but no relay accepted it, so nobody can find it yet.";
   panel.append(line);
 
-  if (report.url) {
+  if (report.ok) {
+    // Through the archive rather than at the blob, and rather than out of the
+    // run: the bytes here are dropped the moment a relay accepts the manifest,
+    // so by now the only copy is the reader's own servers. Reading it back the
+    // same way anybody else would is also the honest check that it landed.
     const read = document.createElement("a");
-    read.href = report.url;
+    read.href = "/api/archive/" + encodeURIComponent(report.day) + "/view";
     read.target = "_blank";
     read.rel = "noopener";
     read.className = "button";

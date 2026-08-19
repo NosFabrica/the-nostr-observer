@@ -161,6 +161,77 @@ class Blossom(
         }.getOrElse { Upload(server, false, it.message ?: it::class.simpleName ?: "failed") }
     }
 
+    /**
+     * Getting a published edition back, to read it.
+     *
+     * This is the half a Blossom server does not do for us. It stores blobs and
+     * serves them by hash, with whatever `Content-Type` it feels like -- which
+     * is why linking a reader straight at `server/hash` hands them a download
+     * on one host and a page on another, and why an nsite is normally resolved
+     * by something that reads the manifest and serves the blob AS a site. This
+     * is that something, for one reader's own editions.
+     *
+     * IN ORDER, NOT AT ONCE, unlike [upload]. A publish has to reach every
+     * server the reader listed; a read needs one copy and the rest is somebody
+     * else's bandwidth for nothing.
+     *
+     * THE HASH IS THE WHOLE OF THE TRUST HERE. These bytes come off a host we
+     * do not control, on a path anybody who knows the hash can also write to on
+     * some servers, and they are about to be rendered. The manifest the reader
+     * SIGNED names the hash, so a blob that does not hash to it is not their
+     * edition and does not get served -- whatever the server said, and whatever
+     * status it said it with.
+     */
+    suspend fun fetch(
+        servers: List<String>,
+        hash: String,
+    ): Fetched {
+        val tried = mutableListOf<String>()
+        for (server in servers) {
+            val base = server.trimEnd('/')
+            val got =
+                runCatching {
+                    http
+                        .newCall(
+                            Request
+                                .Builder()
+                                .url("$base/$hash")
+                                .get()
+                                .build(),
+                        ).execute()
+                        .use { response ->
+                            if (!response.isSuccessful) {
+                                tried += "$base: HTTP ${response.code}"
+                                null
+                            } else {
+                                response.body?.bytes()
+                            }
+                        }
+                }.getOrElse {
+                    tried += "$base: ${it.message ?: it::class.simpleName}"
+                    null
+                } ?: continue
+
+            val actual = sha256(got)
+            if (!actual.equals(hash, ignoreCase = true)) {
+                // Not "try the next one and hope". A server that answers a hash
+                // with something else is either broken or lying, and both are
+                // worth saying out loud rather than papering over by walking on.
+                tried += "$base: served ${actual.take(12)}…, the manifest names ${hash.take(12)}…"
+                continue
+            }
+            return Fetched(got, base, tried)
+        }
+        return Fetched(null, null, tried)
+    }
+
+    /** The bytes, where they came from, and what every server that failed said. */
+    data class Fetched(
+        val blob: ByteArray?,
+        val server: String?,
+        val tried: List<String>,
+    )
+
     companion object {
         fun sha256(bytes: ByteArray): String = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes))
     }

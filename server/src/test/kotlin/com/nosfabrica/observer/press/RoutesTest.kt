@@ -19,6 +19,8 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotNull
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
@@ -84,8 +86,10 @@ class RoutesTest {
             assertEquals(HttpStatusCode.Unauthorized, client.get("/api/editions/anything").status)
             assertEquals(HttpStatusCode.Unauthorized, client.post("/api/editions/anything/publish").status)
             assertEquals(HttpStatusCode.Unauthorized, client.get("/api/editions/anything/page").status)
+            assertEquals(HttpStatusCode.Unauthorized, client.get("/api/editions/anything/view").status)
             assertEquals(HttpStatusCode.Unauthorized, client.get("/api/editions/current").status)
             assertEquals(HttpStatusCode.Unauthorized, client.get("/api/archive").status)
+            assertEquals(HttpStatusCode.Unauthorized, client.get("/api/archive/2026-08-19/view").status)
         }
     }
 
@@ -434,6 +438,87 @@ class RoutesTest {
             assertEquals(HttpStatusCode.OK, page.status)
             assertEquals(String(blob), page.bodyAsText())
             assertTrue(page.headers["Content-Disposition"]!!.contains("attachment"), page.headers.toString())
+        }
+    }
+
+    /**
+     * A held page is READ here, and it is read in a box.
+     *
+     * `/page` hands the bytes over as a download; this serves the same bytes as
+     * a page, which is the only way an edition that will never be published is
+     * ever seen as one. That is allowed to happen on this origin -- the origin
+     * holding the session cookie -- for exactly one reason, and it is the
+     * `sandbox` in the CSP: as a response header it puts the document in an
+     * opaque origin however it is reached, so the cookie is unreachable from it
+     * even by a top-level navigation straight to the URL.
+     *
+     * If that token ever goes missing this test is what says so.
+     */
+    @Test
+    fun `a held edition is served as a page, sandboxed away from the session`(
+        @TempDir dir: Path,
+    ) = runTest {
+        testApplication {
+            val instance = app(dir)
+            application { routes(instance) }
+            val body = """{"signer":"NIP07"}"""
+            val cookie =
+                client
+                    .post("/api/session") {
+                        header("Authorization", auth("http://localhost/api/session", "POST", body))
+                        setBody(body)
+                    }.headers["Set-Cookie"]!!
+                    .substringBefore(";")
+
+            val blob = "<main>the paper nobody would store</main>".toByteArray()
+            val (run, _) = instance.runs.open(reader.pubKey.toHexKey())
+            run.html = blob
+            run.state = Runs.State.FAILED
+
+            val view = client.get("/api/editions/${run.id}/view") { header("Cookie", cookie) }
+            assertEquals(HttpStatusCode.OK, view.status)
+            assertEquals(String(blob), view.bodyAsText())
+            // Rendered, not downloaded. This is the whole point of the route.
+            assertTrue(view.headers["Content-Type"]!!.startsWith("text/html"), view.headers.toString())
+            assertNull(view.headers["Content-Disposition"], "a view must not arrive as an attachment")
+
+            val csp = view.headers["Content-Security-Policy"]
+            assertNotNull(csp, "no CSP on a page this origin serves")
+            // The token that makes the origin opaque. Without it the rest of the
+            // header restricts what the page may load and nothing else.
+            assertTrue(csp!!.contains("sandbox"), csp)
+            // And never the pair that lets a page climb back out of its own box.
+            assertFalse(csp.contains("allow-scripts") && csp.contains("allow-same-origin"), csp)
+            assertEquals("nosniff", view.headers["X-Content-Type-Options"])
+        }
+    }
+
+    @Test
+    fun `one reader cannot read another reader's held edition`(
+        @TempDir dir: Path,
+    ) = runTest {
+        testApplication {
+            val instance = app(dir)
+            application { routes(instance) }
+            val body = """{"signer":"NIP07"}"""
+            val cookie =
+                client
+                    .post("/api/session") {
+                        header("Authorization", auth("http://localhost/api/session", "POST", body))
+                        setBody(body)
+                    }.headers["Set-Cookie"]!!
+                    .substringBefore(";")
+
+            // Somebody else's run, held and readable by them.
+            val (theirs, _) = instance.runs.open(KeyPair().pubKey.toHexKey())
+            theirs.html = "<main>not yours</main>".toByteArray()
+            theirs.state = Runs.State.FAILED
+
+            // A run id in a URL is a bearer token unless the owner is compared.
+            assertEquals(
+                HttpStatusCode.NotFound,
+                client.get("/api/editions/${theirs.id}/view") { header("Cookie", cookie) }.status,
+            )
         }
     }
 }

@@ -203,6 +203,29 @@ API key. A full run reads `ANTHROPIC_API_KEY` from the environment.
   `text/html`: this origin holds the session cookie, and an edition is markup a
   model wrote. `GET /api/editions/current` exists only so a reload finds that
   offer again.
+- **An edition is READ at `/view`, and the `sandbox` in its CSP is what makes
+  that allowable.** `/page` still hands the bytes over as a download and has not
+  changed; `/view` serves the same bytes as `text/html`, because a reader has to
+  be able to look at their paper — and an edition that failed its own checks
+  will never be published, so nowhere else will ever hold it. The rule above is
+  not repealed, it is met a different way: `Content-Security-Policy: sandbox`
+  as a *response header* puts the document in an opaque origin however it is
+  reached, framed or navigated to directly, so the session cookie is unreachable
+  from it. `allow-scripts` and `allow-same-origin` must never both appear —
+  together they let a page remove its own sandbox. The rest of the header
+  (`default-src 'none'`, `img-src https: data:`) restricts what the page may
+  load and would not, on its own, have been enough.
+- **Blossom is a blob store, and linking a reader at `server/hash` is not a
+  view.** It hands back bytes with whatever `Content-Type` it likes, so the same
+  link renders on `blossom.primal.net` and downloads elsewhere — which is what
+  the archive's "Read it" did. An nsite is resolved by something that reads the
+  manifest and serves the blob AS a site; `GET /api/archive/{day}/view` is that,
+  for one signed-in reader's own editions. `Blossom.fetch` tries their servers in
+  order (a read needs one copy; only a publish needs all of them) and **checks
+  the blob against the hash in the manifest the reader signed** before serving a
+  byte of it. A server that answers with something else is refused outright, not
+  passed over quietly — it is either broken or lying and both are worth saying.
+  Nothing is stored here; the canonical copy stays on their servers.
 - **`blossom.primal.net` appends `.html` to the URL it returns.** Concrete proof
   that `server + "/" + hash` was a guess: the hash alone also resolves there
   today, but nothing requires it to. Take the URL from the descriptor.

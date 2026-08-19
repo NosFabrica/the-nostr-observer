@@ -6,9 +6,11 @@ import com.sun.net.httpserver.HttpServer
 import com.vitorpamplona.quartz.nip01Core.core.Event
 import com.vitorpamplona.quartz.nip01Core.crypto.KeyPair
 import com.vitorpamplona.quartz.nip01Core.signers.NostrSignerSync
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -274,4 +276,67 @@ class BlossomTest {
         expected: ByteArray,
         actual: ByteArray,
     ) = assertEquals(String(expected), String(actual))
+
+    /** A blob store that answers GET /{hash} with whatever it is given. */
+    private fun hosts(body: ByteArray): HttpServer =
+        HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0).apply {
+            createContext("/") { exchange ->
+                exchange.sendResponseHeaders(200, body.size.toLong())
+                exchange.responseBody.use { it.write(body) }
+            }
+            start()
+        }
+
+    @Test
+    fun `a published edition is fetched back and checked against its hash`() =
+        runBlocking {
+            val page = "<main>the paper for the eighteenth</main>".toByteArray()
+            val server = hosts(page)
+            try {
+                val got = Blossom().fetch(listOf(url(server)), Blossom.sha256(page))
+                assertNotNull(got.blob)
+                assertEquals(String(page), String(got.blob!!))
+                assertEquals(url(server), got.server)
+            } finally {
+                server.stop(0)
+            }
+        }
+
+    /**
+     * The hash is the whole of the trust in a read.
+     *
+     * These bytes come off a host we do not control and are about to be served
+     * as a page. The manifest the reader SIGNED names the hash, so a server
+     * answering with anything else is not handing back their edition -- and the
+     * answer must be nothing, not "near enough".
+     */
+    @Test
+    fun `a server that answers with different bytes is refused, not rendered`() =
+        runBlocking {
+            val theirs = "<main>the paper for the eighteenth</main>".toByteArray()
+            val swapped = "<main>read this instead</main>".toByteArray()
+            val server = hosts(swapped)
+            try {
+                val got = Blossom().fetch(listOf(url(server)), Blossom.sha256(theirs))
+                assertNull(got.blob, "served a blob that does not hash to the manifest's")
+                assertTrue(got.tried.any { it.contains("the manifest names") }, got.tried.toString())
+            } finally {
+                server.stop(0)
+            }
+        }
+
+    @Test
+    fun `a server that is down is passed over for the next one`() =
+        runBlocking {
+            val page = "<main>the paper</main>".toByteArray()
+            val server = hosts(page)
+            try {
+                // First entry refuses connections; the reader's second server has it.
+                val got = Blossom().fetch(listOf("http://127.0.0.1:1", url(server)), Blossom.sha256(page))
+                assertEquals(String(page), String(got.blob!!))
+                assertEquals(1, got.tried.size, got.tried.toString())
+            } finally {
+                server.stop(0)
+            }
+        }
 }
