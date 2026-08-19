@@ -306,3 +306,42 @@ footer {
   text-decoration: line-through;
   color: var(--quiet);
 }
+
+/* The passages an edition could not match to a source event.
+   Set as quotations, because that is what they are and what the reader is being
+   asked to look at -- the whole point is that they can see the sentence and
+   judge it, rather than being told a number. */
+.violations {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 1rem;
+}
+
+.violations li {
+  padding: 0.5rem 0;
+  border-bottom: 1px dotted var(--rule);
+}
+
+/* No chain marker. `.panel ul li::before` draws a neutral dot on every list
+   inside a panel, which is right for the readiness chain and wrong here: these
+   are quotations, and a bullet in front of one reads as part of the quote. The
+   indent stays, because a quotation earns one. */
+.violations li::before {
+  content: none;
+}
+
+.violations li:last-child {
+  border-bottom: 0;
+}
+
+.violations q {
+  display: block;
+  font-style: italic;
+}
+
+.violations small {
+  display: block;
+  margin-top: 0.2rem;
+  color: var(--quiet);
+  font-size: 0.78rem;
+}

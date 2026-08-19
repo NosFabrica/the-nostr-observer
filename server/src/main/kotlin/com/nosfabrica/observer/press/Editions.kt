@@ -32,6 +32,27 @@ data class Line(
     val detail: String? = null,
 )
 
+/**
+ * One check the page failed, in enough detail to act on.
+ *
+ * [com.nosfabrica.observer.safe.Validator] has captured the offending text
+ * since the first commit and every layer above it dropped it: the console line
+ * joined `kind` alone, this summary joined `kind` and `detail`, and `detail` is
+ * the same constant sentence for every quote violation. So a reader was told
+ * that three quotes failed and never which three — on a page that cost them a
+ * dollar fifty and was then thrown away.
+ *
+ * The headless CLI printed the excerpt the whole time (`Main.kt`), off the same
+ * `Report` this reads. The server was the only place you could not find out.
+ */
+@Serializable
+data class Unverified(
+    val kind: String,
+    val detail: String,
+    /** The offending text itself, as the page said it. Capped at 160 chars by the validator. */
+    val excerpt: String,
+)
+
 @Serializable
 data class Summary(
     val events: Int,
@@ -41,7 +62,7 @@ data class Summary(
     val bytes: Int,
     val costUsd: Double,
     val publishable: Boolean,
-    val violations: List<String>,
+    val violations: List<Unverified>,
 )
 
 /**
@@ -135,7 +156,7 @@ class Editions(
                         bytes = blob.size,
                         costUsd = edition.usage.costUsd(),
                         publishable = edition.publishable,
-                        violations = edition.report.violations.map { "${it.kind}: ${it.detail}" },
+                        violations = edition.report.violations.map { Unverified(it.kind.name, it.detail, it.excerpt) },
                     ),
                 )
 
@@ -149,8 +170,33 @@ class Editions(
             // somebody must stop here, because the next step is the reader's
             // permanent archive.
             if (!edition.publishable) {
-                say("Not published", "it failed its own checks: " + edition.report.violations.joinToString("; ") { it.kind.name })
-                run.error = "This edition quoted something it could not find in a source event, so it was not published."
+                say("Not published", "it failed its own checks")
+                // One line each, with the text. "QUOTE; QUOTE; QUOTE" counts the
+                // failures without naming any of them, which tells a reader
+                // nothing they can act on and nothing they can even look up.
+                edition.report.violations.forEach {
+                    say("Unverified ${it.kind.name.lowercase()}", "“${it.excerpt}”")
+                }
+
+                // THE READER PAID FOR THIS PAGE, SO THE READER GETS TO READ IT.
+                //
+                // This branch used to return before `run.html` was ever set, so
+                // a page that had been written, rendered, checked and billed --
+                // 48 KB and about a dollar fifty of it -- was dropped on the
+                // floor here, and `/page` answered 410 for the only run that
+                // most needed it. A refused UPLOAD already keeps its bytes and
+                // offers them; a refused CHECK is the same loss to the reader
+                // and was the one path that offered nothing.
+                //
+                // It stays unpublishable. Held is not published: it goes out of
+                // `/page` as an octet-stream attachment, never rendered on this
+                // origin, and it never reaches anybody's relay. The sweep takes
+                // it on the same 30-minute clock as everything else.
+                run.html = blob
+                run.day = DAY.format(Instant.now().atZone(zone))
+                run.error =
+                    "This edition quoted something it could not find in a source event, so it was not published. " +
+                    "It was still written, and you can read it below."
                 run.state = Runs.State.FAILED
                 return
             }

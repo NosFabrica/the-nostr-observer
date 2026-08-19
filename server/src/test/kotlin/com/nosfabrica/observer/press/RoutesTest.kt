@@ -366,4 +366,74 @@ class RoutesTest {
             )
         }
     }
+
+    /**
+     * The edition that failed its own checks is still the reader's edition.
+     *
+     * This is the path that cost a real reader $1.54 and told them "3
+     * violation(s): 3 quote". Two things were missing and both are asserted
+     * here: the status names the passages that could not be verified, and the
+     * page it wrote is still offered. Before the fix the run returned before
+     * `html` was ever set, so `/page` answered 410 for the one failure where
+     * the reader has nothing else to show for their money.
+     */
+    @Test
+    fun `an edition that fails its own checks is readable and says which quotes failed`(
+        @TempDir dir: Path,
+    ) = runTest {
+        testApplication {
+            val instance = app(dir)
+            application { routes(instance) }
+            val body = """{"signer":"NIP07"}"""
+            val cookie =
+                client
+                    .post("/api/session") {
+                        header("Authorization", auth("http://localhost/api/session", "POST", body))
+                        setBody(body)
+                    }.headers["Set-Cookie"]!!
+                    .substringBefore(";")
+
+            val blob = "<main>a paper that misquotes somebody</main>".toByteArray()
+            val (run, _) = instance.runs.open(reader.pubKey.toHexKey())
+            run.html = blob
+            run.day = "2026-08-19"
+            run.summary =
+                Json.encodeToString(
+                    Summary(
+                        events = 740,
+                        voices = 261,
+                        control = 400,
+                        overlap = 0,
+                        bytes = blob.size,
+                        costUsd = 1.539405,
+                        publishable = false,
+                        violations =
+                            listOf(
+                                Unverified("QUOTE", "not found verbatim in any source event", "the sky was the colour of television"),
+                            ),
+                    ),
+                )
+            run.error = "This edition quoted something it could not find in a source event, so it was not published."
+            run.state = Runs.State.FAILED
+
+            val status = client.get("/api/editions/${run.id}") { header("Cookie", cookie) }
+            assertEquals(HttpStatusCode.OK, status.status)
+            val said = status.bodyAsText()
+            // The text itself, not a count of how many there were. A reader who
+            // can see the sentence can tell whether the writer paraphrased or
+            // whether the corpus moved under it; "3 quote" tells them neither.
+            assertTrue(said.contains("the sky was the colour of television"), said)
+            // And the browser is told there is something left to offer.
+            assertTrue(said.contains("\"held\":true"), said)
+
+            // The page it paid for, as an attachment and never as text/html --
+            // an unpublishable edition is markup a model wrote that failed its
+            // own checks, which is the last thing to render on the origin
+            // holding the session cookie.
+            val page = client.get("/api/editions/${run.id}/page") { header("Cookie", cookie) }
+            assertEquals(HttpStatusCode.OK, page.status)
+            assertEquals(String(blob), page.bodyAsText())
+            assertTrue(page.headers["Content-Disposition"]!!.contains("attachment"), page.headers.toString())
+        }
+    }
 }

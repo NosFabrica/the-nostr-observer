@@ -368,7 +368,7 @@ async function pollDraft() {
   clearInterval(state.poll);
   if (status.state === "FAILED") {
     $("generate").disabled = false;
-    return showFailure(status.error);
+    return showFailure(status.error, status);
   }
   if (status.state === "SIGNING") {
     // NO BUTTON HERE. Printing publishes; the page is written, it passed its
@@ -398,7 +398,11 @@ function drawProgress(lines) {
   }
 }
 
-function showFailure(error) {
+// `status` is optional: two callers here have only a sentence, because the
+// server never answered. When there IS a status, it carries the two things a
+// reader whose edition failed its own checks actually needs — which quotes
+// could not be verified, and the page itself.
+function showFailure(error, status) {
   const panel = $("result");
   panel.hidden = false;
   panel.innerHTML = "";
@@ -406,6 +410,52 @@ function showFailure(error) {
   p.className = "waiting";
   p.textContent = error || "It did not work.";
   panel.append(p);
+  if (!status) return;
+
+  // Named, not counted. A reader who can see the sentence that failed can tell
+  // at a glance whether the writer paraphrased, ran two posts together, or
+  // quoted something real that the corpus no longer holds — and that is the
+  // difference between "print again" and "this will fail again".
+  const summary = status.summary ? JSON.parse(status.summary) : null;
+  const bad = (summary && summary.violations) || [];
+  if (bad.length) {
+    const what = document.createElement("p");
+    what.textContent =
+      bad.length === 1
+        ? "One passage could not be matched to a source event:"
+        : bad.length + " passages could not be matched to a source event:";
+    panel.append(what);
+
+    const list = document.createElement("ul");
+    list.className = "violations";
+    for (const v of bad) {
+      const li = document.createElement("li");
+      const quote = document.createElement("q");
+      quote.textContent = v.excerpt;
+      li.append(quote);
+      const why = document.createElement("small");
+      why.textContent = v.detail;
+      li.append(why);
+      list.append(li);
+    }
+    panel.append(list);
+  }
+
+  // The same offer a refused upload gets, for the same reason: the page exists,
+  // it was paid for, and it stops existing shortly.
+  if (status.held) {
+    const warning = document.createElement("p");
+    warning.textContent =
+      "The page was written and it is here for about 30 more minutes. It was not published and it will not be — " +
+      "save it if you want to read what you paid for.";
+    panel.append(warning);
+
+    const save = document.createElement("a");
+    save.href = "/api/editions/" + state.draft + "/page";
+    save.className = "button";
+    save.textContent = "Save this page";
+    panel.append(save);
+  }
 }
 
 function showPublished(report) {

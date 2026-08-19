@@ -109,6 +109,14 @@ private data class Status(
     /** The unsigned site event for the day. */
     val manifest: String? = null,
     val servers: List<String> = emptyList(),
+    /**
+     * Whether the page is still here to be saved from `/api/editions/{id}/page`.
+     *
+     * Matters most when the state is FAILED: an edition that failed its own
+     * checks was written and paid for like any other, and without this the
+     * browser has no way to know there is anything left to offer.
+     */
+    val held: Boolean = false,
 )
 
 @Serializable
@@ -466,6 +474,7 @@ fun Application.routes(app: App) {
                     upload = run.upload?.toJson(),
                     manifest = run.manifest?.toJson(),
                     servers = run.servers,
+                    held = run.html != null,
                 ),
             )
         }
