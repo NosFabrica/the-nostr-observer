@@ -17,17 +17,25 @@ Copy the skill into your Claude Code skills directory:
 
 ```bash
 git clone https://github.com/NosFabrica/the-nostr-observer
+mkdir -p ~/.claude/skills
 cp -r the-nostr-observer/plugin/skills/nostr-observer ~/.claude/skills/
 ```
 
-Then ask for it:
+Then start `claude` **in whatever directory you want your paper to land in**
+and ask for it:
 
 ```
 > print my Nostr Observer
 ```
 
 It will ask which npub to read for, check that your lens actually resolves, and
-stop with a specific remedy if it does not.
+stop with a specific remedy if it does not. If it prints a paper, you get two
+things: an `observer-<date>-<code>.html` file in that directory, and an
+artifact link.
+
+Everything runs locally. You are not signing in to anything of ours, and no
+key of yours goes anywhere — the skill reads public relay data and writes a
+file.
 
 ## What it does
 
