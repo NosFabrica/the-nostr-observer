@@ -15,6 +15,7 @@
 
 import { req, toHex, toNpub, shortNpub, tagValue, tagsNamed } from './nostr.mjs'
 import { writeFileSync } from 'node:fs'
+import { pathToFileURL } from 'node:url'
 import { createHash } from 'node:crypto'
 
 const DEFAULT_RELAY = 'wss://search-staging.brainstorm.world'
@@ -31,7 +32,7 @@ const WINDOW_SECONDS = 24 * 60 * 60
  * It is NEVER applied to the control run. That query is the anonymous read,
  * and filtering it would destroy the only comparison this project makes.
  */
-const DEFAULT_TRUST_FLOOR = 20
+export const DEFAULT_TRUST_FLOOR = 20
 
 /**
  * The desks a front page is made of, and why each earns a column.
@@ -45,7 +46,7 @@ const DEFAULT_TRUST_FLOOR = 20
  * anonymous results land in the ranked notes and the overlap figure — the one
  * number this whole product exists to report — goes to ~100%.
  */
-const DESKS = [
+export const DESKS = [
   { key: 'notes', kinds: [1], label: 'Notes', limit: 400 },
   { key: 'pictures', kinds: [20], label: 'Picture posts', limit: 60 },
   // A kind 30311 is replaceable and carries a `status`, so the record of a
@@ -89,7 +90,7 @@ function arg (name, fallback = null) {
  * was 209 of 400 posts from one spam account. Nothing may get here without a
  * lens the readiness chain has already confirmed.
  */
-function filterFor (kinds, since, until, limit, observerHex, floor) {
+export function filterFor (kinds, since, until, limit, observerHex, floor) {
   return {
     kinds,
     since,
@@ -129,7 +130,7 @@ async function pool (items, width, worker) {
  * construction, so without this they crowd the front page. They stay in the
  * CONTROL run, which is a measurement of the network rather than a page.
  */
-function belongs (desk, observerHex, events) {
+export function belongs (desk, observerHex, events) {
   return events.filter((e) => (desk.keeps ? desk.keeps(e) : true) && e.pubkey !== observerHex)
 }
 
@@ -139,7 +140,7 @@ const IMAGE_EXT = /\.(jpe?g|png|gif|webp|avif|bmp)(\?|$)/i
 const VIDEO_EXT = /\.(mp4|mov|webm|m4v|avi|mkv)(\?|$)/i
 const VIDEO_KINDS = new Set([21, 22, 34235, 34236])
 
-function parseImeta (tag) {
+export function parseImeta (tag) {
   const out = {}
   for (const part of tag.slice(1)) {
     const at = String(part).indexOf(' ')
@@ -167,7 +168,7 @@ function parseImeta (tag) {
  * server and alt text is the difference between a missing image degrading to a
  * caption and degrading to a gap.
  */
-function shortlist (byDesk, profiles, max = 40) {
+export function shortlist (byDesk, profiles, max = 40) {
   const art = []
   const seen = new Set()
   for (const [deskKey, events] of Object.entries(byDesk)) {
@@ -215,7 +216,7 @@ function body (event, cap = 700) {
   return text.slice(0, cap) + ' […truncated in this digest; the full text is in corpus.json]'
 }
 
-function digest (corpus) {
+export function digest (corpus) {
   const lines = []
   const p = (s = '') => lines.push(s)
 
@@ -361,7 +362,10 @@ async function main () {
   console.log(digest(corpus))
 }
 
-main().catch((error) => {
-  console.error(`\n  Corpus pull failed: ${error.message}\n`)
-  process.exit(3)
-})
+// Importable by the tests; runs only when it is the thing that was invoked.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((error) => {
+    console.error(`\n  Corpus pull failed: ${error.message}\n`)
+    process.exit(3)
+  })
+}

@@ -21,6 +21,7 @@
 // Usage: node validate.mjs <page.html> [--corpus corpus.json]
 
 import { readFileSync } from 'node:fs'
+import { pathToFileURL } from 'node:url'
 
 function arg (name, fallback = null) {
   const at = process.argv.indexOf(name)
@@ -31,7 +32,7 @@ function arg (name, fallback = null) {
 
 const ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ', hellip: '…', mdash: '—', ndash: '–', rsquo: '’', lsquo: '‘', ldquo: '“', rdquo: '”' }
 
-function decodeEntities (text) {
+export function decodeEntities (text) {
   return text.replace(/&(#x?[0-9a-f]+|[a-z]+);/gi, (whole, body) => {
     if (body[0] === '#') {
       const code = body[1] === 'x' || body[1] === 'X' ? parseInt(body.slice(2), 16) : parseInt(body.slice(1), 10)
@@ -42,7 +43,7 @@ function decodeEntities (text) {
 }
 
 /** Text content of every <q> and <blockquote>, nesting handled. */
-function quotedText (html) {
+export function quotedText (html) {
   const found = []
   const open = /<(q|blockquote)(\s[^>]*)?>/gi
   let match
@@ -67,7 +68,7 @@ function quotedText (html) {
 }
 
 /** Every value of one attribute on one tag. */
-function attributes (html, tag, attr) {
+export function attributes (html, tag, attr) {
   const out = []
   const re = new RegExp(`<${tag}\\b[^>]*?\\b${attr}\\s*=\\s*("([^"]*)"|'([^']*)'|([^\\s>]+))`, 'gi')
   let match
@@ -85,7 +86,7 @@ function attributes (html, tag, attr) {
  * MEANING — words, order, negation — survives normalisation intact, which is
  * the line this is drawing.
  */
-function normalize (text) {
+export function normalize (text) {
   return String(text)
     .normalize('NFKC')
     .replace(/[‘’]/g, "'")
@@ -108,7 +109,7 @@ function normalize (text) {
  * in ONE SINGLE event — order and single-event are what stop elision being
  * used to stitch two people into one sentence.
  */
-function isQuoted (raw, haystack) {
+export function isQuoted (raw, haystack) {
   const needle = normalize(raw)
   if (!needle) return true
   const fragments = needle.split('...').map((f) => f.trim()).filter((f) => f.length > 2)
@@ -135,10 +136,10 @@ function isQuoted (raw, haystack) {
  * disagreeing. Here the editorial brief says hex and this accepts hex, so they
  * cannot drift apart.
  */
-const PERMALINK = /^https:\/\/njump\.me\/([0-9a-f]{64})(?:[/?#].*)?$/i
+export const PERMALINK = /^https:\/\/njump\.me\/([0-9a-f]{64})(?:[/?#].*)?$/i
 
 // Things there is no sanitizer to strip, so they are refused instead.
-const FORBIDDEN = [
+export const FORBIDDEN = [
   [/<script\b/i, 'a <script> tag'],
   [/<iframe\b/i, 'an <iframe>'],
   [/<object\b|<embed\b|<applet\b/i, 'an embedded object'],
@@ -148,15 +149,11 @@ const FORBIDDEN = [
   [/\sdata\s*:\s*text\/html/i, 'a data:text/html URL'],
 ]
 
-function main () {
-  const page = process.argv[2]
-  if (!page || page.startsWith('--')) {
-    console.error('Usage: node validate.mjs <page.html> [--corpus corpus.json]')
-    process.exit(2)
-  }
-  const html = readFileSync(page, 'utf8')
-  const corpus = JSON.parse(readFileSync(arg('--corpus', 'corpus.json'), 'utf8'))
-
+/**
+ * Everything the boundary has to say about one page. Pure: no files, no exit
+ * codes, so a test can put an adversarial page through it directly.
+ */
+export function check (html, corpus) {
   // The DESKS only, never the control run. `Validator.kt` compares against
   // `corpus.all()`, which is the ranked desks; the control run is a
   // measurement of the network rather than part of the paper, and it is not in
@@ -165,7 +162,7 @@ function main () {
   const events = Object.values(corpus.desks).flat()
   const haystack = events.map((e) => normalize(e.content || ''))
   const eventIds = new Set(events.map((e) => e.id))
-  const allowedImages = new Set(corpus.art.map((a) => a.url))
+  const allowedImages = new Set((corpus.art || []).map((a) => a.url))
 
   const violations = []
   const flag = (kind, detail, excerpt) => violations.push({ kind, detail, excerpt })
@@ -203,9 +200,22 @@ function main () {
     }
   }
 
+  return { violations, quotes, events: events.length, images: allowedImages.size }
+}
+
+function main () {
+  const page = process.argv[2]
+  if (!page || page.startsWith('--')) {
+    console.error('Usage: node validate.mjs <page.html> [--corpus corpus.json]')
+    process.exit(2)
+  }
+  const html = readFileSync(page, 'utf8')
+  const corpus = JSON.parse(readFileSync(arg('--corpus', 'corpus.json'), 'utf8'))
+  const { violations, quotes, events, images } = check(html, corpus)
+
   console.log('')
   console.log(`  Page:   ${page}`)
-  console.log(`  Corpus: ${events.length} events, ${allowedImages.size} shortlisted pictures`)
+  console.log(`  Corpus: ${events} events, ${images} shortlisted pictures`)
   console.log(`  Quotes: ${quotes.length} checked`)
   console.log('')
 
@@ -228,4 +238,5 @@ function main () {
   process.exit(1)
 }
 
-main()
+// Importable by the tests; runs only when it is the thing that was invoked.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main()

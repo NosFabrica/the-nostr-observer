@@ -50,6 +50,63 @@ is a gate: a paper without a lens looks right and is not the product.
 The most common answer is that you have no `kind 10040` naming a `30382:rank`
 service. Get a lens minted at [brainstorm.world](https://brainstorm.world).
 
+## Testing
+
+Four layers, and only the first two can run in CI.
+
+**1. Unit and boundary tests — no network, under a second.**
+
+```bash
+node --test "plugin/skills/nostr-observer/test/*.test.mjs"
+```
+
+58 tests. bech32 against the NIP-19 worked example, the readiness chain in
+every state it can reach, query construction, and the boundary from both sides.
+
+**2. The relay client against a relay that misbehaves on purpose.**
+
+`test/fakerelay.mjs` is a dependency-free WebSocket server that reproduces the
+hazards recorded in `AGENTS.md` — the AUTH challenge sent before an answer, a
+`NOTICE` mid-stream, a subscription that says nothing, a `CLOSED` with a
+reason. Each of those fails *silently* against a real relay: the symptom is an
+empty list, which looks exactly like a quiet day. Reproducing them locally is
+the only way they stay caught.
+
+**3. The golden edition — does the boundary leave a good page alone?**
+
+The adversarial tests answer "does it stop the bad things". This answers the
+likelier way to ship something broken. It takes the 56 KB prototype broadsheet
+from `generator/src/test/resources/`, derives a corpus from what the page
+itself cites, and asserts that `resolve` + `validate` return it untouched and
+clean. A checker that quietly rejects a real broadsheet passes every
+adversarial test and prints nothing every morning. (Skipped automatically if
+you installed the skill on its own, without the repository.)
+
+**4. Live, against the relay — needs a reader with a working lens.**
+
+```bash
+node scripts/readiness.mjs <npub>              # exit 0 means ready
+node scripts/corpus.mjs <npub> --out corpus.json > digest.md
+```
+
+This is the layer CI cannot have, because the workflow's rule is that nothing
+in it talks to a relay. Run it by hand against an npub whose `kind 10040` names
+a `30382:rank` service with cards on the search relay. Two things to look at:
+the **Instrument** line in the digest — a low overlap between the ranked notes
+and the unranked control is the product working — and whether the desks
+returned anything at all.
+
+Useful check with a *broken* lens, which is easier to find: the desks should
+return nothing while the control run returns hundreds. That is the trust floor
+biting. It does not make the readiness gate redundant — the readiness probe
+deliberately sends no floor, precisely so it can still see the silent
+degradation to anonymous ranking.
+
+**And then the part no test covers.** Whether the paper is any *good* is a
+human read. Run the whole skill, open the file, and ask whether a person would
+want it tomorrow. That judgement is the actual product and there is no
+assertion for it.
+
 ## What it does not do
 
 Publish to your Blossom servers as an nsite, keep an archive, carry the

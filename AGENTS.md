@@ -192,6 +192,28 @@ would a `CLAUDE_CODE_OAUTH_TOKEN` pasted into anything of ours.
   local file shows the art. That is why the brief's `alt`-text rule earns its
   keep here rather than being theoretical.
 
+- **`resolve.mjs` exists because the brief promises it.** The brief says
+  `<img src="art-3">` and "the id is replaced with the real URL afterwards", and
+  "never write a raw URL in `src`". The first version of this skill told the
+  writer the opposite and validated URLs only, so a page written to the brief
+  would have had every picture rejected — the same two-halves-disagreeing bug as
+  the `nevent1` branch that captured nothing. `resolve.mjs` is that afterwards:
+  ids to URLs, unknown id loses its whole figure, links to the open web unwrapped
+  to plain text. It PRINTS every change that is not a plain resolution, because a
+  dropped figure or an unwrapped link is the visible edge of an injection attempt
+  and a sanitizer that tidies up in silence hides the one event worth seeing.
+
+- **Tests: `node --test "plugin/skills/nostr-observer/test/*.test.mjs"`,** wired
+  into `build.yml` alongside a `git diff --exit-code` on the generated
+  `reference/`. `test/fakerelay.mjs` is a dependency-free websocket server that
+  reproduces the AUTH-before-answer challenge, a mid-stream NOTICE, a silent
+  subscription and a CLOSED-with-reason, so the relay hazards above are held to
+  the same no-network rule as the rest of CI. The golden-edition test runs the
+  56 KB prototype broadsheet through `resolve` + `validate` with a corpus derived
+  from the page itself and asserts nothing is flagged: the adversarial tests ask
+  whether the boundary stops bad pages, and that one asks whether it damages good
+  ones, which is the likelier way to ship something broken.
+
 ## The publish path (Phase 3)
 
 - **The server holds no key and can sign nothing.** It builds the two events a
