@@ -1,0 +1,9 @@
+{
+  "name": "nostr-observer",
+  "description": "Print a personal Nostr newspaper front page, ranked through your own web of trust, as an artifact.",
+  "version": "0.1.0",
+  "author": { "name": "NosFabrica" },
+  "homepage": "https://github.com/NosFabrica/the-nostr-observer",
+  "license": "MIT",
+  "keywords": ["nostr", "newspaper", "web-of-trust", "nip-85", "nip-50"]
+}

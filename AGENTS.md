@@ -140,6 +140,58 @@ API key. A full run reads `ANTHROPIC_API_KEY` from the environment.
   message cap, filter count, subscription count and default limit. All of the
   above was one `curl -H "Accept: application/nostr+json"` away.
 
+## The Claude Code skill (`plugin/`)
+
+A second, much smaller implementation of the read path, in Node, shipped as a
+Claude Code skill. It exists because it is the only distribution of this product
+that can legitimately run on the reader's own Claude subscription: Anthropic's
+[legal-and-compliance page](https://code.claude.com/docs/en/legal-and-compliance)
+says OAuth is for "ordinary use of Claude Code and other native Anthropic
+applications" and that third-party developers may not "route requests through
+Free, Pro, or Max plan credentials on behalf of their users". Distributing a
+skill is distributing text; the reader's own Claude Code makes the call. A
+desktop app that spawns their `claude` CLI would not clear that bar, and neither
+would a `CLAUDE_CODE_OAUTH_TOKEN` pasted into anything of ours.
+
+- **NO NIP-45 COUNT ANYWHERE.** Every question it asks is a REQ. That is what
+  sidesteps the AUTH-challenge-before-COUNT behaviour, the four-concurrent-COUNTs
+  hang, and the spells of not answering COUNTs at all — all three recorded above.
+  The cost is stated in `readiness.mjs`: link 3 becomes present/absent instead of
+  a percentage, so the skill never reports `importing` and never prints a bar.
+  That is the existing contract (`Readiness.fraction` already returns null with no
+  honest denominator), not a new one.
+
+- **The readiness chain is a GATE, not a warning.** Same reason as everywhere
+  else: an unresolvable observer degrades silently. Measured 2026-08-21 against
+  `search-staging` with an npub that has no cards for its provider: the fourteen
+  desks returned 0 events while the control run returned 400 — the `filter:rank:gte:20`
+  floor bites where the bare `sort:rank` probe would have degraded quietly. Do not
+  read that as the floor making the gate unnecessary; the readiness probe itself
+  sends no floor, precisely so it can see the degradation.
+
+- **`validate.mjs` does two jobs, because there is no sanitizer.** In the Kotlin,
+  `Sanitizer` strips and `Validator` verifies. The skill has no stripping half, so
+  forbidden markup is REFUSED rather than removed — a silent strip would hide a
+  successful injection. Its haystack is the ranked desks only, matching
+  `Validator.kt`'s `corpus.all()`; the control run is not quotable.
+
+- **Permalinks are bare hex only**, stricter than `Validator.PERMALINK`. The
+  editorial brief says hex and the checker accepts hex, so the two halves cannot
+  drift apart the way they did when the regex allowed `nevent1…` in a branch that
+  captured nothing.
+
+- **`reference/` is generated.** `tools/sync-skill.sh` copies `system-prompt.md`
+  and `house.css` in and prepends a banner correcting the three statements in the
+  brief that are true only of the Messages API harness (a sanitizer runs after
+  you; the corpus is a `<corpus>` block; return HTML and nothing else). Run it
+  after editing either resource — the copies are committed, so `git diff
+  --exit-code` after running it says whether they are current.
+
+- **Artifacts block remote images.** Art is hotlinked by settled decision, so in
+  the artifact view every picture degrades to its caption and only the saved
+  local file shows the art. That is why the brief's `alt`-text rule earns its
+  keep here rather than being theoretical.
+
 ## The publish path (Phase 3)
 
 - **The server holds no key and can sign nothing.** It builds the two events a
