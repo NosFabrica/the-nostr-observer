@@ -168,3 +168,19 @@ test('THE GOLDEN EDITION survives the boundary intact', { skip: !existsSync(GOLD
   assert.ok(report.quotes.length > 0, 'fixture should quote people')
   assert.deepEqual(report.violations, [], 'the boundary must not damage a real broadsheet')
 })
+
+test('a real page head is not an attack', async () => {
+  // Found by printing an actual edition: banning <meta> outright to stop
+  // <meta refresh> rejects charset and viewport, which every page has. The
+  // golden fixture is a body fragment, so it had no <head> to catch this.
+  // Same false-positive class as the prose that read as an event handler.
+  const head = '<meta charset="utf-8">'
+    + '<meta name="viewport" content="width=device-width, initial-scale=1">'
+    + '<title>The Nostr Observer</title>'
+  assert.deepEqual(kinds(head), [])
+
+  // Only the redirecting form is refused.
+  assert.deepEqual(kinds('<meta http-equiv="refresh" content="0;url=https://evil.example">'), ['MARKUP'])
+  assert.deepEqual(kinds('<base href="https://evil.example/">'), ['MARKUP'],
+    '<base> rewrites every relative URL on the page and is refused outright')
+})

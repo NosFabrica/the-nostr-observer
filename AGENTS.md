@@ -265,6 +265,38 @@ Five bugs, three of them one root cause, plus the two costs nobody had measured.
   long-form reads as a quiet day for long-form, and a thin honest paper is
   supposed to mean one.
 
+### First real edition, 2026-08-22
+
+The chain passed for the first time, against the key in `Fixtures.OBSERVER`, and
+`system-prompt.md` met a model. Readiness green on all four links; 671 events
+across 13 desks in 3.0s; 247 voices; **overlap 0 of 400**. The boundary came
+back clean on the first pass — 21 quotes verbatim, 3 art ids resolved, nothing
+dropped or unwrapped. Edition D8C3EA.
+
+Three things the run found that no test could:
+
+- **Banning `<meta>` outright rejects every real page.** The audit added it to
+  stop `<meta http-equiv="refresh">` and took `charset` and `viewport` with it.
+  Narrowed to the http-equiv form. The golden fixture is a body fragment, so it
+  has no `<head>` and could never have caught this — the same false-positive
+  class as the prose that read as an event handler, found the same way, by
+  running the thing rather than testing it.
+
+- **The Node digest drops structured fields the brief depends on.** `Digest.kt`
+  emits `PRICE`/`STATUS` for classifieds, `WHEN`/`LOCATION` for calendar, and
+  `AUTHOR`/`SOURCE`/`CONTEXT` for highlights; `corpus.mjs` emits title and
+  content only. They were recoverable from the raw tags in `corpus.json` by
+  hand, but unaided this prints a shop column with no prices — "everything
+  except the news" — and invites attributing a highlight excerpt to the
+  highlighter, which the brief forbids outright. Highest-value next fix.
+
+- **No reader timezone, and no denominator.** The brief says never print UTC and
+  never convert a time yourself; the digest carries only UTC, so the dateline's
+  date is a judgement rather than something handed over. And with no COUNT there
+  is no honest `N of M`, so the middle span read "671 events through your lens"
+  instead. Both are the cost of the no-COUNT rule and the thin digest, and both
+  are visible on the furniture of every edition.
+
 ## The publish path (Phase 3)
 
 - **The server holds no key and can sign nothing.** It builds the two events a

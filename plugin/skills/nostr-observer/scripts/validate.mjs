@@ -138,8 +138,14 @@ const FORBIDDEN_TAGS = new Map([
   ['input', 'a form control'], ['button', 'a form control'],
   ['textarea', 'a form control'], ['select', 'a form control'],
   ['base', 'a <base> tag, which rewrites every relative URL on the page'],
-  ['meta', 'a <meta> tag, which can carry a refresh redirect'],
 ])
+
+// `<meta>` is not forbidden — a page needs charset and viewport. Only the
+// http-equiv form is, because that is the one that can carry a refresh
+// redirect. Banning the element outright rejected the very first real page
+// this checked, which is the same false-positive class as the prose that read
+// as an event handler.
+const FORBIDDEN_META = /^\s*(refresh|content-security-policy|set-cookie|location)\s*$/i
 
 const FORBIDDEN_SCHEME = /^\s*(javascript|vbscript|data)\s*:/i
 
@@ -152,6 +158,9 @@ export function markupViolations (html) {
     const forbidden = FORBIDDEN_TAGS.get(tag.name)
     if (forbidden) out.push({ kind: 'MARKUP', detail: `the page contains ${forbidden}`, excerpt: tag.raw.slice(0, 80) })
     const attrs = attrsOf(tag.raw)
+    if (tag.name === 'meta' && FORBIDDEN_META.test(attrs['http-equiv'] || '')) {
+      out.push({ kind: 'MARKUP', detail: `a <meta http-equiv="${attrs['http-equiv']}">, which redirects or rewrites policy`, excerpt: tag.raw.slice(0, 80) })
+    }
     for (const [name, value] of Object.entries(attrs)) {
       if (name.startsWith('on')) {
         out.push({ kind: 'MARKUP', detail: `the page contains an inline event handler (${name}=)`, excerpt: tag.raw.slice(0, 80) })
