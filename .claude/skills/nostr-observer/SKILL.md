@@ -131,6 +131,13 @@ Read both of these now, at `<skill>/reference/`:
 Write one complete, self-contained HTML file. The layout is yours and it should
 change from day to day — this is a newspaper, not a template.
 
+**Only use classes house.css actually defines.** The grid is twelve columns and
+the spans are `.span-3`, `.span-4`, `.span-5`, `.span-6`, `.span-8` and
+`.span-12` — there is no `.span-7`, and an edition that asked for one put its
+lead story in a strip a word wide with half the fold blank. A class with no
+rule behind it does not fall back to something sensible; it does nothing at
+all. Step 6 checks this now, but it is cheaper to read the stylesheet.
+
 **Pictures go in as their id — `<img src="art-3">`, never as a URL.** Step 5
 resolves them. This is not a formality: a URL you compose is indistinguishable
 from one you invented, and citing ids makes a fabricated picture structurally
@@ -193,6 +200,7 @@ even when it is inconvenient.
 | **IMAGE** | After Step 5 every `<img src>` must be a shortlist URL. That happens by itself if you wrote ids; it fails if you wrote a URL yourself. |
 | **LINK** | The only permitted link is `https://njump.me/<64-hex-event-id>` for an event in the corpus. **Bare hex, not `nevent1…`.** Everything else — including a URL that appeared in the corpus — is refused. |
 | **MARKUP** | No `<script>`, no `<iframe>`, no `on…=` handlers, no `javascript:`, no forms. The paper collects nothing and runs nothing. |
+| **STYLE** | Every class the page uses must have a rule in the stylesheet it inlined. The page is self-contained, so there is nowhere else a class could be defined: one with no rule is a typo, and a typo in a span class silently collapses the layout. |
 
 The link rule is the one that looks too strict. It is not: an early version
 allowlisted any URL found in the corpus, and posting `https://evil.example/x`
@@ -207,7 +215,7 @@ Do both, in this order:
 
 1. **Tell the reader the local file path.** That file is the real edition, and
    it is the one where the photographs load.
-3. **Publish the same HTML as an artifact** so they can read it immediately.
+2. **Publish the same HTML as an artifact** so they can read it immediately.
 
 Then say plainly: *the artifact view blocks remote images, so the pictures show
 as their alt text and captions there; open the local file to see the art.*

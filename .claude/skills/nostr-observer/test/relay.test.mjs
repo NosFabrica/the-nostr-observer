@@ -5,10 +5,15 @@
 // fails SILENTLY in production: the symptom is an empty list, which looks
 // exactly like a quiet day.
 
-import { test } from 'node:test'
+import { test, beforeEach } from 'node:test'
 import assert from 'node:assert/strict'
-import { req, closeAll, MAX_REQ_BYTES } from '../scripts/nostr.mjs'
+import { req, closeAll, bytesRead, resetBytesRead, MAX_REQ_BYTES, MAX_SUB_BYTES, MAX_RUN_BYTES } from '../scripts/nostr.mjs'
 import { fakeRelay, event } from './fakerelay.mjs'
+
+// The run budget is process-wide, so the flood tests below leave ~90 MB on the
+// counter. Without this, the next test anyone adds inherits it and truncates
+// on its first frame, for reasons nowhere near where it fails.
+beforeEach(resetBytesRead)
 
 test('an AUTH challenge sent before the answer is not read as the answer', async () => {
   // "search-staging sends an AUTH challenge before answering, even though
@@ -171,4 +176,100 @@ test('the byte budget is measured in BYTES', async () => {
   assert.ok(frame.length < MAX_REQ_BYTES, 'fixture must look small by character count')
   assert.ok(Buffer.byteLength(frame) > MAX_REQ_BYTES, 'and be oversized by byte count')
   await assert.rejects(() => req('ws://127.0.0.1:1', wide), /over the .* budget/)
+})
+
+// --- how much a read may bring back ------------------------------------------
+
+test('one runaway subscription is cut off, and says so', async () => {
+  // MAX_REQ_BYTES guards what we send; nothing guarded what comes back. The
+  // idle window bounds time, not volume, so a relay streaming hard for
+  // twenty-five seconds could fill the disk. `--relay` takes any URL.
+  const fat = 'x'.repeat(200_000)
+  const relay = await fakeRelay((filters, sub) => {
+    const out = []
+    for (let i = 0; i < 200; i++) out.push(['EVENT', sub, event(`fat${i}`, { content: fat })])
+    out.push(['EOSE', sub])
+    return out
+  })
+  try {
+    resetBytesRead()
+    const { events, note } = await req(relay.url, { kinds: [1] }, { idleMs: 2_000 })
+    assert.match(note, /^truncated/, `expected truncation, got ${JSON.stringify(note)}`)
+    // KEPT, not dropped: an empty desk reads as a quiet day for that desk.
+    assert.ok(events.length > 0, 'what already arrived is kept')
+    assert.ok(events.length < 200, 'and the rest is not')
+    assert.ok(bytesRead() > MAX_SUB_BYTES, 'the budget was actually reached')
+  } finally { closeAll(); await relay.close() }
+})
+
+test('an ordinary read is nowhere near the budget', async () => {
+  // Measured on a live window: the largest single subscription was 452 KB and
+  // the whole run 1.75 MB, against a 16 MB cap. The guard must not be near
+  // anything real.
+  const relay = await fakeRelay((filters, sub) => [
+    ...Array.from({ length: 50 }, (_, i) => ['EVENT', sub, event(`n${i}`, { content: 'x'.repeat(500) })]),
+    ['EOSE', sub],
+  ])
+  try {
+    resetBytesRead()
+    const { events, note } = await req(relay.url, { kinds: [1] })
+    assert.equal(events.length, 50)
+    assert.equal(note, null, 'a normal read is not truncated')
+    assert.ok(bytesRead() < MAX_SUB_BYTES / 100, `read ${bytesRead()} bytes, should be a rounding error`)
+  } finally { closeAll(); await relay.close() }
+})
+
+test('bytesRead accumulates across subscriptions', async () => {
+  const relay = await fakeRelay((filters, sub) => [['EVENT', sub, event(`e${sub}`)], ['EOSE', sub]])
+  try {
+    resetBytesRead()
+    assert.equal(bytesRead(), 0)
+    await req(relay.url, { kinds: [1] })
+    const one = bytesRead()
+    assert.ok(one > 0)
+    await req(relay.url, { kinds: [20] })
+    assert.ok(bytesRead() > one, 'the run budget is shared, not per-read')
+  } finally { closeAll(); await relay.close() }
+})
+
+test('THE BUDGET CANNOT BE BYPASSED BY UNMATCHED FRAMES', async () => {
+  // The first version counted only EVENT frames matched to a live
+  // subscription, which left the guard bypassable by exactly the adversary it
+  // exists for. Measured before the fix: 30 MB streamed under a subscription
+  // id we never opened, and bytesRead() stayed at 0.00 MB.
+  const fat = 'x'.repeat(200_000)
+  for (const [name, makeFrame] of [
+    ['a subscription id we never opened', () => ['EVENT', 'not-your-sub', event('x', { content: fat })]],
+    ['NOTICE spam', () => ['NOTICE', fat]],
+    ['a frame for a verb we do not handle', () => ['OK', 'whatever', true, fat]],
+  ]) {
+    const relay = await fakeRelay((f, sub) => {
+      const out = []
+      for (let i = 0; i < 40; i++) out.push(makeFrame())
+      out.push(['EOSE', sub])
+      return out
+    })
+    try {
+      resetBytesRead()
+      await req(relay.url, { kinds: [1] }, { idleMs: 800 })
+      assert.ok(bytesRead() > 1_000_000, `${name}: only ${bytesRead()} bytes counted — the door is not weighing them`)
+    } finally { closeAll(); await relay.close() }
+  }
+})
+
+test('the run budget stops an unmatched flood and reports it', async () => {
+  const fat = 'x'.repeat(500_000)
+  const relay = await fakeRelay((f, sub) => {
+    const out = []
+    for (let i = 0; i < 200; i++) out.push(['EVENT', 'not-your-sub', event(`x${i}`, { content: fat })])
+    out.push(['EOSE', sub])
+    return out
+  })
+  try {
+    resetBytesRead()
+    const { note } = await req(relay.url, { kinds: [1] }, { idleMs: 3_000 })
+    assert.match(note, /^truncated: the run/, `expected the run budget to fire, got ${JSON.stringify(note)}`)
+    // ~100 MB was offered; it must stop near 64, not run to the end.
+    assert.ok(bytesRead() < MAX_RUN_BYTES * 1.2, `read ${(bytesRead() / 1048576).toFixed(0)} MB past a ${MAX_RUN_BYTES / 1048576} MB budget`)
+  } finally { closeAll(); await relay.close() }
 })

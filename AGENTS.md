@@ -348,6 +348,88 @@ findings, and the interesting one is not the images.
   and it is a harder problem than the quote rule: there is no source text to
   compare a caption against, only the post it came from.
 
+### The layout channel had no gate either (2026-08-22)
+
+Second live edition, `3F1527`, 673 events. It passed the boundary CLEAN on the
+first attempt and rendered wrong: the lead story came out in a strip about 150
+pixels wide, one or two words per line, with the right half of the fold blank.
+
+- **The cause was one class that does not exist.** The page said
+  `<div class="col span-7">` beside `<div class="col span-5">`. `house.css`
+  defines `.span-3`, `.span-4`, `.span-5`, `.span-6`, `.span-8` and `.span-12`
+  and has never had a `.span-7`, so that div declared no `grid-column` and fell
+  back to one column of the twelve. Its sibling was fine, which is why six of
+  twelve columns went unused. Fixed to `span-8` / `span-4`.
+
+- **The same shape as the caption finding, one section up.** Quotes, art and
+  links were all correct, and the validator only checks quotes, art and links.
+  A class name is a claim about the stylesheet, nobody was checking it, and an
+  undefined class fails silently rather than loudly — CSS has no such thing as
+  an error. Third channel found with no gate on it.
+
+- **This one IS mechanically checkable, unlike a caption.** The page is required
+  to be self-contained, so its own inlined `<style>` is the entire universe of
+  what a class can mean: no external sheet, no script using it as a hook, no
+  build step adding one later. `validate.mjs` now flags any class with no rule
+  behind it as `STYLE`, keyed on the presence of a `<style>` element rather than
+  on whether it defined anything — a stylesheet commented out wholesale is
+  exactly the case worth reporting. Both real editions still pass; the `span-7`
+  version fails with one violation naming the class.
+
+- **One violation per class name, not per element.** A bad class in a repeated
+  component would otherwise bury every other finding in the report.
+
+### What the skill may download
+
+Asked 2026-08-22, measured rather than assumed. Two gaps, one of them shared
+with the Kotlin.
+
+- **Outbound was capped, inbound was not.** `MAX_REQ_BYTES` guards the REQ we
+  send; nothing counted what came back, and the idle window bounds time rather
+  than volume — a relay streaming hard for twenty-five seconds could fill the
+  disk, and `--relay` takes any URL. There is now a per-subscription budget of
+  16 MB and a per-run budget of 64 MB. Sized off the real thing: measured on a
+  live window the largest single subscription was **452 KB** and the whole run
+  **1.75 MB**, while the largest LEGITIMATE subscription the desks can ask for
+  is long-form at 100 × the relay's advertised `max_content_length` of 131,072,
+  which is 12.5 MB. Hitting either budget keeps what arrived and REPORTS it —
+  dropping the lot would turn a runaway relay into an empty desk, which reads
+  as a quiet day for that desk. `corpus.mjs` now also prints megabytes read.
+  `Relays.kt` counts no bytes either; the gap is the design's, not the port's.
+
+  **The first version of that budget did not work, and the audit of it is worth
+  keeping.** It counted only EVENT frames matched to a live subscription, which
+  left the guard bypassable by precisely the adversary it exists for. Measured:
+  30 MB streamed under a subscription id we never opened, again as NOTICE spam,
+  and `bytesRead()` reported 0.00 MB both times while the run finished looking
+  normal. Bytes are now weighed AT THE DOOR — every frame, before it is matched
+  or even parsed — with the per-subscription share still attributed in `push`.
+  A guard that only counts the traffic it was already going to accept is not a
+  guard.
+
+- **A short desk was still a silent desk.** The same change surfaced truncation
+  and nothing else, so a read that went `idle` because the relay stopped
+  talking, or that the relay `CLOSED`, came back short with nothing said —
+  which is the quiet-day story the truncation reporting exists to prevent, one
+  branch over. Desks and the control run now report ANY note, as the profile
+  fetch already did.
+
+- **The profile fetch lost bylines past 500 authors, silently.** It chunked by
+  the REQ byte budget — up to 2,742 authors in one filter — and carried no
+  `limit`, so this relay's `default_limit: 500` applied. Any window surfacing
+  more than 500 authors got 500 kind 0s and everyone else appeared in the paper
+  as an npub, with nothing saying so. Measured windows hold ~250 authors, so it
+  never bit; it was waiting for a busier lens. Now chunked at 400 with an
+  explicit limit. **`ReadinessProbe.profileFilter` (line 221) has the identical
+  shape and the identical gap.**
+
+The filters themselves use BOTH `since`/`until` and `limit`, and they do
+different jobs: the window is the candidate set, and `limit` is the top-N cut
+by rank inside it — the lens's cutoff, not pagination. The readiness probe uses
+`since` with no `until` on purpose (it asks whether a ranked read comes back at
+all, open-ended to now), and the metadata reads use neither, because a kind
+10002 that has not changed in eighteen months must still be found.
+
 ## The publish path (Phase 3)
 
 - **The server holds no key and can sign nothing.** It builds the two events a

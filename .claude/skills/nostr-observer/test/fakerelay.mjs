@@ -15,11 +15,28 @@ import { createHash } from 'node:crypto'
 
 const GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11'
 
+/**
+ * One text frame. All three length forms, including the 64-bit one.
+ *
+ * The 16-bit form tops out at 65,535 bytes, and only the 7-bit and 16-bit
+ * forms existed here until a test tried to stream 200 KB events at the read
+ * budget and the double threw instead of the code under test. A harness that
+ * cannot reproduce the condition cannot test the guard.
+ */
 function encode (text) {
   const payload = Buffer.from(text, 'utf8')
-  const header = payload.length < 126
-    ? Buffer.from([0x81, payload.length])
-    : Buffer.concat([Buffer.from([0x81, 126]), (() => { const b = Buffer.alloc(2); b.writeUInt16BE(payload.length); return b })()])
+  let header
+  if (payload.length < 126) {
+    header = Buffer.from([0x81, payload.length])
+  } else if (payload.length < 65_536) {
+    header = Buffer.alloc(4)
+    header[0] = 0x81; header[1] = 126
+    header.writeUInt16BE(payload.length, 2)
+  } else {
+    header = Buffer.alloc(10)
+    header[0] = 0x81; header[1] = 127
+    header.writeBigUInt64BE(BigInt(payload.length), 2)
+  }
   return Buffer.concat([header, payload])
 }
 

@@ -126,6 +126,33 @@ export function shortNpub (hex) {
 export const MAX_REQ_BYTES = 240_000
 
 /**
+ * How much a single subscription, and a whole run, may READ.
+ *
+ * `MAX_REQ_BYTES` guards what we send. Nothing guarded what comes back: the
+ * idle window bounds time, not volume, so a relay that streams hard for
+ * twenty-five seconds could fill the disk and wedge the run. `--relay` takes
+ * any URL, and the events themselves are written by strangers.
+ *
+ * Sized off the real thing rather than a guess. Measured on a live 24-hour
+ * window: the largest single subscription was 452 KB, and the whole run
+ * 1.75 MB. The largest LEGITIMATE subscription this skill can ask for is the
+ * long-form desk — 100 events at the relay's advertised `max_content_length`
+ * of 131,072 — which is 12.5 MB. So 16 MB clears every honest case with room
+ * over it, and 64 MB for the run clears fifteen desks doing the same.
+ *
+ * Hitting either is REPORTED, never silent. A short corpus that looks like a
+ * quiet day is the failure mode this project keeps paying for.
+ */
+export const MAX_SUB_BYTES = 16 * 1024 * 1024
+export const MAX_RUN_BYTES = 64 * 1024 * 1024
+
+let runBytes = 0
+/** Bytes read from relays so far this process. */
+export function bytesRead () { return runBytes }
+/** Reset the run budget. For tests; a real run is one process. */
+export function resetBytesRead () { runBytes = 0 }
+
+/**
  * One socket per relay, shared by every subscription on it.
  *
  * The first version opened a fresh WebSocket per read: six for the readiness
@@ -184,12 +211,26 @@ function connect (url) {
   conn.socket.addEventListener('error', () => fail(`socket error on ${url}`))
   conn.socket.addEventListener('close', () => fail('socket closed'))
   conn.socket.addEventListener('message', (message) => {
+    // WEIGHED AT THE DOOR, BEFORE ANYTHING IS MATCHED OR EVEN PARSED.
+    //
+    // The first version of this budget counted only EVENT frames that matched
+    // a live subscription — which left the whole guard bypassable by the exact
+    // adversary it exists for. Measured: 30 MB streamed under a subscription
+    // id we never opened, and again as NOTICE spam, and `bytesRead()` stayed
+    // at 0.00 MB both times while the run completed looking normal. Garbage
+    // that fails to parse was free too.
+    const size = Buffer.byteLength(message.data)
+    runBytes += size
+    if (runBytes > MAX_RUN_BYTES) {
+      return fail(`truncated: the run passed ${(MAX_RUN_BYTES / 1048576).toFixed(0)} MB in total`)
+    }
+
     let frame
     try { frame = JSON.parse(message.data) } catch { return }
     if (!Array.isArray(frame)) return
     const [verb, id] = frame
 
-    if (verb === 'EVENT') { subs.get(id)?.push(frame[2]); return }
+    if (verb === 'EVENT') { subs.get(id)?.push(frame[2], size); return }
     if (verb === 'EOSE') { subs.get(id)?.finish(null); return }
     if (verb === 'CLOSED') { subs.get(id)?.finish(`relay closed the subscription: ${frame[2] || 'no reason given'}`); return }
     if (verb === 'NOTICE') process.stderr.write(`  notice from ${url}: ${frame[1]}\n`)
@@ -262,11 +303,21 @@ export function req (url, filters, { idleMs = 15_000, label = '' } = {}) {
       idle = setTimeout(() => finish('idle'), idleMs)
     }
 
+    let subBytes = 0
     conn.subs.set(sub, {
       finish,
       touch,
-      push: (event) => {
+      push: (event, frameBytes) => {
+        // Only this subscription's share. The run total is counted at the
+        // door, where unmatched frames are visible too.
+        subBytes += frameBytes
         if (event?.id && !seen.has(event.id)) { seen.add(event.id); events.push(event) }
+        // Keep what already arrived and say the read was cut short. Dropping
+        // it would turn a runaway relay into an empty desk, which reads as a
+        // quiet day for that desk and is exactly the wrong story.
+        if (subBytes > MAX_SUB_BYTES) {
+          return finish(`truncated: this read passed ${(MAX_SUB_BYTES / 1048576).toFixed(0)} MB`)
+        }
         touch()
       },
     })
