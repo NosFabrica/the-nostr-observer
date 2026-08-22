@@ -45,6 +45,21 @@ you exactly what it is waiting on rather than printing a paper chosen some other
 way. And editions are made on demand — a paper that arrives every morning without
 you asking is next.
 
+## Try it in Claude Code
+
+There is a taster that runs entirely on your own machine, with no account here
+at all: a Claude Code skill that reads your web of trust, prints a front page
+and hands it to you as an artifact. It uses your own Claude Code — no API key,
+nothing to sign up for.
+
+```bash
+cp -r plugin/skills/nostr-observer ~/.claude/skills/
+```
+
+Then ask Claude Code to print your Nostr Observer. See
+[`plugin/README.md`](plugin/README.md). It prints today's paper once; it does
+not publish to your media servers, keep an archive, or arrive every morning.
+
 The design is written up in [`docs/PLAN.md`](docs/PLAN.md).
 
 ---

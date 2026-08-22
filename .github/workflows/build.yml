@@ -30,6 +30,27 @@ jobs:
       - name: Build, test and check formatting
         run: ./gradlew build --no-daemon --console=plain
 
+      # The Claude Code skill is Node, not Kotlin, so gradle never sees it. Its
+      # tests use a fake relay that reproduces the hazards in AGENTS.md — the
+      # AUTH challenge sent before an answer, the subscription that says
+      # nothing — rather than dialling search-staging, so this step holds to
+      # the same no-network rule as the one below.
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+
+      - name: Test the Claude Code skill
+        run: node --test "plugin/skills/nostr-observer/test/*.test.mjs"
+
+      # `reference/` is generated. If someone edits system-prompt.md or
+      # house.css and does not re-run the sync, the skill ships yesterday's
+      # brief — silently, because nothing else reads those copies.
+      - name: Check the skill's generated files are current
+        run: |
+          ./tools/sync-skill.sh
+          git diff --exit-code -- plugin/skills/nostr-observer/reference \
+            || { echo "::error::plugin/skills/nostr-observer/reference is stale - run tools/sync-skill.sh"; exit 1; }
+
       # Nothing in this job talks to a relay or to the model API. Every test is
       # meant to pass with no network at all, and a test that quietly needed one
       # would stop running the first week CI was busy.

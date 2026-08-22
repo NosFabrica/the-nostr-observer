@@ -140,6 +140,194 @@ API key. A full run reads `ANTHROPIC_API_KEY` from the environment.
   message cap, filter count, subscription count and default limit. All of the
   above was one `curl -H "Accept: application/nostr+json"` away.
 
+## The Claude Code skill (`plugin/`)
+
+A second, much smaller implementation of the read path, in Node, shipped as a
+Claude Code skill. It exists because it is the only distribution of this product
+that can legitimately run on the reader's own Claude subscription: Anthropic's
+[legal-and-compliance page](https://code.claude.com/docs/en/legal-and-compliance)
+says OAuth is for "ordinary use of Claude Code and other native Anthropic
+applications" and that third-party developers may not "route requests through
+Free, Pro, or Max plan credentials on behalf of their users". Distributing a
+skill is distributing text; the reader's own Claude Code makes the call. A
+desktop app that spawns their `claude` CLI would not clear that bar, and neither
+would a `CLAUDE_CODE_OAUTH_TOKEN` pasted into anything of ours.
+
+- **NO NIP-45 COUNT ANYWHERE.** Every question it asks is a REQ. That is what
+  sidesteps the AUTH-challenge-before-COUNT behaviour, the four-concurrent-COUNTs
+  hang, and the spells of not answering COUNTs at all — all three recorded above.
+  The cost is stated in `readiness.mjs`: link 3 becomes present/absent instead of
+  a percentage, so the skill never reports `importing` and never prints a bar.
+  That is the existing contract (`Readiness.fraction` already returns null with no
+  honest denominator), not a new one.
+
+- **The readiness chain is a GATE, not a warning.** Same reason as everywhere
+  else: an unresolvable observer degrades silently. Measured 2026-08-21 against
+  `search-staging` with an npub that has no cards for its provider: the fourteen
+  desks returned 0 events while the control run returned 400 — the `filter:rank:gte:20`
+  floor bites where the bare `sort:rank` probe would have degraded quietly. Do not
+  read that as the floor making the gate unnecessary; the readiness probe itself
+  sends no floor, precisely so it can see the degradation.
+
+- **`validate.mjs` does two jobs, because there is no sanitizer.** In the Kotlin,
+  `Sanitizer` strips and `Validator` verifies. The skill has no stripping half, so
+  forbidden markup is REFUSED rather than removed — a silent strip would hide a
+  successful injection. Its haystack is the ranked desks only, matching
+  `Validator.kt`'s `corpus.all()`; the control run is not quotable.
+
+- **Permalinks are bare hex only**, stricter than `Validator.PERMALINK`. The
+  editorial brief says hex and the checker accepts hex, so the two halves cannot
+  drift apart the way they did when the regex allowed `nevent1…` in a branch that
+  captured nothing.
+
+- **`reference/` is generated.** `tools/sync-skill.sh` copies `system-prompt.md`
+  and `house.css` in and prepends a banner correcting the three statements in the
+  brief that are true only of the Messages API harness (a sanitizer runs after
+  you; the corpus is a `<corpus>` block; return HTML and nothing else). Run it
+  after editing either resource — the copies are committed, so `git diff
+  --exit-code` after running it says whether they are current.
+
+- **Artifacts block remote images.** Art is hotlinked by settled decision, so in
+  the artifact view every picture degrades to its caption and only the saved
+  local file shows the art. That is why the brief's `alt`-text rule earns its
+  keep here rather than being theoretical.
+
+- **`resolve.mjs` exists because the brief promises it.** The brief says
+  `<img src="art-3">` and "the id is replaced with the real URL afterwards", and
+  "never write a raw URL in `src`". The first version of this skill told the
+  writer the opposite and validated URLs only, so a page written to the brief
+  would have had every picture rejected — the same two-halves-disagreeing bug as
+  the `nevent1` branch that captured nothing. `resolve.mjs` is that afterwards:
+  ids to URLs, unknown id loses its whole figure, links to the open web unwrapped
+  to plain text. It PRINTS every change that is not a plain resolution, because a
+  dropped figure or an unwrapped link is the visible edge of an injection attempt
+  and a sanitizer that tidies up in silence hides the one event worth seeing.
+
+- **Tests: `node --test "plugin/skills/nostr-observer/test/*.test.mjs"`,** wired
+  into `build.yml` alongside a `git diff --exit-code` on the generated
+  `reference/`. `test/fakerelay.mjs` is a dependency-free websocket server that
+  reproduces the AUTH-before-answer challenge, a mid-stream NOTICE, a silent
+  subscription and a CLOSED-with-reason, so the relay hazards above are held to
+  the same no-network rule as the rest of CI. The golden-edition test runs the
+  56 KB prototype broadsheet through `resolve` + `validate` with a corpus derived
+  from the page itself and asserts nothing is flagged: the adversarial tests ask
+  whether the boundary stops bad pages, and that one asks whether it damages good
+  ones, which is the likelier way to ship something broken.
+
+### Audit, 2026-08-22
+
+Five bugs, three of them one root cause, plus the two costs nobody had measured.
+
+- **A `>` inside any attribute value made the boundary FAIL OPEN.** Element
+  lookup was `<img\b[^>]*?\bsrc=…`, and `[^>]*?` ends at the first `>` wherever
+  it is — so `<img alt="a > b" src="https://evil.example/x.jpg">` was never
+  matched and never checked, and `<a title="1 > 2" href="…">` slipped the link
+  rule the same way. Captions come from the corpus, and the corpus is where the
+  attacker writes. `resolve.mjs` was blind in the same place, so an id inside
+  such a tag shipped as a literal `src="art-3"` that validate could not see
+  either. All three now go through `html.mjs`, a scanner that tracks quoting.
+  A regex cannot do this: knowing where a tag ends means knowing whether you
+  are inside a quoted value.
+
+- **`/\son[a-z]+\s*=/` over the raw document read prose as an attack.** "we ran
+  it once=twice" and "the flag is only=set" both tripped it. That fails CLOSED,
+  so it is the golden edition's failure mode — a boundary that rejects good
+  pages prints nothing every morning — and it walked past the golden test only
+  because the fixture happens to contain no such phrase. Markup checks now run
+  against parsed tags and attribute names. Two holes closed on the way past:
+  `<base href>` rewrites every relative URL on the page and `<meta refresh>`
+  redirects it, and neither was refused.
+
+- **The REQ budget counted characters where the relay counts bytes.** A filter
+  up to twice `max_message_length` passed the guard and was then dropped in
+  silence — precisely the failure the guard exists to prevent. `Buffer.byteLength`.
+
+- **One socket per read.** Six for the readiness chain, sixteen for a corpus
+  pull, each a fresh handshake to a host this file says not to hammer, and
+  which advertises a subscription limit of fifty. `nostr.mjs` now pools one
+  connection per relay and multiplexes subscriptions over it, as `Relays.kt`
+  does with quartz's single `NostrClient`; it closes on an unref'd linger so
+  consecutive reads reuse it and an idle process still exits. The fake relay
+  counts connections so the rule stays true. Readiness also stopped fetching
+  the 10002 and the 10040 one after the other — they are independent — and the
+  storage chain rides along instead of costing a seventh round trip. Measured
+  after: readiness 0.8s, a full fifteen-desk corpus pull 3.0s.
+
+- **The digest was unbounded, and the reader pays for it.** Measured on a
+  realistic busy window it came to 335,000 characters — about 84,000 tokens —
+  before the writer had done anything, most of it long-form excerpted at the
+  same length as a one-line note. Now per-desk excerpt lengths and a 200,000
+  character budget, which lands a busy day at ~50,000 tokens and leaves a quiet
+  day untouched. Trimming has a floor per desk, because trimming purely by size
+  cut the notes to 64 of 400 to protect a long-form column nobody asked for —
+  the budget making an editorial decision, which is not its job. **Whatever
+  comes off is named in the digest**: a digest that quietly drops half the
+  long-form reads as a quiet day for long-form, and a thin honest paper is
+  supposed to mean one.
+
+### First real edition, 2026-08-22
+
+The chain passed for the first time, against the key in `Fixtures.OBSERVER`, and
+`system-prompt.md` met a model. Readiness green on all four links; 671 events
+across 13 desks in 3.0s; 247 voices; **overlap 0 of 400**. The boundary came
+back clean on the first pass — 21 quotes verbatim, 3 art ids resolved, nothing
+dropped or unwrapped. Edition D8C3EA.
+
+Three things the run found that no test could:
+
+- **Banning `<meta>` outright rejects every real page.** The audit added it to
+  stop `<meta http-equiv="refresh">` and took `charset` and `viewport` with it.
+  Narrowed to the http-equiv form. The golden fixture is a body fragment, so it
+  has no `<head>` and could never have caught this — the same false-positive
+  class as the prose that read as an event handler, found the same way, by
+  running the thing rather than testing it.
+
+- **The Node digest drops structured fields the brief depends on.** `Digest.kt`
+  emits `PRICE`/`STATUS` for classifieds, `WHEN`/`LOCATION` for calendar, and
+  `AUTHOR`/`SOURCE`/`CONTEXT` for highlights; `corpus.mjs` emits title and
+  content only. They were recoverable from the raw tags in `corpus.json` by
+  hand, but unaided this prints a shop column with no prices — "everything
+  except the news" — and invites attributing a highlight excerpt to the
+  highlighter, which the brief forbids outright. Highest-value next fix.
+
+- **No reader timezone, and no denominator.** The brief says never print UTC and
+  never convert a time yourself; the digest carries only UTC, so the dateline's
+  date is a judgement rather than something handed over. And with no COUNT there
+  is no honest `N of M`, so the middle span read "671 events through your lens"
+  instead. Both are the cost of the no-COUNT rule and the thin digest, and both
+  are visible on the furniture of every edition.
+
+### Alt text is the fabrication channel nothing guards
+
+Reviewing why the first edition's photographs did not appear, 2026-08-22. Three
+findings, and the interesting one is not the images.
+
+- **The markup and the URLs were correct.** All three resolved to live hosts,
+  HTTP 200, right content-types, two of them serving `access-control-allow-origin: *`.
+  The artifact viewer runs a content policy that refuses every external host, so
+  the pictures never load there however good the URL is. Not a bug and not
+  fixable from inside the page; the saved local file shows them fine.
+
+- **`imeta alt` is a fiction in the wild: 0 of 40 shortlisted pictures carried
+  one.** `Art.kt` keeps `alt` on the theory that it is "the difference between a
+  missing image degrading to a caption and degrading to a gap". That only works
+  if somebody writes it, and on a real 24-hour window nobody did. So the writer
+  has to author the alt, and `SKILL.md` never asked it to — the first edition
+  shipped three bare `<img>` tags and degraded to three empty boxes, which is
+  precisely the outcome the alt rule exists to prevent.
+
+- **THE REAL ONE: nothing checks captions or alt.** `Validator` gates quotes,
+  picture sources and links. A caption is prose about a photograph the writer has
+  never seen, published under a real person's byline, through the only channel in
+  the pipeline with no gate on it. Two of the first edition's three captions
+  asserted things not in evidence — one described the contents of a frame, the
+  other said a picture was taken close up when the post said you would have to
+  zoom in to see anything. Both were caught by reading, which does not scale.
+  `SKILL.md` now forbids describing a picture you cannot see and requires caption
+  and alt to be derived from the post. **A mechanical check is still missing**,
+  and it is a harder problem than the quote rule: there is no source text to
+  compare a caption against, only the post it came from.
+
 ## The publish path (Phase 3)
 
 - **The server holds no key and can sign nothing.** It builds the two events a
