@@ -13,13 +13,28 @@ plan, the same way it does for everything else you use it for.
 Node 22 or newer is required (the scripts use the built-in `WebSocket`, so
 there is nothing to `npm install`).
 
-Copy the skill into your Claude Code skills directory:
+Two ways in. Open the repository in Claude Code and the skill is already
+loaded — it lives in this repo's own `.claude/skills/`, which is where Claude
+Code looks for project skills:
+
+```bash
+git clone https://github.com/NosFabrica/the-nostr-observer
+cd the-nostr-observer && claude
+```
+
+Or install it globally, so it works in any directory:
 
 ```bash
 git clone https://github.com/NosFabrica/the-nostr-observer
 mkdir -p ~/.claude/skills
-cp -r the-nostr-observer/plugin/skills/nostr-observer ~/.claude/skills/
+cp -r the-nostr-observer/.claude/skills/nostr-observer ~/.claude/skills/
 ```
+
+Either way it is Claude Code, which is the terminal, the desktop app, or
+[claude.ai/code](https://claude.ai/code) in a browser — no terminal required.
+Plain Claude chat will not do: its sandbox reaches an allowlist that does not
+include the relay, and the ranked query is a websocket with no HTTP form to
+fall back to.
 
 Then start `claude` **in whatever directory you want your paper to land in**
 and ask for it:
@@ -65,7 +80,7 @@ Four layers, and only the first two can run in CI.
 **1. Unit and boundary tests — no network, under a second.**
 
 ```bash
-node --test "plugin/skills/nostr-observer/test/*.test.mjs"
+node --test ".claude/skills/nostr-observer/test/*.test.mjs"
 ```
 
 64 tests. bech32 against the NIP-19 worked example, the readiness chain in

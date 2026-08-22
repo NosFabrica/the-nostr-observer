@@ -52,13 +52,23 @@ at all: a Claude Code skill that reads your web of trust, prints a front page
 and hands it to you as an artifact. It uses your own Claude Code — no API key,
 nothing to sign up for.
 
-```bash
-cp -r plugin/skills/nostr-observer ~/.claude/skills/
+Open this repository in Claude Code — the terminal, the desktop app, or
+[claude.ai/code](https://claude.ai/code) in a browser — and just ask:
+
+```
+print my Nostr Observer
 ```
 
-Then ask Claude Code to print your Nostr Observer. See
-[`plugin/README.md`](plugin/README.md). It prints today's paper once; it does
-not publish to your media servers, keep an archive, or arrive every morning.
+The skill lives at [`.claude/skills/nostr-observer`](.claude/skills/nostr-observer),
+so a checkout of this repo already has it; there is nothing to install. To have
+it everywhere instead of only here, copy it into your own skills directory:
+
+```bash
+cp -r .claude/skills/nostr-observer ~/.claude/skills/
+```
+
+It prints today's paper once; it does not publish to your media servers, keep an
+archive, or arrive every morning.
 
 The design is written up in [`docs/PLAN.md`](docs/PLAN.md).
 
