@@ -13,7 +13,7 @@ set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 src="$root/generator/src/main/resources"
-dst="$root/plugin/skills/nostr-observer/reference"
+dst="$root/.claude/skills/nostr-observer/reference"
 mkdir -p "$dst"
 
 # The brief was written as a system prompt for one Messages API call. Three of

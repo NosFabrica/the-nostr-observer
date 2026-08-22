@@ -25,8 +25,12 @@ survive to the next one.
 
 ```bash
 node --version
-find ~/.claude -name SKILL.md -path '*nostr-observer*' 2>/dev/null
+find . ~/.claude -name SKILL.md -path '*nostr-observer*' 2>/dev/null | head -5
 ```
+
+Two places it can be: `.claude/skills/nostr-observer/` inside a checkout of the
+Observer repository, or `~/.claude/skills/nostr-observer/` if it was installed
+globally. Either is fine — take whichever the search finds.
 
 Node must be **22 or newer** — the scripts use the built-in `WebSocket`, which
 is why they have no dependencies and nothing to install. If it is older, say so

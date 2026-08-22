@@ -140,7 +140,27 @@ API key. A full run reads `ANTHROPIC_API_KEY` from the environment.
   message cap, filter count, subscription count and default limit. All of the
   above was one `curl -H "Accept: application/nostr+json"` away.
 
-## The Claude Code skill (`plugin/`)
+## The Claude Code skill (`.claude/skills/`)
+
+**It lives in `.claude/skills/` and not in a `plugin/` wrapper, deliberately.**
+It was a plugin first. That bought nothing: no `marketplace.json` existed
+anywhere, so nobody could install it as one, and the skill ships no commands,
+agents, hooks or MCP servers — the only things a plugin adds over a skill. What
+it cost was the install step. `.claude/skills/` is where Claude Code looks for
+PROJECT skills, so a checkout of this repository now has the Observer skill
+loaded already, in the terminal, in the desktop app, and at claude.ai/code —
+which is the whole browser path, and it needs no terminal at all. One copy, so
+nothing to mirror and nothing to drift. If a marketplace listing is ever wanted,
+a `.claude-plugin/plugin.json` is ten lines and can be added then.
+
+Plain claude.ai chat is NOT a substitute, and the blocker has no workaround.
+Custom skills do upload there (Customize → Skills, as a ZIP, with code
+execution enabled), but the sandbox reaches an allowlist — Anthropic, the
+package registries, github, ubuntu — that does not include the relay. The
+"all domains" setting opens HTTP egress through a proxy; the ranked query is a
+websocket. Measured 2026-08-22: `search-staging` serves its NIP-11 document
+over HTTPS and 404s `/req`, `/api/search` and `/search`, so there is no HTTP
+form of `observer:<pk> sort:rank` to fall back to.
 
 A second, much smaller implementation of the read path, in Node, shipped as a
 Claude Code skill. It exists because it is the only distribution of this product
@@ -203,7 +223,7 @@ would a `CLAUDE_CODE_OAUTH_TOKEN` pasted into anything of ours.
   dropped figure or an unwrapped link is the visible edge of an injection attempt
   and a sanitizer that tidies up in silence hides the one event worth seeing.
 
-- **Tests: `node --test "plugin/skills/nostr-observer/test/*.test.mjs"`,** wired
+- **Tests: `node --test ".claude/skills/nostr-observer/test/*.test.mjs"`,** wired
   into `build.yml` alongside a `git diff --exit-code` on the generated
   `reference/`. `test/fakerelay.mjs` is a dependency-free websocket server that
   reproduces the AUTH-before-answer challenge, a mid-stream NOTICE, a silent

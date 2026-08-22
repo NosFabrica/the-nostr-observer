@@ -40,7 +40,7 @@ jobs:
           node-version: '22'
 
       - name: Test the Claude Code skill
-        run: node --test "plugin/skills/nostr-observer/test/*.test.mjs"
+        run: node --test ".claude/skills/nostr-observer/test/*.test.mjs"
 
       # `reference/` is generated. If someone edits system-prompt.md or
       # house.css and does not re-run the sync, the skill ships yesterday's
@@ -48,8 +48,8 @@ jobs:
       - name: Check the skill's generated files are current
         run: |
           ./tools/sync-skill.sh
-          git diff --exit-code -- plugin/skills/nostr-observer/reference \
-            || { echo "::error::plugin/skills/nostr-observer/reference is stale - run tools/sync-skill.sh"; exit 1; }
+          git diff --exit-code -- .claude/skills/nostr-observer/reference \
+            || { echo "::error::.claude/skills/nostr-observer/reference is stale - run tools/sync-skill.sh"; exit 1; }
 
       # Nothing in this job talks to a relay or to the model API. Every test is
       # meant to pass with no network at all, and a test that quietly needed one
