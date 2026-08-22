@@ -13,7 +13,7 @@
 //
 // Usage: node corpus.mjs <npub> [--relay wss://…] [--out corpus.json] [--floor 20]
 
-import { req, toHex, toNpub, shortNpub, tagValue, tagsNamed, closeAll, MAX_REQ_BYTES } from './nostr.mjs'
+import { req, toHex, toNpub, shortNpub, tagValue, tagsNamed, closeAll, bytesRead } from './nostr.mjs'
 import { writeFileSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
 import { createHash } from 'node:crypto'
@@ -370,14 +370,16 @@ async function main () {
   const results = await pool([...DESKS, null], 5, async (desk) => {
     if (desk === null) {
       // The control run: the same window, no lens, NO FLOOR.
-      const { events } = await req(relay, filterFor([1], since, until, 400, null, floor), { idleMs: 25_000, label: 'control' })
+      const { events, note } = await req(relay, filterFor([1], since, until, 400, null, floor), { idleMs: 25_000, label: 'control' })
+      if (note?.startsWith('truncated')) process.stderr.write(`  control: ${note}\n`)
       return { key: '__control__', events }
     }
-    const { events } = await req(
+    const { events, note } = await req(
       relay,
       filterFor(desk.kinds, since, until, desk.limit, observerHex, floor),
       { idleMs: 25_000, label: desk.key },
     )
+    if (note?.startsWith('truncated')) process.stderr.write(`  ${desk.key}: ${note}\n`)
     return { key: desk.key, events: belongs(desk, observerHex, events) }
   })
 
@@ -392,13 +394,27 @@ async function main () {
   const authors = [...new Set(Object.values(desks).flat().map((e) => e.pubkey))]
   const profiles = {}
   if (authors.length > 0) {
-    // Chunked: one REQ carrying every author of a busy day is the largest
-    // frame this skill builds, and going over the cap throws at the very end,
-    // after every desk has already been paid for.
-    const perChunk = Math.max(1, Math.floor((MAX_REQ_BYTES * 0.8) / 70))
+    // CHUNKED BY COUNT, NOT BY BYTES, and with an explicit limit.
+    //
+    // Chunking by the REQ byte budget packed up to 2,742 authors into one
+    // filter — but this relay advertises `default_limit: 500`, and a filter
+    // with no `limit` gets it. Any window surfacing more than 500 authors
+    // therefore lost the surplus, and every one of those people appeared in
+    // the paper as an npub instead of their name, with nothing reporting it.
+    // Measured 2026-08-21 the window held 247 authors, so it never bit; it was
+    // waiting for a busier lens. `ReadinessProbe.profileFilter` has the same
+    // shape and the same gap.
+    //
+    // Doubled limit because kind 0 is replaceable and some relays keep the
+    // history; the newest wins in the sort below, but only if it arrives.
+    const PER_CHUNK = 400
     const chunks = []
-    for (let at = 0; at < authors.length; at += perChunk) chunks.push(authors.slice(at, at + perChunk))
-    const found = (await pool(chunks, 3, async (some) => (await req(relay, { kinds: [0], authors: some }, { label: 'profiles' })).events)).flat()
+    for (let at = 0; at < authors.length; at += PER_CHUNK) chunks.push(authors.slice(at, at + PER_CHUNK))
+    const found = (await pool(chunks, 3, async (some) => {
+      const { events, note } = await req(relay, { kinds: [0], authors: some, limit: some.length * 2 }, { label: 'profiles' })
+      if (note) process.stderr.write(`  profiles: ${note}\n`)
+      return events
+    })).flat()
     for (const event of found.sort((a, b) => a.created_at - b.created_at)) {
       let meta = {}
       try { meta = JSON.parse(event.content || '{}') } catch { /* a kind 0 that is not JSON */ }
@@ -441,6 +457,7 @@ async function main () {
 
   writeFileSync(out, JSON.stringify(corpus, null, 2))
   process.stderr.write(`  ${all.length} events across ${Object.keys(desks).length} desks, ${art.length} pictures shortlisted.\n`)
+  process.stderr.write(`  ${(bytesRead() / 1048576).toFixed(2)} MB read from the relay.\n`)
   process.stderr.write(`  Full corpus written to ${out}\n\n`)
   const text = digest(corpus)
   process.stderr.write(`  Digest is ${text.length.toLocaleString()} characters (~${Math.round(text.length / 4).toLocaleString()} tokens).\n\n`)

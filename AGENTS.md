@@ -348,6 +348,40 @@ findings, and the interesting one is not the images.
   and it is a harder problem than the quote rule: there is no source text to
   compare a caption against, only the post it came from.
 
+### What the skill may download
+
+Asked 2026-08-22, measured rather than assumed. Two gaps, one of them shared
+with the Kotlin.
+
+- **Outbound was capped, inbound was not.** `MAX_REQ_BYTES` guards the REQ we
+  send; nothing counted what came back, and the idle window bounds time rather
+  than volume — a relay streaming hard for twenty-five seconds could fill the
+  disk, and `--relay` takes any URL. There is now a per-subscription budget of
+  16 MB and a per-run budget of 64 MB. Sized off the real thing: measured on a
+  live window the largest single subscription was **452 KB** and the whole run
+  **1.75 MB**, while the largest LEGITIMATE subscription the desks can ask for
+  is long-form at 100 × the relay's advertised `max_content_length` of 131,072,
+  which is 12.5 MB. Hitting either budget keeps what arrived and REPORTS it —
+  dropping the lot would turn a runaway relay into an empty desk, which reads
+  as a quiet day for that desk. `corpus.mjs` now also prints megabytes read.
+  `Relays.kt` counts no bytes either; the gap is the design's, not the port's.
+
+- **The profile fetch lost bylines past 500 authors, silently.** It chunked by
+  the REQ byte budget — up to 2,742 authors in one filter — and carried no
+  `limit`, so this relay's `default_limit: 500` applied. Any window surfacing
+  more than 500 authors got 500 kind 0s and everyone else appeared in the paper
+  as an npub, with nothing saying so. Measured windows hold ~250 authors, so it
+  never bit; it was waiting for a busier lens. Now chunked at 400 with an
+  explicit limit. **`ReadinessProbe.profileFilter` (line 221) has the identical
+  shape and the identical gap.**
+
+The filters themselves use BOTH `since`/`until` and `limit`, and they do
+different jobs: the window is the candidate set, and `limit` is the top-N cut
+by rank inside it — the lens's cutoff, not pagination. The readiness probe uses
+`since` with no `until` on purpose (it asks whether a ranked read comes back at
+all, open-ended to now), and the metadata reads use neither, because a kind
+10002 that has not changed in eighteen months must still be found.
+
 ## The publish path (Phase 3)
 
 - **The server holds no key and can sign nothing.** It builds the two events a
