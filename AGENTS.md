@@ -348,6 +348,37 @@ findings, and the interesting one is not the images.
   and it is a harder problem than the quote rule: there is no source text to
   compare a caption against, only the post it came from.
 
+### The layout channel had no gate either (2026-08-22)
+
+Second live edition, `3F1527`, 673 events. It passed the boundary CLEAN on the
+first attempt and rendered wrong: the lead story came out in a strip about 150
+pixels wide, one or two words per line, with the right half of the fold blank.
+
+- **The cause was one class that does not exist.** The page said
+  `<div class="col span-7">` beside `<div class="col span-5">`. `house.css`
+  defines `.span-3`, `.span-4`, `.span-5`, `.span-6`, `.span-8` and `.span-12`
+  and has never had a `.span-7`, so that div declared no `grid-column` and fell
+  back to one column of the twelve. Its sibling was fine, which is why six of
+  twelve columns went unused. Fixed to `span-8` / `span-4`.
+
+- **The same shape as the caption finding, one section up.** Quotes, art and
+  links were all correct, and the validator only checks quotes, art and links.
+  A class name is a claim about the stylesheet, nobody was checking it, and an
+  undefined class fails silently rather than loudly — CSS has no such thing as
+  an error. Third channel found with no gate on it.
+
+- **This one IS mechanically checkable, unlike a caption.** The page is required
+  to be self-contained, so its own inlined `<style>` is the entire universe of
+  what a class can mean: no external sheet, no script using it as a hook, no
+  build step adding one later. `validate.mjs` now flags any class with no rule
+  behind it as `STYLE`, keyed on the presence of a `<style>` element rather than
+  on whether it defined anything — a stylesheet commented out wholesale is
+  exactly the case worth reporting. Both real editions still pass; the `span-7`
+  version fails with one violation naming the class.
+
+- **One violation per class name, not per element.** A bad class in a repeated
+  component would otherwise bury every other finding in the report.
+
 ### What the skill may download
 
 Asked 2026-08-22, measured rather than assumed. Two gaps, one of them shared

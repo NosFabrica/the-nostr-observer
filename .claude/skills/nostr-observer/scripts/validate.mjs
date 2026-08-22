@@ -180,6 +180,75 @@ export function markupViolations (html) {
 }
 
 /**
+ * Every class the page's own stylesheet defines.
+ *
+ * Deliberately tolerant. Over-collecting a name only makes the check weaker,
+ * never wrong, so this scans the whole block rather than trying to tell a
+ * selector from a declaration — `.5em` cannot match because a class name may
+ * not begin with a digit, and that is the only collision worth worrying about.
+ */
+export function definedClasses (html) {
+  const out = new Set()
+  for (const block of textIn(html, 'style')) {
+    const css = block.raw.replace(/\/\*[\s\S]*?\*\//g, ' ')
+    for (const [, name] of css.matchAll(/\.(-?[_a-zA-Z][_a-zA-Z0-9-]*)/g)) out.add(name)
+  }
+  return out
+}
+
+/** Every class the page's markup actually uses. */
+export function usedClasses (html) {
+  const out = new Map()
+  for (const tag of tags(html)) {
+    const value = attrsOf(tag.raw).class
+    if (value === undefined) continue
+    for (const name of decodeEntities(value).split(/\s+/).filter(Boolean)) {
+      if (!out.has(name)) out.set(name, tag.raw.slice(0, 80))
+    }
+  }
+  return out
+}
+
+/**
+ * A class with no rule behind it.
+ *
+ * This is the check the `span-7` edition needed and did not have. The page had
+ * `<div class="col span-7">`, house.css defines spans 3, 4, 5, 6, 8 and 12 and
+ * has never had a 7 — so the div claimed no `grid-column` at all and fell back
+ * to one column of twelve. A lead story rendered in a strip about a hundred and
+ * fifty pixels wide, one word per line, with half the fold left blank. The page
+ * passed every other check on the first pass, because quotes, art and links
+ * were all correct: layout was simply a channel with no gate on it, the same
+ * shape of gap as the missing `alt` text.
+ *
+ * Safe to fail on, unlike most cosmetic rules, because the page is required to
+ * be self-contained. There is no external stylesheet that might define the
+ * name, no script that might use it as a hook, and no build step that might
+ * add one later — so a class with no rule in this very document does nothing
+ * whatsoever, today and always. It is either a typo or dead weight.
+ *
+ * Skipped entirely when the page carries no `<style>` element at all: that is
+ * a different and much louder problem, and flooding it with one violation per
+ * class would bury it. Presence of the element is what decides, not whether it
+ * turned out to define anything — a stylesheet whose every rule is commented
+ * out is exactly the case worth reporting.
+ */
+export function styleViolations (html) {
+  if (textIn(html, 'style').length === 0) return []
+  const defined = definedClasses(html)
+  const out = []
+  for (const [name, excerpt] of usedClasses(html)) {
+    if (defined.has(name)) continue
+    out.push({
+      kind: 'STYLE',
+      detail: `class="${name}" has no rule in the page's stylesheet, so it does nothing`,
+      excerpt,
+    })
+  }
+  return out
+}
+
+/**
  * Everything the boundary has to say about one page. Pure: no files, no exit
  * codes, so a test can put an adversarial page through it directly.
  */
@@ -198,6 +267,7 @@ export function check (html, corpus) {
   const flag = (kind, detail, excerpt) => violations.push({ kind, detail, excerpt })
 
   violations.push(...markupViolations(html))
+  violations.push(...styleViolations(html))
 
   const quotes = quotedText(html)
   for (const quote of quotes) {

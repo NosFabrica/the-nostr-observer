@@ -184,3 +184,48 @@ test('a real page head is not an attack', async () => {
   assert.deepEqual(kinds('<base href="https://evil.example/">'), ['MARKUP'],
     '<base> rewrites every relative URL on the page and is refused outright')
 })
+
+test('a class with no rule behind it is a violation', () => {
+  // The bug this exists for, reduced. An edition led with
+  // `<div class="col span-8">` beside `<div class="col span-4">` and rendered
+  // correctly; the version before it said `span-7`, house.css has never had a
+  // `.span-7`, and the lead story came out in a strip one word wide with half
+  // the fold blank. Quotes, art and links were all correct, so it passed the
+  // boundary on the first attempt — layout was a channel with no gate on it.
+  const styled = (body) => `<style>.col{padding:20px}.span-4{grid-column:span 4}.span-8{grid-column:span 8}</style>${body}`
+
+  assert.deepEqual(kinds(styled('<div class="col span-8"></div><div class="col span-4"></div>')), [])
+  assert.deepEqual(kinds(styled('<div class="col span-7"></div>')), ['STYLE'])
+
+  // One violation per name, not per element, or a single bad class in a
+  // repeated component buries everything else in the report.
+  const many = styled('<div class="span-7"></div>'.repeat(9))
+  assert.deepEqual(kinds(many), ['STYLE'])
+})
+
+test('the style check reads the page it is given, not house.css', () => {
+  // The page has to be self-contained, so its own <style> is the whole truth
+  // about what a class means. That also catches the other direction: a page
+  // that used a real house.css class but trimmed the rule out of its inlined
+  // copy is just as broken, and just as invisible without this.
+  assert.deepEqual(kinds('<style>.masthead{font-size:64px}</style><div class="masthead"></div>'), [])
+  assert.deepEqual(kinds('<style>.masthead{font-size:64px}</style><div class="dateline"></div>'), ['STYLE'])
+
+  // Nothing to check against is not the same as everything failing. A page
+  // with no stylesheet at all has a louder problem than its class names.
+  assert.deepEqual(kinds('<div class="anything at all"></div>'), [])
+})
+
+test('the style check reads selectors the way CSS is actually written', () => {
+  const seen = (css, body) => kinds(`<style>${css}</style>${body}`)
+
+  // Compound, descendant, media-query and pseudo-class selectors all define
+  // their class; a decimal in a declaration does not.
+  assert.deepEqual(seen('.col:first-child{padding-left:0}', '<p class="col"></p>'), [])
+  assert.deepEqual(seen('.fold .lead-head{font-size:52px}', '<h2 class="lead-head"></h2>'), [])
+  assert.deepEqual(seen('@media print{.folio{display:none}}', '<p class="folio"></p>'), [])
+  assert.deepEqual(seen('.dek{margin:.5em 0;line-height:1.4}', '<p class="5em"></p>'), ['STYLE'])
+
+  // A commented-out rule is not a rule.
+  assert.deepEqual(seen('/* .kicker{letter-spacing:2px} */', '<p class="kicker"></p>'), ['STYLE'])
+})
