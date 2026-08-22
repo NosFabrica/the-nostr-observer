@@ -297,6 +297,37 @@ Three things the run found that no test could:
   instead. Both are the cost of the no-COUNT rule and the thin digest, and both
   are visible on the furniture of every edition.
 
+### Alt text is the fabrication channel nothing guards
+
+Reviewing why the first edition's photographs did not appear, 2026-08-22. Three
+findings, and the interesting one is not the images.
+
+- **The markup and the URLs were correct.** All three resolved to live hosts,
+  HTTP 200, right content-types, two of them serving `access-control-allow-origin: *`.
+  The artifact viewer runs a content policy that refuses every external host, so
+  the pictures never load there however good the URL is. Not a bug and not
+  fixable from inside the page; the saved local file shows them fine.
+
+- **`imeta alt` is a fiction in the wild: 0 of 40 shortlisted pictures carried
+  one.** `Art.kt` keeps `alt` on the theory that it is "the difference between a
+  missing image degrading to a caption and degrading to a gap". That only works
+  if somebody writes it, and on a real 24-hour window nobody did. So the writer
+  has to author the alt, and `SKILL.md` never asked it to — the first edition
+  shipped three bare `<img>` tags and degraded to three empty boxes, which is
+  precisely the outcome the alt rule exists to prevent.
+
+- **THE REAL ONE: nothing checks captions or alt.** `Validator` gates quotes,
+  picture sources and links. A caption is prose about a photograph the writer has
+  never seen, published under a real person's byline, through the only channel in
+  the pipeline with no gate on it. Two of the first edition's three captions
+  asserted things not in evidence — one described the contents of a frame, the
+  other said a picture was taken close up when the post said you would have to
+  zoom in to see anything. Both were caught by reading, which does not scale.
+  `SKILL.md` now forbids describing a picture you cannot see and requires caption
+  and alt to be derived from the post. **A mechanical check is still missing**,
+  and it is a harder problem than the quote rule: there is no source text to
+  compare a caption against, only the post it came from.
+
 ## The publish path (Phase 3)
 
 - **The server holds no key and can sign nothing.** It builds the two events a
