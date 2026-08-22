@@ -5,10 +5,15 @@
 // fails SILENTLY in production: the symptom is an empty list, which looks
 // exactly like a quiet day.
 
-import { test } from 'node:test'
+import { test, beforeEach } from 'node:test'
 import assert from 'node:assert/strict'
-import { req, closeAll, bytesRead, resetBytesRead, MAX_REQ_BYTES, MAX_SUB_BYTES } from '../scripts/nostr.mjs'
+import { req, closeAll, bytesRead, resetBytesRead, MAX_REQ_BYTES, MAX_SUB_BYTES, MAX_RUN_BYTES } from '../scripts/nostr.mjs'
 import { fakeRelay, event } from './fakerelay.mjs'
+
+// The run budget is process-wide, so the flood tests below leave ~90 MB on the
+// counter. Without this, the next test anyone adds inherits it and truncates
+// on its first frame, for reasons nowhere near where it fails.
+beforeEach(resetBytesRead)
 
 test('an AUTH challenge sent before the answer is not read as the answer', async () => {
   // "search-staging sends an AUTH challenge before answering, even though
@@ -224,5 +229,47 @@ test('bytesRead accumulates across subscriptions', async () => {
     assert.ok(one > 0)
     await req(relay.url, { kinds: [20] })
     assert.ok(bytesRead() > one, 'the run budget is shared, not per-read')
+  } finally { closeAll(); await relay.close() }
+})
+
+test('THE BUDGET CANNOT BE BYPASSED BY UNMATCHED FRAMES', async () => {
+  // The first version counted only EVENT frames matched to a live
+  // subscription, which left the guard bypassable by exactly the adversary it
+  // exists for. Measured before the fix: 30 MB streamed under a subscription
+  // id we never opened, and bytesRead() stayed at 0.00 MB.
+  const fat = 'x'.repeat(200_000)
+  for (const [name, makeFrame] of [
+    ['a subscription id we never opened', () => ['EVENT', 'not-your-sub', event('x', { content: fat })]],
+    ['NOTICE spam', () => ['NOTICE', fat]],
+    ['a frame for a verb we do not handle', () => ['OK', 'whatever', true, fat]],
+  ]) {
+    const relay = await fakeRelay((f, sub) => {
+      const out = []
+      for (let i = 0; i < 40; i++) out.push(makeFrame())
+      out.push(['EOSE', sub])
+      return out
+    })
+    try {
+      resetBytesRead()
+      await req(relay.url, { kinds: [1] }, { idleMs: 800 })
+      assert.ok(bytesRead() > 1_000_000, `${name}: only ${bytesRead()} bytes counted — the door is not weighing them`)
+    } finally { closeAll(); await relay.close() }
+  }
+})
+
+test('the run budget stops an unmatched flood and reports it', async () => {
+  const fat = 'x'.repeat(500_000)
+  const relay = await fakeRelay((f, sub) => {
+    const out = []
+    for (let i = 0; i < 200; i++) out.push(['EVENT', 'not-your-sub', event(`x${i}`, { content: fat })])
+    out.push(['EOSE', sub])
+    return out
+  })
+  try {
+    resetBytesRead()
+    const { note } = await req(relay.url, { kinds: [1] }, { idleMs: 3_000 })
+    assert.match(note, /^truncated: the run/, `expected the run budget to fire, got ${JSON.stringify(note)}`)
+    // ~100 MB was offered; it must stop near 64, not run to the end.
+    assert.ok(bytesRead() < MAX_RUN_BYTES * 1.2, `read ${(bytesRead() / 1048576).toFixed(0)} MB past a ${MAX_RUN_BYTES / 1048576} MB budget`)
   } finally { closeAll(); await relay.close() }
 })

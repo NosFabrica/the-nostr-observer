@@ -366,6 +366,23 @@ with the Kotlin.
   as a quiet day for that desk. `corpus.mjs` now also prints megabytes read.
   `Relays.kt` counts no bytes either; the gap is the design's, not the port's.
 
+  **The first version of that budget did not work, and the audit of it is worth
+  keeping.** It counted only EVENT frames matched to a live subscription, which
+  left the guard bypassable by precisely the adversary it exists for. Measured:
+  30 MB streamed under a subscription id we never opened, again as NOTICE spam,
+  and `bytesRead()` reported 0.00 MB both times while the run finished looking
+  normal. Bytes are now weighed AT THE DOOR — every frame, before it is matched
+  or even parsed — with the per-subscription share still attributed in `push`.
+  A guard that only counts the traffic it was already going to accept is not a
+  guard.
+
+- **A short desk was still a silent desk.** The same change surfaced truncation
+  and nothing else, so a read that went `idle` because the relay stopped
+  talking, or that the relay `CLOSED`, came back short with nothing said —
+  which is the quiet-day story the truncation reporting exists to prevent, one
+  branch over. Desks and the control run now report ANY note, as the profile
+  fetch already did.
+
 - **The profile fetch lost bylines past 500 authors, silently.** It chunked by
   the REQ byte budget — up to 2,742 authors in one filter — and carried no
   `limit`, so this relay's `default_limit: 500` applied. Any window surfacing

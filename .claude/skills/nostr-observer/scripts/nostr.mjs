@@ -211,12 +211,26 @@ function connect (url) {
   conn.socket.addEventListener('error', () => fail(`socket error on ${url}`))
   conn.socket.addEventListener('close', () => fail('socket closed'))
   conn.socket.addEventListener('message', (message) => {
+    // WEIGHED AT THE DOOR, BEFORE ANYTHING IS MATCHED OR EVEN PARSED.
+    //
+    // The first version of this budget counted only EVENT frames that matched
+    // a live subscription — which left the whole guard bypassable by the exact
+    // adversary it exists for. Measured: 30 MB streamed under a subscription
+    // id we never opened, and again as NOTICE spam, and `bytesRead()` stayed
+    // at 0.00 MB both times while the run completed looking normal. Garbage
+    // that fails to parse was free too.
+    const size = Buffer.byteLength(message.data)
+    runBytes += size
+    if (runBytes > MAX_RUN_BYTES) {
+      return fail(`truncated: the run passed ${(MAX_RUN_BYTES / 1048576).toFixed(0)} MB in total`)
+    }
+
     let frame
     try { frame = JSON.parse(message.data) } catch { return }
     if (!Array.isArray(frame)) return
     const [verb, id] = frame
 
-    if (verb === 'EVENT') { subs.get(id)?.push(frame[2], Buffer.byteLength(message.data)); return }
+    if (verb === 'EVENT') { subs.get(id)?.push(frame[2], size); return }
     if (verb === 'EOSE') { subs.get(id)?.finish(null); return }
     if (verb === 'CLOSED') { subs.get(id)?.finish(`relay closed the subscription: ${frame[2] || 'no reason given'}`); return }
     if (verb === 'NOTICE') process.stderr.write(`  notice from ${url}: ${frame[1]}\n`)
@@ -294,17 +308,15 @@ export function req (url, filters, { idleMs = 15_000, label = '' } = {}) {
       finish,
       touch,
       push: (event, frameBytes) => {
+        // Only this subscription's share. The run total is counted at the
+        // door, where unmatched frames are visible too.
         subBytes += frameBytes
-        runBytes += frameBytes
         if (event?.id && !seen.has(event.id)) { seen.add(event.id); events.push(event) }
         // Keep what already arrived and say the read was cut short. Dropping
         // it would turn a runaway relay into an empty desk, which reads as a
         // quiet day for that desk and is exactly the wrong story.
         if (subBytes > MAX_SUB_BYTES) {
           return finish(`truncated: this read passed ${(MAX_SUB_BYTES / 1048576).toFixed(0)} MB`)
-        }
-        if (runBytes > MAX_RUN_BYTES) {
-          return finish(`truncated: the run passed ${(MAX_RUN_BYTES / 1048576).toFixed(0)} MB in total`)
         }
         touch()
       },

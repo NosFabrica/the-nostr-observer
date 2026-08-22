@@ -371,7 +371,7 @@ async function main () {
     if (desk === null) {
       // The control run: the same window, no lens, NO FLOOR.
       const { events, note } = await req(relay, filterFor([1], since, until, 400, null, floor), { idleMs: 25_000, label: 'control' })
-      if (note?.startsWith('truncated')) process.stderr.write(`  control: ${note}\n`)
+      if (note) process.stderr.write(`  control: ${note}\n`)
       return { key: '__control__', events }
     }
     const { events, note } = await req(
@@ -379,7 +379,12 @@ async function main () {
       filterFor(desk.kinds, since, until, desk.limit, observerHex, floor),
       { idleMs: 25_000, label: desk.key },
     )
-    if (note?.startsWith('truncated')) process.stderr.write(`  ${desk.key}: ${note}\n`)
+    // ANY note, not just truncation. A desk whose read went `idle` because the
+    // relay stopped talking, or that the relay CLOSED, comes back short — and
+    // a short desk is indistinguishable from a quiet desk, which is the story
+    // this paper must never tell by accident. Measured: both of those left the
+    // desk silent while only `truncated` was surfaced.
+    if (note) process.stderr.write(`  ${desk.key}: ${note}\n`)
     return { key: desk.key, events: belongs(desk, observerHex, events) }
   })
 
