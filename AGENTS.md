@@ -214,6 +214,57 @@ would a `CLAUDE_CODE_OAUTH_TOKEN` pasted into anything of ours.
   whether the boundary stops bad pages, and that one asks whether it damages good
   ones, which is the likelier way to ship something broken.
 
+### Audit, 2026-08-22
+
+Five bugs, three of them one root cause, plus the two costs nobody had measured.
+
+- **A `>` inside any attribute value made the boundary FAIL OPEN.** Element
+  lookup was `<img\b[^>]*?\bsrc=…`, and `[^>]*?` ends at the first `>` wherever
+  it is — so `<img alt="a > b" src="https://evil.example/x.jpg">` was never
+  matched and never checked, and `<a title="1 > 2" href="…">` slipped the link
+  rule the same way. Captions come from the corpus, and the corpus is where the
+  attacker writes. `resolve.mjs` was blind in the same place, so an id inside
+  such a tag shipped as a literal `src="art-3"` that validate could not see
+  either. All three now go through `html.mjs`, a scanner that tracks quoting.
+  A regex cannot do this: knowing where a tag ends means knowing whether you
+  are inside a quoted value.
+
+- **`/\son[a-z]+\s*=/` over the raw document read prose as an attack.** "we ran
+  it once=twice" and "the flag is only=set" both tripped it. That fails CLOSED,
+  so it is the golden edition's failure mode — a boundary that rejects good
+  pages prints nothing every morning — and it walked past the golden test only
+  because the fixture happens to contain no such phrase. Markup checks now run
+  against parsed tags and attribute names. Two holes closed on the way past:
+  `<base href>` rewrites every relative URL on the page and `<meta refresh>`
+  redirects it, and neither was refused.
+
+- **The REQ budget counted characters where the relay counts bytes.** A filter
+  up to twice `max_message_length` passed the guard and was then dropped in
+  silence — precisely the failure the guard exists to prevent. `Buffer.byteLength`.
+
+- **One socket per read.** Six for the readiness chain, sixteen for a corpus
+  pull, each a fresh handshake to a host this file says not to hammer, and
+  which advertises a subscription limit of fifty. `nostr.mjs` now pools one
+  connection per relay and multiplexes subscriptions over it, as `Relays.kt`
+  does with quartz's single `NostrClient`; it closes on an unref'd linger so
+  consecutive reads reuse it and an idle process still exits. The fake relay
+  counts connections so the rule stays true. Readiness also stopped fetching
+  the 10002 and the 10040 one after the other — they are independent — and the
+  storage chain rides along instead of costing a seventh round trip. Measured
+  after: readiness 0.8s, a full fifteen-desk corpus pull 3.0s.
+
+- **The digest was unbounded, and the reader pays for it.** Measured on a
+  realistic busy window it came to 335,000 characters — about 84,000 tokens —
+  before the writer had done anything, most of it long-form excerpted at the
+  same length as a one-line note. Now per-desk excerpt lengths and a 200,000
+  character budget, which lands a busy day at ~50,000 tokens and leaves a quiet
+  day untouched. Trimming has a floor per desk, because trimming purely by size
+  cut the notes to 64 of 400 to protect a long-form column nobody asked for —
+  the budget making an editorial decision, which is not its job. **Whatever
+  comes off is named in the digest**: a digest that quietly drops half the
+  long-form reads as a quiet day for long-form, and a thin honest paper is
+  supposed to mean one.
+
 ## The publish path (Phase 3)
 
 - **The server holds no key and can sign nothing.** It builds the two events a

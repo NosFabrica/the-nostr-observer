@@ -22,15 +22,20 @@
 
 import { readFileSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
+import { tags, attributes as attrsOf, textIn } from './html.mjs'
 
 function arg (name, fallback = null) {
   const at = process.argv.indexOf(name)
   return at > -1 ? process.argv[at + 1] : fallback
 }
 
-// --- the smallest HTML reader that can answer these three questions --------
+// --- reading the page -------------------------------------------------------
+//
+// Element lookup goes through `html.mjs`, which tracks quoting. It has to: a
+// regex that stops at the first `>` cannot see `<img alt="a > b" src="…">` at
+// all, and skipping an element is the boundary failing OPEN.
 
-const ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ', hellip: '…', mdash: '—', ndash: '–', rsquo: '’', lsquo: '‘', ldquo: '“', rdquo: '”' }
+const ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ', hellip: '…', mdash: '—', ndash: '–', rsquo: '’', lsquo: '‘', ldquo: '“', rdquo: '”' }
 
 export function decodeEntities (text) {
   return text.replace(/&(#x?[0-9a-f]+|[a-z]+);/gi, (whole, body) => {
@@ -44,36 +49,15 @@ export function decodeEntities (text) {
 
 /** Text content of every <q> and <blockquote>, nesting handled. */
 export function quotedText (html) {
-  const found = []
-  const open = /<(q|blockquote)(\s[^>]*)?>/gi
-  let match
-  while ((match = open.exec(html)) !== null) {
-    const tag = match[1].toLowerCase()
-    let depth = 1
-    let at = open.lastIndex
-    const scan = new RegExp(`<(/?)${tag}(\\s[^>]*)?>`, 'gi')
-    scan.lastIndex = at
-    let close = -1
-    let inner
-    while ((inner = scan.exec(html)) !== null) {
-      depth += inner[1] === '/' ? -1 : 1
-      if (depth === 0) { close = inner.index; break }
-    }
-    if (close === -1) continue
-    const raw = html.slice(at, close)
-    const text = decodeEntities(raw.replace(/<[^>]*>/g, ' ')).replace(/\s+/g, ' ').trim()
-    if (text) found.push(text)
-  }
-  return found
+  return [...textIn(html, 'q'), ...textIn(html, 'blockquote')]
+    .sort((a, b) => a.start - b.start)
+    .map((found) => decodeEntities(found.raw.replace(/<[^>]*>/g, ' ')).replace(/\s+/g, ' ').trim())
+    .filter(Boolean)
 }
 
 /** Every value of one attribute on one tag. */
 export function attributes (html, tag, attr) {
-  const out = []
-  const re = new RegExp(`<${tag}\\b[^>]*?\\b${attr}\\s*=\\s*("([^"]*)"|'([^']*)'|([^\\s>]+))`, 'gi')
-  let match
-  while ((match = re.exec(html)) !== null) out.push(decodeEntities(match[2] ?? match[3] ?? match[4] ?? ''))
-  return out
+  return tags(html, tag).map((t) => attrsOf(t.raw)[attr]).filter((v) => v !== undefined)
 }
 
 // --- normalisation ---------------------------------------------------------
@@ -139,15 +123,52 @@ export function isQuoted (raw, haystack) {
 export const PERMALINK = /^https:\/\/njump\.me\/([0-9a-f]{64})(?:[/?#].*)?$/i
 
 // Things there is no sanitizer to strip, so they are refused instead.
-export const FORBIDDEN = [
-  [/<script\b/i, 'a <script> tag'],
-  [/<iframe\b/i, 'an <iframe>'],
-  [/<object\b|<embed\b|<applet\b/i, 'an embedded object'],
-  [/<form\b|<input\b|<button\b/i, 'a form control — the paper collects nothing'],
-  [/\son[a-z]+\s*=/i, 'an inline event handler (on…=)'],
-  [/javascript\s*:/i, 'a javascript: URL'],
-  [/\sdata\s*:\s*text\/html/i, 'a data:text/html URL'],
-]
+//
+// Checked against PARSED TAGS, never against the raw document. The first
+// version matched `/\son[a-z]+\s*=/` anywhere in the page, which reads
+// ordinary prose as an attack: "we ran it once=twice" and "the flag is
+// only=set" both tripped it. A boundary that rejects a good page prints
+// nothing every morning, which is the failure the golden edition exists to
+// catch and this one walked straight past.
+const FORBIDDEN_TAGS = new Map([
+  ['script', 'a <script> tag'],
+  ['iframe', 'an <iframe>'],
+  ['object', 'an embedded object'], ['embed', 'an embedded object'], ['applet', 'an embedded object'],
+  ['form', 'a form - the paper collects nothing'],
+  ['input', 'a form control'], ['button', 'a form control'],
+  ['textarea', 'a form control'], ['select', 'a form control'],
+  ['base', 'a <base> tag, which rewrites every relative URL on the page'],
+  ['meta', 'a <meta> tag, which can carry a refresh redirect'],
+])
+
+const FORBIDDEN_SCHEME = /^\s*(javascript|vbscript|data)\s*:/i
+
+/** Scheme-bearing attributes. A `data:` image is allowed nowhere; see below. */
+const URL_ATTRS = ['href', 'src', 'action', 'formaction', 'poster', 'background', 'srcset', 'data', 'xlink:href']
+
+export function markupViolations (html) {
+  const out = []
+  for (const tag of tags(html)) {
+    const forbidden = FORBIDDEN_TAGS.get(tag.name)
+    if (forbidden) out.push({ kind: 'MARKUP', detail: `the page contains ${forbidden}`, excerpt: tag.raw.slice(0, 80) })
+    const attrs = attrsOf(tag.raw)
+    for (const [name, value] of Object.entries(attrs)) {
+      if (name.startsWith('on')) {
+        out.push({ kind: 'MARKUP', detail: `the page contains an inline event handler (${name}=)`, excerpt: tag.raw.slice(0, 80) })
+      }
+      if (URL_ATTRS.includes(name) && FORBIDDEN_SCHEME.test(decodeEntities(value))) {
+        out.push({ kind: 'MARKUP', detail: `${name}= carries a scripting or inline-document URL`, excerpt: value.slice(0, 80) })
+      }
+    }
+  }
+  // A <style> block can still fetch and can still hide a URL scheme.
+  for (const block of textIn(html, 'style')) {
+    if (/@import|url\s*\(\s*["']?\s*(javascript|data)\s*:/i.test(block.raw)) {
+      out.push({ kind: 'MARKUP', detail: 'the stylesheet imports or embeds something', excerpt: block.raw.slice(0, 80) })
+    }
+  }
+  return out
+}
 
 /**
  * Everything the boundary has to say about one page. Pure: no files, no exit
@@ -167,10 +188,7 @@ export function check (html, corpus) {
   const violations = []
   const flag = (kind, detail, excerpt) => violations.push({ kind, detail, excerpt })
 
-  for (const [pattern, what] of FORBIDDEN) {
-    const hit = html.match(pattern)
-    if (hit) flag('MARKUP', `the page contains ${what}`, hit[0].slice(0, 80))
-  }
+  violations.push(...markupViolations(html))
 
   const quotes = quotedText(html)
   for (const quote of quotes) {

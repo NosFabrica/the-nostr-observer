@@ -13,7 +13,7 @@
 //
 // Usage: node corpus.mjs <npub> [--relay wss://…] [--out corpus.json] [--floor 20]
 
-import { req, toHex, toNpub, shortNpub, tagValue, tagsNamed } from './nostr.mjs'
+import { req, toHex, toNpub, shortNpub, tagValue, tagsNamed, closeAll, MAX_REQ_BYTES } from './nostr.mjs'
 import { writeFileSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
 import { createHash } from 'node:crypto'
@@ -210,13 +210,77 @@ function when (ts) {
   return new Date(ts * 1000).toISOString().replace('T', ' ').slice(0, 16) + 'Z'
 }
 
-function body (event, cap = 700) {
+/**
+ * How much of each desk's text reaches the digest.
+ *
+ * The digest is the reader's context and the reader's plan usage, and it is
+ * paid for on every run. Measured on a realistic busy window — 400 notes, 100
+ * long-form, and the rest — a flat 700-character excerpt produced a 335,000
+ * character digest, around 84,000 tokens, before the writer had done anything.
+ * Long-form is the bulk of that and needs the least of it: an article's title
+ * and opening say whether it is a story, and the whole text is in corpus.json
+ * if it turns out to be.
+ */
+const EXCERPT = { notes: 700, articles: 400, wiki: 300, classifieds: 300, files: 200, git: 200, apps: 200 }
+const DEFAULT_EXCERPT = 500
+
+/**
+ * Characters of digest to aim for; roughly a quarter of this in tokens.
+ *
+ * Not as small as it could be. A full broadsheet is what the product IS, the
+ * reader spends this once a day, and the output is the expensive half anyway.
+ * The point of the budget is to stop a runaway window, not to ration a normal
+ * one — a quiet day comes in at a tenth of this and is never touched.
+ */
+export const DEFAULT_DIGEST_BUDGET = 200_000
+
+/**
+ * What a desk keeps even when the budget bites.
+ *
+ * Trimming purely by size punishes the biggest desk, and the biggest desk is
+ * the notes — the spine of the front page. Trimming that to 64 of 400 to
+ * protect a long-form column nobody asked for is the budget making an
+ * editorial decision, which is not its job.
+ */
+const FLOOR = { notes: 300 }
+const DEFAULT_FLOOR = 20
+
+function body (event, cap) {
   const text = (event.content || '').replace(/\s+/g, ' ').trim()
   if (text.length <= cap) return text
   return text.slice(0, cap) + ' […truncated in this digest; the full text is in corpus.json]'
 }
 
-export function digest (corpus) {
+/**
+ * Fit the desks inside a character budget, biggest first.
+ *
+ * NO SILENT CAPS. Whatever comes off is named in the digest, because a digest
+ * that quietly drops half the long-form reads as a quiet day for long-form —
+ * and a thin, honest paper is supposed to mean a quiet day.
+ */
+export function fit (desks, budget = DEFAULT_DIGEST_BUDGET) {
+  const cost = (key, events) => events.reduce((n, e) => n + Math.min((e.content || '').length, EXCERPT[key] ?? DEFAULT_EXCERPT) + 120, 0)
+  const kept = Object.fromEntries(Object.entries(desks).map(([k, v]) => [k, [...v]]))
+  const trimmed = {}
+  let total = Object.entries(kept).reduce((n, [k, v]) => n + cost(k, v), 0)
+
+  while (total > budget) {
+    // The desk costing the most gives up its tail first: the desks are
+    // delivered newest-first, so what goes is the oldest of the biggest.
+    const trimmable = Object.entries(kept).filter(([k, v]) => v.length > (FLOOR[k] ?? DEFAULT_FLOOR))
+    if (trimmable.length === 0) break
+    const [key] = trimmable.sort((a, b) => cost(b[0], b[1]) - cost(a[0], a[1]))[0]
+    const floor = FLOOR[key] ?? DEFAULT_FLOOR
+    const drop = Math.min(Math.max(1, Math.ceil(kept[key].length * 0.1)), kept[key].length - floor)
+    kept[key] = kept[key].slice(0, -drop)
+    trimmed[key] = (trimmed[key] || 0) + drop
+    total = Object.entries(kept).reduce((n, [k, v]) => n + cost(k, v), 0)
+  }
+  return { kept, trimmed, size: total }
+}
+
+export function digest (corpus, budget = DEFAULT_DIGEST_BUDGET) {
+  const { kept, trimmed } = fit(corpus.desks, budget)
   const lines = []
   const p = (s = '') => lines.push(s)
 
@@ -238,8 +302,21 @@ export function digest (corpus) {
   p('That overlap is the measurement: a low number means the lens is doing the work.')
   p('')
 
+  const dropped = Object.entries(trimmed)
+  if (dropped.length > 0) {
+    p('## What is not below')
+    p('')
+    p('This digest is trimmed to fit. The FULL corpus is in corpus.json, and the')
+    p('validator checks against that, so nothing here limits what you may quote.')
+    p('')
+    for (const [key, n] of dropped) {
+      p(`- ${key}: showing ${kept[key].length} of ${corpus.desks[key].length} (${n} older ones held back)`)
+    }
+    p('')
+  }
+
   for (const desk of DESKS) {
-    const events = corpus.desks[desk.key] || []
+    const events = kept[desk.key] || []
     if (events.length === 0) continue
     p(`## ${desk.label} (${events.length})`)
     p('')
@@ -248,7 +325,7 @@ export function digest (corpus) {
       const author = corpus.profiles[event.pubkey]?.name || shortNpub(event.pubkey)
       p(`- [${event.id}] kind ${event.kind} · ${author} · ${when(event.created_at)}`)
       if (title) p(`  title: ${title}`)
-      const text = body(event)
+      const text = body(event, EXCERPT[desk.key] ?? DEFAULT_EXCERPT)
       if (text) p(`  ${text}`)
     }
     p('')
@@ -315,8 +392,14 @@ async function main () {
   const authors = [...new Set(Object.values(desks).flat().map((e) => e.pubkey))]
   const profiles = {}
   if (authors.length > 0) {
-    const { events } = await req(relay, { kinds: [0], authors }, { label: 'profiles' })
-    for (const event of events.sort((a, b) => a.created_at - b.created_at)) {
+    // Chunked: one REQ carrying every author of a busy day is the largest
+    // frame this skill builds, and going over the cap throws at the very end,
+    // after every desk has already been paid for.
+    const perChunk = Math.max(1, Math.floor((MAX_REQ_BYTES * 0.8) / 70))
+    const chunks = []
+    for (let at = 0; at < authors.length; at += perChunk) chunks.push(authors.slice(at, at + perChunk))
+    const found = (await pool(chunks, 3, async (some) => (await req(relay, { kinds: [0], authors: some }, { label: 'profiles' })).events)).flat()
+    for (const event of found.sort((a, b) => a.created_at - b.created_at)) {
       let meta = {}
       try { meta = JSON.parse(event.content || '{}') } catch { /* a kind 0 that is not JSON */ }
       const name = meta.display_name || meta.displayName || meta.name || null
@@ -359,7 +442,10 @@ async function main () {
   writeFileSync(out, JSON.stringify(corpus, null, 2))
   process.stderr.write(`  ${all.length} events across ${Object.keys(desks).length} desks, ${art.length} pictures shortlisted.\n`)
   process.stderr.write(`  Full corpus written to ${out}\n\n`)
-  console.log(digest(corpus))
+  const text = digest(corpus)
+  process.stderr.write(`  Digest is ${text.length.toLocaleString()} characters (~${Math.round(text.length / 4).toLocaleString()} tokens).\n\n`)
+  console.log(text)
+  closeAll()
 }
 
 // Importable by the tests; runs only when it is the thing that was invoked.

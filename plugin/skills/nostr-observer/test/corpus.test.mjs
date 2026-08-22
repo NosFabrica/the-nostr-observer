@@ -111,3 +111,32 @@ test('the same URL is shortlisted once', () => {
   ] }, {})
   assert.equal(art.length, 1)
 })
+
+// --- the digest is the reader's context, and they pay for it every run -----
+
+test('the digest is bounded, and says what it held back', async () => {
+  const { fit, digest, DEFAULT_DIGEST_BUDGET } = await import('../scripts/corpus.mjs')
+  const mk = (n, kind, len) => Array.from({ length: n }, (_, i) => ({
+    id: String(i).padStart(64, '0'), pubkey: 'aa'.repeat(32), kind, created_at: 1_786_900_000, content: 'x'.repeat(len), tags: [],
+  }))
+  const desks = { notes: mk(400, 1, 280), articles: mk(100, 30023, 5000), calendar: mk(100, 31923, 300) }
+  const { kept, trimmed } = fit(desks)
+
+  assert.ok(Object.keys(trimmed).length > 0, 'a busy window should be trimmed')
+  assert.ok(kept.notes.length >= 300, `notes must keep their floor, kept ${kept.notes.length}`)
+  assert.ok(kept.articles.length < 100, 'long-form gives way before the notes do')
+
+  const text = digest({ observerNpub: 'n', relay: 'r', floor: 20, since: 0, until: 1, code: 'A', desks, control: [], overlap: 0, profiles: {}, art: [] })
+  // NO SILENT CAPS: a digest that quietly drops half the long-form reads as a
+  // quiet day for long-form, and a thin honest paper is supposed to mean one.
+  for (const key of Object.keys(trimmed)) {
+    assert.match(text, new RegExp(`${key}: showing \\d+ of \\d+`), `${key} was trimmed without saying so`)
+  }
+  assert.ok(text.length < DEFAULT_DIGEST_BUDGET * 1.1, `digest was ${text.length} characters`)
+})
+
+test('a quiet day is never trimmed', async () => {
+  const { fit } = await import('../scripts/corpus.mjs')
+  const quiet = { notes: Array.from({ length: 30 }, (_, i) => ({ id: String(i).padStart(64, '0'), pubkey: 'a', content: 'short', tags: [] })) }
+  assert.deepEqual(fit(quiet).trimmed, {})
+})

@@ -126,8 +126,91 @@ export function shortNpub (hex) {
 export const MAX_REQ_BYTES = 240_000
 
 /**
- * Everything matching, from one relay.
+ * One socket per relay, shared by every subscription on it.
  *
+ * The first version opened a fresh WebSocket per read: six for the readiness
+ * chain, sixteen for a corpus pull, each paying a TCP and TLS handshake to a
+ * host AGENTS.md says outright not to hammer — and which advertises a
+ * subscription limit of fifty, so the multiplexing was always available. This
+ * is what `Relays.kt` does with quartz's one `NostrClient`.
+ *
+ * The connection closes itself shortly after its last subscription finishes,
+ * on an unref'd timer, so consecutive reads reuse it and an idle process can
+ * still exit.
+ */
+const pool = new Map()
+const LINGER_MS = 1_500
+
+function connect (url) {
+  const live = pool.get(url)
+  if (live && !live.dead) {
+    clearTimeout(live.linger)
+    return live
+  }
+
+  const subs = new Map()
+  const queued = []
+  let ready = false
+  const conn = { url, subs, dead: false, error: null, linger: null }
+
+  const fail = (note) => {
+    if (conn.dead) return
+    conn.dead = true
+    conn.error = note
+    if (pool.get(url) === conn) pool.delete(url)
+    for (const sub of [...subs.values()]) sub.finish(note)
+  }
+
+  conn.send = (frame) => { if (ready) conn.socket.send(frame); else queued.push(frame) }
+  conn.close = () => { conn.dead = true; if (pool.get(url) === conn) pool.delete(url); try { conn.socket?.close() } catch { /* gone */ } }
+
+  // Nothing left to do: linger briefly in case another read follows, then go.
+  conn.release = () => {
+    if (subs.size > 0 || conn.dead) return
+    clearTimeout(conn.linger)
+    conn.linger = setTimeout(() => { if (subs.size === 0) conn.close() }, LINGER_MS)
+    conn.linger.unref?.()
+  }
+
+  try {
+    conn.socket = new WebSocket(url)
+  } catch (error) {
+    conn.dead = true
+    conn.error = `could not open ${url}: ${error.message}`
+    return conn
+  }
+
+  conn.socket.addEventListener('open', () => { ready = true; for (const frame of queued.splice(0)) conn.socket.send(frame) })
+  conn.socket.addEventListener('error', () => fail(`socket error on ${url}`))
+  conn.socket.addEventListener('close', () => fail('socket closed'))
+  conn.socket.addEventListener('message', (message) => {
+    let frame
+    try { frame = JSON.parse(message.data) } catch { return }
+    if (!Array.isArray(frame)) return
+    const [verb, id] = frame
+
+    if (verb === 'EVENT') { subs.get(id)?.push(frame[2]); return }
+    if (verb === 'EOSE') { subs.get(id)?.finish(null); return }
+    if (verb === 'CLOSED') { subs.get(id)?.finish(`relay closed the subscription: ${frame[2] || 'no reason given'}`); return }
+    if (verb === 'NOTICE') process.stderr.write(`  notice from ${url}: ${frame[1]}\n`)
+    // AUTH / OK / anything else is not anybody's answer. Every waiting
+    // subscription is still alive, so none of their idle clocks may advance:
+    // search-staging sends an AUTH challenge unprompted, and a reader that
+    // treats the first non-EVENT frame as the result reports an empty relay.
+    for (const sub of subs.values()) sub.touch()
+  })
+
+  pool.set(url, conn)
+  return conn
+}
+
+/** Shut every pooled connection. Scripts call this so the process can exit. */
+export function closeAll () {
+  for (const conn of [...pool.values()]) conn.close()
+}
+
+/**
+ * Everything matching, from one relay.
  * The timeout is an IDLE window, not a deadline: this drains until the relay
  * has said nothing for `idleMs`, so a slow relay finishes and a silent one is
  * given up on. Reading it as a deadline is a mistake this project's sibling
@@ -141,20 +224,22 @@ export const MAX_REQ_BYTES = 240_000
 export function req (url, filters, { idleMs = 15_000, label = '' } = {}) {
   const list = Array.isArray(filters) ? filters : [filters]
   const frame = JSON.stringify(list)
-  if (frame.length > MAX_REQ_BYTES) {
-    // Loudly, here, rather than as a blank page later. An oversized REQ is
-    // discarded in silence by the relay, so this is the only place it can be
-    // noticed at all.
+  // BYTES, not characters. The relay's `max_message_length` is a byte count,
+  // and `.length` under-reports every non-ASCII character — so a filter up to
+  // twice the cap passed this guard and was then dropped in silence, which is
+  // precisely the failure the guard exists to prevent.
+  const size = Buffer.byteLength(frame)
+  if (size > MAX_REQ_BYTES) {
     return Promise.reject(new Error(
-      `REQ is ${frame.length} bytes, over the ${MAX_REQ_BYTES}-byte budget. Chunk its authors or lower a desk limit.`
+      `REQ is ${size} bytes, over the ${MAX_REQ_BYTES}-byte budget. Chunk its authors or lower a desk limit.`
     ))
   }
 
   return new Promise((resolve) => {
+    const conn = connect(url)
     const sub = randomUUID().slice(0, 12)
     const events = []
     const seen = new Set()
-    let socket
     let idle
     let hard
     let done = false
@@ -164,56 +249,34 @@ export function req (url, filters, { idleMs = 15_000, label = '' } = {}) {
       done = true
       clearTimeout(idle)
       clearTimeout(hard)
-      try { socket?.send(JSON.stringify(['CLOSE', sub])) } catch { /* already gone */ }
-      try { socket?.close() } catch { /* already gone */ }
+      conn.subs.delete(sub)
+      if (!conn.dead) { try { conn.send(JSON.stringify(['CLOSE', sub])) } catch { /* gone */ } }
+      conn.release?.()
       resolve({ events, note, relay: url })
     }
+
+    if (conn.dead) return finish(conn.error || `could not reach ${url}${label ? ` (${label})` : ''}`)
 
     const touch = () => {
       clearTimeout(idle)
       idle = setTimeout(() => finish('idle'), idleMs)
     }
 
+    conn.subs.set(sub, {
+      finish,
+      touch,
+      push: (event) => {
+        if (event?.id && !seen.has(event.id)) { seen.add(event.id); events.push(event) }
+        touch()
+      },
+    })
+
     // A wall clock over the idle clock. Honest about what this is: a guard,
     // not a fix for a diagnosed bug. No read in this skill should be able to
     // block forever, and an empty list is a supported answer everywhere.
     hard = setTimeout(() => finish('deadline'), idleMs * 2 + 5_000)
-
-    try {
-      socket = new WebSocket(url)
-    } catch (error) {
-      return finish(`could not open ${url}: ${error.message}`)
-    }
-
-    socket.addEventListener('open', () => {
-      touch()
-      socket.send(JSON.stringify(['REQ', sub, ...list]))
-    })
-
-    socket.addEventListener('message', (message) => {
-      let frame
-      try { frame = JSON.parse(message.data) } catch { return }
-      if (!Array.isArray(frame)) return
-      const [verb, id] = frame
-
-      if (verb === 'EVENT' && id === sub) {
-        const event = frame[2]
-        if (event?.id && !seen.has(event.id)) {
-          seen.add(event.id)
-          events.push(event)
-        }
-        touch()
-        return
-      }
-      if (verb === 'EOSE' && id === sub) return finish(null)
-      if (verb === 'CLOSED' && id === sub) return finish(`relay closed the subscription: ${frame[2] || 'no reason given'}`)
-      // AUTH / NOTICE / OK / anything else: not our answer. Keep waiting.
-      if (verb === 'NOTICE') process.stderr.write(`  notice from ${url}${label ? ` (${label})` : ''}: ${frame[1]}\n`)
-      touch()
-    })
-
-    socket.addEventListener('error', () => finish(`socket error on ${url}`))
-    socket.addEventListener('close', () => finish(done ? null : 'socket closed'))
+    touch()
+    conn.send(JSON.stringify(['REQ', sub, ...list]))
   })
 }
 

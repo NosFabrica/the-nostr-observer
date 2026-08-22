@@ -63,6 +63,7 @@ function decode (buffer) {
  */
 export async function fakeRelay (respond) {
   const sockets = new Set()
+  let connections = 0
   const server = createServer()
 
   server.on('upgrade', (request, socket) => {
@@ -73,6 +74,7 @@ export async function fakeRelay (respond) {
       + 'Upgrade: websocket\r\nConnection: Upgrade\r\n'
       + `Sec-WebSocket-Accept: ${accept}\r\n\r\n`,
     )
+    connections++
     sockets.add(socket)
     socket.on('close', () => sockets.delete(socket))
     socket.on('error', () => sockets.delete(socket))
@@ -100,6 +102,8 @@ export async function fakeRelay (respond) {
   const { port } = server.address()
   return {
     url: `ws://127.0.0.1:${port}`,
+    /** How many times a client actually dialled. */
+    get connections () { return connections },
     async close () {
       for (const socket of sockets) socket.destroy()
       await new Promise((done) => server.close(done))

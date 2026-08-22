@@ -7,7 +7,7 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { req, MAX_REQ_BYTES } from '../scripts/nostr.mjs'
+import { req, closeAll, MAX_REQ_BYTES } from '../scripts/nostr.mjs'
 import { fakeRelay, event } from './fakerelay.mjs'
 
 test('an AUTH challenge sent before the answer is not read as the answer', async () => {
@@ -115,4 +115,60 @@ test('a relay that will not connect resolves empty instead of throwing', async (
   const { events, note } = await req('ws://127.0.0.1:1', { kinds: [1] }, { idleMs: 200 })
   assert.deepEqual(events, [])
   assert.ok(note)
+})
+
+test('reads to one relay SHARE a socket', async () => {
+  // Six reads for the readiness chain and sixteen for a corpus pull used to
+  // mean that many TCP and TLS handshakes to a host AGENTS.md says not to
+  // hammer — and which advertises a subscription limit of fifty.
+  const relay = await fakeRelay((filters, sub) => [['EVENT', sub, event(`x${sub}`)], ['EOSE', sub]])
+  try {
+    const reads = await Promise.all(Array.from({ length: 8 }, () => req(relay.url, { kinds: [1] })))
+    assert.equal(reads.length, 8)
+    assert.ok(reads.every((r) => r.events.length === 1), 'every read gets its own answer')
+    assert.equal(relay.connections, 1, `dialled ${relay.connections} times, should be once`)
+  } finally { closeAll(); await relay.close() }
+})
+
+test('concurrent subscriptions do not cross-contaminate', async () => {
+  // Each answer must arrive already attributed. Merging them is the bug that
+  // filed the anonymous control run as ranked news.
+  const relay = await fakeRelay((filters, sub) => [
+    ['EVENT', sub, event(`for-${sub}`, { kind: filters[0].kinds[0] })],
+    ['EOSE', sub],
+  ])
+  try {
+    const [ones, twenties] = await Promise.all([req(relay.url, { kinds: [1] }), req(relay.url, { kinds: [20] })])
+    assert.deepEqual(ones.events.map((e) => e.kind), [1])
+    assert.deepEqual(twenties.events.map((e) => e.kind), [20])
+  } finally { closeAll(); await relay.close() }
+})
+
+test('an AUTH frame does not advance any waiting subscription\'s idle clock', async () => {
+  // Two subscriptions, one answered and one left hanging while the relay
+  // chatters. The chatter must not be mistaken for the hanging one's answer.
+  const relay = await fakeRelay((filters, sub) => (
+    filters[0].kinds[0] === 1
+      ? [['EVENT', sub, event('answered')], ['EOSE', sub]]
+      : [['AUTH', 'challenge']]
+  ))
+  try {
+    const [answered, hanging] = await Promise.all([
+      req(relay.url, { kinds: [1] }, { idleMs: 300 }),
+      req(relay.url, { kinds: [20] }, { idleMs: 300 }),
+    ])
+    assert.equal(answered.events.length, 1)
+    assert.deepEqual(hanging.events, [])
+    assert.equal(hanging.note, 'idle', 'the AUTH frame is not an answer')
+  } finally { closeAll(); await relay.close() }
+})
+
+test('the byte budget is measured in BYTES', async () => {
+  // `.length` under-reports every non-ASCII character, so a filter up to twice
+  // the cap passed and was then dropped by the relay in silence.
+  const wide = { kinds: [1], search: '\u00e9'.repeat(130_000) } // one char, two bytes
+  const frame = JSON.stringify([wide])
+  assert.ok(frame.length < MAX_REQ_BYTES, 'fixture must look small by character count')
+  assert.ok(Buffer.byteLength(frame) > MAX_REQ_BYTES, 'and be oversized by byte count')
+  await assert.rejects(() => req('ws://127.0.0.1:1', wide), /over the .* budget/)
 })

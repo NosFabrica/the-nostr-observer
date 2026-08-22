@@ -22,6 +22,7 @@
 import { readFileSync, writeFileSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
 import { PERMALINK } from './validate.mjs'
+import { tags, attributes } from './html.mjs'
 
 function arg (name, fallback = null) {
   const at = process.argv.indexOf(name)
@@ -55,19 +56,23 @@ export function resolve (html, corpus) {
 
   // --- art ids -------------------------------------------------------------
   // Rescanned from the top after each edit because dropping a figure moves
-  // every offset after it. The page is tens of kilobytes; correctness first.
-  for (let guard = 0; guard < 500; guard++) {
-    const img = /<img\b[^>]*?\bsrc\s*=\s*"(art-\d+)"[^>]*>/i.exec(out)
+  // every offset after it. Element lookup goes through the quoting-aware
+  // scanner: a caption containing `>` used to hide the whole `<img>`, so the
+  // id was never resolved and `src="art-3"` shipped as a broken picture that
+  // the boundary could not see either.
+  for (let guard = 0; guard < 1000; guard++) {
+    const img = tags(out, 'img').find((t) => /^art-\d+$/.test(attributes(t.raw).src || ''))
     if (!img) break
-    const art = byId.get(img[1])
+    const id = attributes(img.raw).src
+    const art = byId.get(id)
     if (art) {
-      out = out.slice(0, img.index)
-        + img[0].replace(/\bsrc\s*=\s*"art-\d+"/i, `src="${art.url}"`)
-        + out.slice(img.index + img[0].length)
-      changes.push({ kind: 'resolved', detail: `${img[1]} -> ${art.url}` })
+      out = out.slice(0, img.start)
+        + img.raw.replace(/(\bsrc\s*=\s*)("art-\d+"|'art-\d+'|art-\d+)/i, `$1"${art.url}"`)
+        + out.slice(img.end)
+      changes.push({ kind: 'resolved', detail: `${id} -> ${art.url}` })
     } else {
-      out = dropFigure(out, img.index, img.index + img[0].length)
-      changes.push({ kind: 'dropped', detail: `${img[1]} is not on the shortlist; its figure was removed` })
+      out = dropFigure(out, img.start, img.end)
+      changes.push({ kind: 'dropped', detail: `${id} is not on the shortlist; its figure was removed` })
     }
   }
 
@@ -75,15 +80,19 @@ export function resolve (html, corpus) {
   // The paper prints addresses; it does not make them clickable. A permalink
   // back to an event we actually read survives; everything else is unwrapped
   // to its own text, which is what a printed newspaper does with a URL.
-  out = out.replace(/<a\b([^>]*)>([\s\S]*?)<\/a>/gi, (whole, attrs, inner) => {
-    const href = /\bhref\s*=\s*("([^"]*)"|'([^']*)'|([^\s>]+))/i.exec(attrs)
-    const url = href ? (href[2] ?? href[3] ?? href[4] ?? '') : ''
-    if (!/^https?:/i.test(url)) return whole
+  // Rebuilt back to front so each edit leaves earlier offsets untouched.
+  const anchors = tags(out, 'a').reverse()
+  for (const anchor of anchors) {
+    const url = attributes(anchor.raw).href || ''
+    if (!/^https?:/i.test(url)) continue
     const id = PERMALINK.exec(url)?.[1]?.toLowerCase()
-    if (id && eventIds.has(id)) return whole
+    if (id && eventIds.has(id)) continue
+    const close = out.toLowerCase().indexOf('</a>', anchor.end)
+    if (close === -1) continue
+    out = out.slice(0, anchor.start) + out.slice(anchor.end, close) + out.slice(close + 4)
     changes.push({ kind: 'unwrapped', detail: url.slice(0, 120) })
-    return inner
-  })
+  }
+  changes.reverse()
 
   return { html: out, changes }
 }

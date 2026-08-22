@@ -23,7 +23,7 @@
 //
 // Usage: node readiness.mjs <npub> [--relay wss://...] [--json out.json]
 
-import { req, one, toHex, toNpub } from './nostr.mjs'
+import { req, one, toHex, toNpub, closeAll } from './nostr.mjs'
 import {
   assess, REMEDY, writeRelays, rankProvider, blossomServers, rankedProbe,
   KIND_RELAY_LIST, KIND_TRUST_PROVIDERS, KIND_CONTACT_CARD, KIND_BLOSSOM_SERVERS,
@@ -49,8 +49,12 @@ export async function gather (observerHex, relay, since) {
     req(relay, rankedProbe(null, since), { label: 'anonymous probe' }),
   ])
 
-  const relayListEvent = await one(relay, { kinds: [KIND_RELAY_LIST], authors: [observerHex] }, { label: 'kind 10002' })
-  const scoreListEvent = await one(relay, { kinds: [KIND_TRUST_PROVIDERS], authors: [observerHex] }, { label: 'kind 10040' })
+  // Independent of each other, so one round trip rather than two. Only the
+  // card read below has to wait, because it needs the service from the 10040.
+  const [relayListEvent, scoreListEvent] = await Promise.all([
+    one(relay, { kinds: [KIND_RELAY_LIST], authors: [observerHex] }, { label: 'kind 10002' }),
+    one(relay, { kinds: [KIND_TRUST_PROVIDERS], authors: [observerHex] }, { label: 'kind 10040' }),
+  ])
   const provider = rankProvider(scoreListEvent)
 
   // Only asked when there is a service to ask about. Null, not false: we did
@@ -116,6 +120,9 @@ async function main () {
   console.log(`\n  Reading for ${toNpub(observerHex)}`)
   console.log(`  through ${relay}\n`)
 
+  // The storage chain is independent of the lens chain — they fail separately
+  // — so it rides along instead of costing a seventh round trip afterwards.
+  const hosting = storage(observerHex, relay)
   const facts = await gather(observerHex, relay, since)
   const verdict = assess(facts)
 
@@ -127,10 +134,10 @@ async function main () {
   console.log(`\n  ${remedy.say}`)
   if (remedy.do) console.log(`\n  What to do: ${remedy.do}`)
 
-  const hosting = await storage(observerHex, relay)
+  const servers = (await hosting)
   console.log('')
-  if (hosting.servers.length > 0) {
-    console.log(`  Aside - you have ${hosting.servers.length} Blossom server(s), so this edition could be published later.`)
+  if (servers.servers.length > 0) {
+    console.log(`  Aside - you have ${servers.servers.length} Blossom server(s), so this edition could be published later.`)
   } else {
     console.log('  Aside - you have nowhere to store files (no usable kind 10063), so this edition')
     console.log('  could be read but not published. That does not block anything here.')
@@ -138,10 +145,11 @@ async function main () {
 
   const out = arg('--json')
   if (out) {
-    writeFileSync(out, JSON.stringify({ ...verdict, observer: observerHex, relay, since, until, facts, storage: hosting }, null, 2))
+    writeFileSync(out, JSON.stringify({ ...verdict, observer: observerHex, relay, since, until, facts, storage: servers }, null, 2))
   }
 
   console.log(`\n  VERDICT: ${verdict.ready ? 'READY' : 'NOT READY - ' + verdict.state}\n`)
+  closeAll()
   process.exit(verdict.ready ? 0 : 1)
 }
 
