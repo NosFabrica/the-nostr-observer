@@ -23,6 +23,8 @@ local.properties
 
 # Runtime data
 data/
+# Skill run output (corpus, digest, editions)
+dist/
 *.db
 *.sqlite
 *.sqlite3

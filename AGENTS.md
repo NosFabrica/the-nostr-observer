@@ -195,10 +195,13 @@ would a `CLAUDE_CODE_OAUTH_TOKEN` pasted into anything of ours.
   successful injection. Its haystack is the ranked desks only, matching
   `Validator.kt`'s `corpus.all()`; the control run is not quotable.
 
-- **Permalinks are bare hex only**, stricter than `Validator.PERMALINK`. The
-  editorial brief says hex and the checker accepts hex, so the two halves cannot
-  drift apart the way they did when the regex allowed `nevent1…` in a branch that
-  captured nothing.
+- **Permalinks are jumble.social `nevent1` URLs**, decoded rather than captured.
+  The writer cites `https://jumble.social/notes/<64-hex>`; `resolve.mjs` encodes
+  the nevent; `validate.mjs` decodes it and checks the id against the corpus.
+  The Kotlin regex once allowed `nevent1…` in a branch that captured nothing, so
+  every such link compared against the empty string and a page citing its sources
+  the normal way failed its own check. Decode, or do not accept the link. The
+  full Observer still uses njump.me; this is the skill's host.
 
 - **`reference/` is generated.** `tools/sync-skill.sh` copies `system-prompt.md`
   and `house.css` in and prepends a banner correcting the three statements in the
@@ -218,10 +221,11 @@ would a `CLAUDE_CODE_OAUTH_TOKEN` pasted into anything of ours.
   writer the opposite and validated URLs only, so a page written to the brief
   would have had every picture rejected — the same two-halves-disagreeing bug as
   the `nevent1` branch that captured nothing. `resolve.mjs` is that afterwards:
-  ids to URLs, unknown id loses its whole figure, links to the open web unwrapped
-  to plain text. It PRINTS every change that is not a plain resolution, because a
-  dropped figure or an unwrapped link is the visible edge of an injection attempt
-  and a sanitizer that tidies up in silence hides the one event worth seeing.
+  ids to URLs, unknown id loses its whole figure, hex permalinks encoded to
+  jumble.social nevent URLs, links to the open web unwrapped to plain text. It
+  PRINTS every change that is not a plain resolution, because a dropped figure
+  or an unwrapped link is the visible edge of an injection attempt and a
+  sanitizer that tidies up in silence hides the one event worth seeing.
 
 - **Tests: `node --test ".claude/skills/nostr-observer/test/*.test.mjs"`,** wired
   into `build.yml` alongside a `git diff --exit-code` on the generated

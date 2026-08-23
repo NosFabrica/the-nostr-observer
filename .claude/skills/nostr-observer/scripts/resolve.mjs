@@ -21,8 +21,30 @@
 
 import { readFileSync, writeFileSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
-import { PERMALINK } from './validate.mjs'
+import { permalinkTarget, toPermalink } from './validate.mjs'
+import { fromNevent } from './nostr.mjs'
 import { tags, attributes } from './html.mjs'
+
+/**
+ * Event id from a permalink the writer is allowed to cite.
+ *
+ * The writer writes jumble.social/notes/<hex>. resolve encodes the nevent.
+ * A leftover njump.me hex URL is upgraded the same way. An already-encoded
+ * jumble nevent is recognised so a second pass is a no-op.
+ */
+function citedEventId (href) {
+  const jumble = permalinkTarget(href)
+  if (jumble) return jumble
+  const hex = /^https:\/\/jumble\.social\/notes\/([0-9a-f]{64})(?:[/?#].*)?$/i.exec(href)
+  if (hex) return hex[1].toLowerCase()
+  const njump = /^https:\/\/njump\.me\/([0-9a-f]{64})(?:[/?#].*)?$/i.exec(href)
+  if (njump) return njump[1].toLowerCase()
+  const nevent = /^https:\/\/(?:jumble\.social\/notes\/|njump\.me\/)(nevent1[0-9a-z]+)/i.exec(href)
+  if (nevent) {
+    try { return fromNevent(nevent[1]) } catch { return null }
+  }
+  return null
+}
 
 function arg (name, fallback = null) {
   const at = process.argv.indexOf(name)
@@ -78,17 +100,26 @@ export function resolve (html, corpus) {
 
   // --- links to the open web ----------------------------------------------
   // The paper prints addresses; it does not make them clickable. A permalink
-  // back to an event we actually read survives; everything else is unwrapped
-  // to its own text, which is what a printed newspaper does with a URL.
-  // Rebuilt back to front so each edit leaves earlier offsets untouched.
+  // back to an event we actually read is rewritten to jumble.social's nevent
+  // URL (the writer cites hex; this is the afterwards). Everything else is
+  // unwrapped to its own text, which is what a printed newspaper does with a
+  // URL. Rebuilt back to front so each edit leaves earlier offsets untouched.
   const anchors = tags(out, 'a').reverse()
   for (const anchor of anchors) {
     const url = attributes(anchor.raw).href || ''
     if (!/^https?:/i.test(url)) continue
-    const id = PERMALINK.exec(url)?.[1]?.toLowerCase()
-    if (id && eventIds.has(id)) continue
+    const id = citedEventId(url)
     const close = out.toLowerCase().indexOf('</a>', anchor.end)
     if (close === -1) continue
+    if (id && eventIds.has(id)) {
+      const canonical = toPermalink(id)
+      if (url === canonical) continue
+      out = out.slice(0, anchor.start)
+        + anchor.raw.replace(/(\bhref\s*=\s*)("[^"]*"|'[^']*'|[^\s>]+)/i, `$1"${canonical}"`)
+        + out.slice(anchor.end)
+      changes.push({ kind: 'permalink', detail: `${url} -> ${canonical}` })
+      continue
+    }
     out = out.slice(0, anchor.start) + out.slice(anchor.end, close) + out.slice(close + 4)
     changes.push({ kind: 'unwrapped', detail: url.slice(0, 120) })
   }
@@ -110,12 +141,13 @@ function main () {
   const counts = changes.reduce((acc, c) => ({ ...acc, [c.kind]: (acc[c.kind] || 0) + 1 }), {})
   console.log('')
   console.log(`  Resolved ${counts.resolved || 0} art id(s).`)
+  if (counts.permalink) console.log(`  Encoded ${counts.permalink} permalink(s) to jumble.social.`)
   if (counts.dropped || counts.unwrapped) {
     console.log('')
     console.log('  CHANGES WORTH READING - each of these is the page trying to do something')
     console.log('  the paper does not do. Look at them before you ship:')
     console.log('')
-    for (const change of changes.filter((c) => c.kind !== 'resolved')) {
+    for (const change of changes.filter((c) => c.kind !== 'resolved' && c.kind !== 'permalink')) {
       console.log(`  ${change.kind.toUpperCase()}: ${change.detail}`)
     }
   }

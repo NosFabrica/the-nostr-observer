@@ -95,15 +95,75 @@ export function toHex (input) {
   return Buffer.from(bytes).toString('hex')
 }
 
-/** Hex to `npub1…`. */
-export function toNpub (hex) {
-  const bytes = Array.from(Buffer.from(hex, 'hex'))
-  const data = convertBits(bytes, 8, 5, true)
-  const hrp = 'npub'
+function encodeBech32 (hrp, bytes) {
+  const data = convertBits(Array.from(bytes), 8, 5, true)
+  if (!data) throw new Error('bech32 encode failed')
   const checksum = polymod(hrpExpand(hrp).concat(data).concat([0, 0, 0, 0, 0, 0])) ^ 1
   const tail = []
   for (let i = 0; i < 6; i++) tail.push((checksum >> (5 * (5 - i))) & 31)
   return hrp + '1' + data.concat(tail).map((d) => CHARSET[d]).join('')
+}
+
+function decodeBech32 (value) {
+  const lower = String(value || '').trim().toLowerCase()
+  const split = lower.lastIndexOf('1')
+  if (split < 1) throw new Error(`Not bech32: ${String(value).slice(0, 24)}`)
+  const hrp = lower.slice(0, split)
+  const chars = lower.slice(split + 1)
+  const data = []
+  for (const ch of chars) {
+    const index = CHARSET.indexOf(ch)
+    if (index === -1) throw new Error(`Not bech32: ${String(value).slice(0, 24)} has a character bech32 does not use.`)
+    data.push(index)
+  }
+  if (polymod(hrpExpand(hrp).concat(data)) !== 1) {
+    throw new Error(`That ${hrp} does not checksum.`)
+  }
+  const bytes = convertBits(data.slice(0, -6), 5, 8, false)
+  if (!bytes) throw new Error(`That ${hrp} does not decode.`)
+  return { hrp, bytes }
+}
+
+/** Hex to `npub1…`. */
+export function toNpub (hex) {
+  return encodeBech32('npub', Buffer.from(hex, 'hex'))
+}
+
+/**
+ * Event id hex to `nevent1…` (NIP-19, id only).
+ *
+ * jumble.social's note URLs take an nevent, not bare hex. The writer still
+ * cites hex; resolve.mjs is what encodes. Relays and author are omitted on
+ * purpose: a permalink that names only the event cannot smuggle a relay
+ * the corpus never spoke to.
+ */
+export function toNevent (hex) {
+  const id = String(hex || '').toLowerCase()
+  if (!/^[0-9a-f]{64}$/.test(id)) throw new Error(`Not an event id: ${String(hex).slice(0, 16)}`)
+  return encodeBech32('nevent', [0, 32, ...Buffer.from(id, 'hex')])
+}
+
+/** `nevent1…` to lowercase event-id hex. Throws if it is not an nevent that names an id. */
+export function fromNevent (input) {
+  const value = String(input || '').trim()
+  const { hrp, bytes } = decodeBech32(value)
+  if (hrp !== 'nevent') throw new Error(`Not an nevent: ${value.slice(0, 24)}`)
+  let i = 0
+  let id = null
+  while (i + 2 <= bytes.length) {
+    const type = bytes[i]
+    const len = bytes[i + 1]
+    i += 2
+    if (i + len > bytes.length) break
+    const payload = bytes.slice(i, i + len)
+    i += len
+    if (type === 0) {
+      if (payload.length !== 32) throw new Error('That nevent names an id of the wrong length.')
+      id = Buffer.from(payload).toString('hex')
+    }
+  }
+  if (!id) throw new Error('That nevent does not name an event.')
+  return id
 }
 
 /** What a person is called when they have published no name. Never hex. */

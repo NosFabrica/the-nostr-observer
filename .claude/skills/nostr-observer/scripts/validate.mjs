@@ -23,6 +23,7 @@
 import { readFileSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
 import { tags, attributes as attrsOf, textIn } from './html.mjs'
+import { toNevent, fromNevent } from './nostr.mjs'
 
 function arg (name, fallback = null) {
   const at = process.argv.indexOf(name)
@@ -110,17 +111,32 @@ export function isQuoted (raw, haystack) {
 }
 
 /**
- * The one external shape a link may take: a permalink to an event we read.
+ * The one external shape a link may take, after resolve.mjs has run:
+ * `https://jumble.social/notes/<nevent1…>` naming an event we read.
  *
- * BARE HEX ONLY, which is stricter than the Kotlin (it also decodes nevent1
- * and note1). Narrower on purpose: the Kotlin's regex once allowed nevent1 in
- * a branch that captured nothing, so every such link compared against the
- * empty string, and an edition citing its sources the normal way failed its
- * own check and was never offered for publication. Two halves of one rule
- * disagreeing. Here the editorial brief says hex and this accepts hex, so they
- * cannot drift apart.
+ * The writer cites `https://jumble.social/notes/<64-hex>` (or, still, a
+ * leftover njump.me hex URL). resolve.mjs encodes the nevent. This checker
+ * DECODES rather than capturing a regex group: the Kotlin regex once allowed
+ * `nevent1…` in a branch that captured nothing, so every such link compared
+ * against the empty string and a page citing its sources the normal way
+ * failed its own check. Decode, or do not accept the link.
  */
-export const PERMALINK = /^https:\/\/njump\.me\/([0-9a-f]{64})(?:[/?#].*)?$/i
+export const PERMALINK = /^https:\/\/jumble\.social\/notes\/(nevent1[0-9a-z]+)(?:[/?#].*)?$/i
+
+export function toPermalink (eventId) {
+  return `https://jumble.social/notes/${toNevent(eventId)}`
+}
+
+/** Event id hex if `href` is a jumble.social nevent permalink; otherwise null. */
+export function permalinkTarget (href) {
+  const match = PERMALINK.exec(href)
+  if (!match) return null
+  try {
+    return fromNevent(match[1])
+  } catch {
+    return null
+  }
+}
 
 // Things there is no sanitizer to strip, so they are refused instead.
 //
@@ -214,7 +230,7 @@ export function check (html, corpus) {
 
   for (const href of attributes(html, 'a', 'href')) {
     if (!/^https?:/i.test(href)) continue
-    const id = PERMALINK.exec(href)?.[1]?.toLowerCase()
+    const id = permalinkTarget(href)
     if (!id || !eventIds.has(id)) {
       // Presence in the corpus is evidence of NOTHING. An earlier version of
       // this rule allowlisted every URL that appeared in the corpus, on the

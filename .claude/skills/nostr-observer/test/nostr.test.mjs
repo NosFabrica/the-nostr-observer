@@ -7,7 +7,7 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { toHex, toNpub, shortNpub, tagValue, tagsNamed } from '../scripts/nostr.mjs'
+import { toHex, toNpub, shortNpub, toNevent, fromNevent, tagValue, tagsNamed } from '../scripts/nostr.mjs'
 
 // The NIP-19 worked example.
 const HEX = '3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d'
@@ -48,6 +48,15 @@ test('a short name is an npub, never hex', () => {
   assert.match(short, /^npub1/)
   assert.doesNotMatch(short, new RegExp(HEX.slice(0, 12)))
   assert.ok(short.length < 20)
+})
+
+test('an nevent round-trips an event id, and extra TLV fields still yield the id', () => {
+  const id = 'a'.repeat(64)
+  assert.equal(fromNevent(toNevent(id)), id)
+  // A jumble.social note URL carries relays in the nevent. The id is still
+  // type 0; we must not require the encoding to be id-only.
+  const jumble = 'nevent1qvzqqqqqqypzqczwjmsfnym2zpyg89vtqs95weewpuzgex9v0yln0llycusz084jqythwumn8ghj7anfw3hhytnwdaehgu339e3k7mf0qy2hwumn8ghj7un9d3shjtnyv9kh2uewd9hj7qpq5sltgs3ufmenvu345j7cq56l6vuklz85rzflmay6mjfsnnzflqmqu8zv28'
+  assert.equal(fromNevent(jumble), 'a43eb4423c4ef3367235a4bd80535fd3396f88f41893fdf49adc9309cc49f836')
 })
 
 test('tag readers', () => {

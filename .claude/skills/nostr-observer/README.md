@@ -45,7 +45,7 @@ and ask for it:
 
 It will ask which npub to read for, check that your lens actually resolves, and
 stop with a specific remedy if it does not. If it prints a paper, you get two
-things: an `observer-<date>-<code>.html` file in that directory, and an
+things: an `observer-<date>-<code>.html` file in `dist/` of that directory, and an
 artifact link.
 
 Everything runs locally. You are not signing in to anything of ours, and no
@@ -109,8 +109,9 @@ you installed the skill on its own, without the repository.)
 **4. Live, against the relay — needs a reader with a working lens.**
 
 ```bash
+mkdir -p dist
 node scripts/readiness.mjs <npub>              # exit 0 means ready
-node scripts/corpus.mjs <npub> --out corpus.json > digest.md
+node scripts/corpus.mjs <npub> --out dist/corpus.json > dist/digest.md
 ```
 
 This is the layer CI cannot have, because the workflow's rule is that nothing

@@ -10,7 +10,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync, existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { check, quotedText, attributes, normalize, isQuoted, PERMALINK } from '../scripts/validate.mjs'
+import { check, quotedText, attributes, normalize, isQuoted, PERMALINK, toPermalink, permalinkTarget } from '../scripts/validate.mjs'
 import { resolve } from '../scripts/resolve.mjs'
 
 const EVENT_ID = 'a'.repeat(64)
@@ -75,17 +75,25 @@ test('PRESENCE IN THE CORPUS IS EVIDENCE OF NOTHING', () => {
 })
 
 test('a permalink to an event we actually read is the one allowed link', () => {
-  assert.deepEqual(kinds(`<a href="https://njump.me/${EVENT_ID}">source</a>`), [])
-  assert.deepEqual(kinds(`<a href="https://njump.me/${'f'.repeat(64)}">source</a>`), ['LINK'],
+  const href = toPermalink(EVENT_ID)
+  assert.deepEqual(kinds(`<a href="${href}">source</a>`), [])
+  assert.deepEqual(kinds(`<a href="${toPermalink('f'.repeat(64))}">source</a>`), ['LINK'],
     'a well-formed permalink to an event not in the corpus is still refused')
+  assert.deepEqual(kinds(`<a href="https://njump.me/${EVENT_ID}">source</a>`), ['LINK'],
+    'njump.me is no longer the permalink host; resolve rewrites it')
+  assert.deepEqual(kinds(`<a href="https://jumble.social/notes/${EVENT_ID}">source</a>`), ['LINK'],
+    'bare hex in the jumble path is the writer form; resolve encodes it')
 })
 
-test('the permalink rule and the editorial brief agree on hex', () => {
+test('the permalink is a jumble.social nevent, decoded rather than captured', () => {
   // The Kotlin regex once allowed `nevent1…` in a branch that captured
   // nothing, so every such link compared against the empty string and a page
-  // citing its sources normally failed its own check.
-  assert.equal(PERMALINK.exec(`https://njump.me/${EVENT_ID}`)?.[1], EVENT_ID)
-  assert.equal(PERMALINK.exec('https://njump.me/nevent1qqq'), null)
+  // citing its sources normally failed its own check. Decode, or refuse.
+  const href = toPermalink(EVENT_ID)
+  assert.equal(permalinkTarget(href), EVENT_ID)
+  assert.match(href, /^https:\/\/jumble\.social\/notes\/nevent1/)
+  assert.equal(permalinkTarget('https://jumble.social/notes/nevent1qqq'), null)
+  assert.equal(PERMALINK.exec(`https://njump.me/${EVENT_ID}`), null)
 })
 
 test('markup with no sanitizer to strip it is REFUSED', () => {
@@ -115,10 +123,18 @@ test('resolve unwraps a link to the open web but keeps its text, and SAYS SO', (
   const { html, changes } = resolve('<p>see <a href="https://evil.example.com/drain">free sats</a> today</p>', corpus)
   assert.equal(html, '<p>see free sats today</p>')
   assert.deepEqual(changes, [{ kind: 'unwrapped', detail: 'https://evil.example.com/drain' }])
-  // A permalink survives.
-  const kept = resolve(`<a href="https://njump.me/${EVENT_ID}">source</a>`, corpus)
-  assert.match(kept.html, /<a /)
-  assert.deepEqual(kept.changes, [])
+})
+
+test('resolve encodes a cited event id as a jumble.social nevent permalink', () => {
+  const writer = `https://jumble.social/notes/${EVENT_ID}`
+  const { html, changes } = resolve(`<a href="${writer}">source</a>`, corpus)
+  const canonical = toPermalink(EVENT_ID)
+  assert.equal(html, `<a href="${canonical}">source</a>`)
+  assert.deepEqual(changes.map((c) => c.kind), ['permalink'])
+  // A leftover njump.me hex URL is upgraded the same way, so an old page
+  // still ships rather than having every citation unwrapped.
+  const legacy = resolve(`<a href="https://njump.me/${EVENT_ID}">source</a>`, corpus)
+  assert.equal(legacy.html, `<a href="${canonical}">source</a>`)
 })
 
 test('resolve then validate leaves nothing for validate to complain about', () => {
@@ -160,9 +176,9 @@ test('THE GOLDEN EDITION survives the boundary intact', { skip: !existsSync(GOLD
   }
 
   const { html, changes } = resolve(page, golden)
-  assert.equal(changes.filter((c) => c.kind !== 'resolved').length, 0,
+  assert.equal(changes.filter((c) => c.kind !== 'resolved' && c.kind !== 'permalink').length, 0,
     'a good page should need nothing dropped or unwrapped')
-  assert.equal(changes.length, ids.length)
+  assert.equal(changes.filter((c) => c.kind === 'resolved').length, ids.length)
 
   const report = check(html, golden)
   assert.ok(report.quotes.length > 0, 'fixture should quote people')
