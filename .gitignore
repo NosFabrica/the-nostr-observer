@@ -29,3 +29,13 @@ data/
 
 # OS
 .DS_Store
+
+# Observer run output. The skill writes readiness.json, corpus.json, digest.md
+# and the edition itself into the CURRENT directory, which is the reader's --
+# so running it inside this checkout leaves four untracked files behind every
+# time. The corpus alone is ~2 MB of other people's posts, and the edition is
+# one person's personal front page; neither belongs in the source tree.
+readiness.json
+corpus.json
+digest.md
+observer-*.html
