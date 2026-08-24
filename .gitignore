@@ -29,3 +29,15 @@ data/
 
 # OS
 .DS_Store
+
+# Editions, and the working files a run leaves behind
+#
+# A run writes these into the reader's working directory, which is a checkout
+# often enough that they show up as untracked here. None of them are source:
+# corpus.json is a megabyte-plus dump of other people's posts, and the edition
+# is one reader's paper for one day, reproducible from the npub and the date.
+observer-*.html
+corpus.json
+corpus.err
+digest.md
+readiness.json
