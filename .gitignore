@@ -29,3 +29,8 @@ data/
 
 # OS
 .DS_Store
+
+# Run outputs from printing an edition (scripts write these to the cwd)
+readiness.json
+corpus.json
+digest.md
