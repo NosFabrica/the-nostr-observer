@@ -344,23 +344,81 @@
   .dim { fill: var(--quiet); }
 </style>
 
+
+<style>
+  /* A short glossary sits above the mechanism, so nothing below needs a footnote. */
+  dl.kinds { display: grid; grid-template-columns: minmax(9rem, max-content) minmax(0, 40rem); gap: .55rem 1.2rem; margin: 1.4rem 0 0; }
+  dl.kinds dt { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: .74rem; color: var(--ink); padding-top: .18rem; }
+  dl.kinds dd { margin: 0; font-size: .94rem; line-height: 1.5; color: var(--quiet); }
+  dl.kinds dd b { color: var(--ink); font-weight: 600; }
+  @media (max-width: 34rem) { dl.kinds { grid-template-columns: 1fr; gap: .15rem .5rem; } dl.kinds dd { margin-bottom: .7rem; } }
+</style>
+
 <div class="wrap">
 
 <header class="top">
   <p class="eyebrow">The Nostr Observer · pre-flight</p>
   <h1>Before the Model Call</h1>
   <p class="standfirst">
-    A front page costs about a dollar fifty and several minutes of somebody else's
-    relay. Everything below runs first, in order, for free — and every one of these
-    states is a different sentence to tell the reader.
+    This service prints one personal newspaper a day from a reader's web of trust.
+    Writing it costs about a dollar fifty and several minutes of somebody else's relay.
+    Everything on this page runs first, for free — and every state here is a different
+    sentence to tell the reader.
   </p>
   <div class="filed">
-    <span>Readiness.kt · ReadinessProbe.kt · Press.kt</span>
-    <span>lens chain: 4 links, 12 verdicts</span>
-    <span>storage chain: 2 links, 5 verdicts</span>
-    <span>gate: <code>verdict.ranks</code></span>
+    <span>4 trust checks · 12 outcomes</span>
+    <span>2 storage checks · 5 outcomes</span>
+    <span>2 of them stop the run</span>
+    <span>everything else is an instrument</span>
   </div>
 </header>
+
+<section>
+  <div class="sechead">
+    <p class="eyebrow">00 · What the reader needs on Nostr</p>
+    <h2>Three lists and a scoring service</h2>
+  </div>
+
+  <div class="prose">
+    <p>
+      The paper is built from a ranked read of the last 24 hours. The ranking is the
+      product: without it you get the same firehose everybody else gets. Three lists the
+      reader publishes, and one large set of events somebody else publishes about them,
+      decide whether that ranking is possible at all.
+    </p>
+  </div>
+
+  <dl class="kinds">
+    <dt>kind 10002</dt>
+    <dd><b>Relay list (NIP-65).</b> Where the reader publishes. The outbox model, used here for what it is for: their profile, their follows and their own notes live wherever they said they would.</dd>
+
+    <dt>kind 10040</dt>
+    <dd><b>Trust provider list (NIP-85).</b> Who the reader has appointed to work out their web of trust. It names a service pubkey, a dimension, and the relay that service publishes to.</dd>
+
+    <dt>kind 30382</dt>
+    <dd><b>Trust score cards (NIP-85).</b> Published by that service — one per person it scored, from that reader's point of view. A big set: about 149,000 cards for one reader in the measurement below.</dd>
+
+    <dt>kind 10063</dt>
+    <dd><b>Blossom server list.</b> Where the finished paper is uploaded. Needed to publish an edition, never to make one.</dd>
+
+    <dt>the search relay</dt>
+    <dd><b>A NIP-50 relay that imports those cards</b> and extends search with two tokens: one naming a viewer, one asking for that viewer's ranking. It also answers NIP-45 COUNT, which is how the checks below ask “how many, and how many should there be?”</dd>
+  </dl>
+
+  <div class="note" style="margin-top:1.8rem">
+    <span class="lbl">The failure everything here is built around</span>
+    <p>
+      A ranked query naming a viewer whose scores the relay does not have <b>does not
+      fail</b>. It quietly ranks the query for nobody in particular. The result looks
+      exactly like a working feed and is not one: on a measured window, that anonymous
+      ranking was 209 of 400 posts from a single spam account.
+    </p>
+    <p>
+      There is no error to catch and no empty result to notice. So the checks have to
+      happen up front, before a request is made that is expensive to get wrong.
+    </p>
+  </div>
+</section>
 
 <section>
   <div class="sechead">
@@ -370,24 +428,22 @@
 
   <div class="prose">
     <p>
-      <code>Press.gather</code> is everything up to but not including the model call.
-      It runs the readiness chain first — the pre-flight the whole design turns on,
-      because the failure it catches is <em>silent</em>. Every filter this service sends
-      carries <code>observer:&lt;pk&gt; sort:rank</code>, and that token resolving to nothing
-      does not error: it quietly becomes the anonymous ranking. On a measured window
-      that was 209 of 400 posts from one spam account. Finding that out after the
-      model call is finding it late.
+      The trust chain runs first and decides whether there is a paper to print. Nothing
+      is generated for a reader who has not cleared it — no fallback feed built from
+      follows, no “here is roughly what it would look like”. They are told which single
+      thing is missing instead.
     </p>
     <p>
-      So the chain is the gate. A reader who has not cleared it gets
-      <code>Refused(NO_LENS)</code> and the name of the one unmet link — never a paper
-      built some other way.
+      The storage chain runs alongside it and never stops anything. A reader with no
+      Blossom server can read today's paper; they just cannot publish it. It is asked
+      here, at the start, because the alternative is telling somebody they have nowhere
+      to put their paper <em>after</em> they have paid for one.
     </p>
   </div>
 
   <figure class="wide">
     <div class="scroller">
-      <svg viewBox="0 0 940 300" role="img" aria-label="The pre-flight pipeline: sign-in, then the lens chain, then a ranks gate that refuses with NO_LENS, then the corpus pull, then a notes gate that refuses with QUIET, then the digest, and only then the model call. The storage chain branches off and never gates.">
+      <svg viewBox="0 0 940 300" role="img" aria-label="The pre-flight sequence: signed in, then four trust checks, then a gate asking whether the feed can be ranked, then reading the 24-hour window, then a gate asking whether anything came back, then trimming to fit, and only then the model call. The Blossom check branches off and never stops the run.">
         <defs>
           <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
             <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"></path>
@@ -397,45 +453,43 @@
           </marker>
         </defs>
 
-        <!-- storage branch -->
         <rect x="140" y="40" width="212" height="32" rx="2" class="node" stroke-dasharray="4 3"></rect>
-        <text x="246" y="60" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="12" fill="currentColor">storage chain · 2 links</text>
+        <text x="246" y="60" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="12" fill="currentColor">where can you publish?</text>
         <line x1="209" y1="126" x2="209" y2="76" stroke="currentColor" stroke-width="1.2" marker-end="url(#ar)" opacity="0.55"></line>
         <text x="220" y="106" font-family="IBM Plex Mono, monospace" font-size="11" class="dim">also asked</text>
-        <text x="366" y="60" font-family="IBM Plex Mono, monospace" font-size="11" class="dim">reported, never gates</text>
+        <text x="366" y="60" font-family="IBM Plex Mono, monospace" font-size="11" class="dim">answered, never blocks</text>
 
-        <!-- spine -->
         <rect x="8" y="126" width="104" height="48" rx="2" class="node"></rect>
         <text x="60" y="149" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="12" fill="currentColor">signed in</text>
-        <text x="60" y="164" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="11" class="dim">+ not an nsec</text>
+        <text x="60" y="164" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="11" class="dim">with an npub</text>
 
         <rect x="140" y="126" width="138" height="48" rx="2" class="node"></rect>
-        <text x="209" y="149" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="12" fill="currentColor">lens chain</text>
-        <text x="209" y="164" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="11" class="dim">4 links</text>
-        <text x="209" y="196" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="11" class="dim">2 fetches · 2 searches · 4 COUNTs</text>
+        <text x="209" y="149" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="12" fill="currentColor">4 trust checks</text>
+        <text x="209" y="164" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="11" class="dim">in order</text>
+        <text x="209" y="196" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="11" class="dim">2 reads · 2 searches · 4 COUNTs</text>
         <text x="209" y="210" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="11" class="dim">~3s</text>
 
         <polygon points="296,150 314,124 382,124 400,150 382,176 314,176" class="node"></polygon>
-        <text x="348" y="154" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="12" fill="currentColor">ranks?</text>
+        <text x="348" y="146" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="12" fill="currentColor">can it</text>
+        <text x="348" y="160" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="12" fill="currentColor">rank?</text>
 
         <rect x="424" y="126" width="118" height="48" rx="2" class="node"></rect>
-        <text x="483" y="149" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="12" fill="currentColor">pull corpus</text>
-        <text x="483" y="164" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="11" class="dim">1 REQ per desk</text>
-        <text x="483" y="196" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="11" class="dim">+ anonymous control run</text>
+        <text x="483" y="149" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="12" fill="currentColor">read 24 hours</text>
+        <text x="483" y="164" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="11" class="dim">one REQ per section</text>
+        <text x="483" y="196" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="11" class="dim">+ the same window, unranked</text>
 
         <polygon points="566,150 584,124 652,124 670,150 652,176 584,176" class="node"></polygon>
-        <text x="618" y="146" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="12" fill="currentColor">any</text>
-        <text x="618" y="160" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="12" fill="currentColor">notes?</text>
+        <text x="618" y="146" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="12" fill="currentColor">anything</text>
+        <text x="618" y="160" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="12" fill="currentColor">there?</text>
 
         <rect x="694" y="126" width="110" height="48" rx="2" class="node"></rect>
-        <text x="749" y="149" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="12" fill="currentColor">digest</text>
-        <text x="749" y="164" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="11" class="dim">250k chars</text>
+        <text x="749" y="149" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="12" fill="currentColor">trim to fit</text>
+        <text x="749" y="164" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="11" class="dim">~62k tokens</text>
 
         <rect x="832" y="126" width="100" height="48" rx="2" fill="currentColor"></rect>
         <text x="882" y="149" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="12" font-weight="600" class="swap">model call</text>
         <text x="882" y="164" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="11" class="swap" opacity="0.75">~$1.50</text>
 
-        <!-- spine arrows -->
         <line x1="112" y1="150" x2="134" y2="150" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar)"></line>
         <line x1="278" y1="150" x2="290" y2="150" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar)"></line>
         <line x1="400" y1="150" x2="418" y2="150" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar)"></line>
@@ -445,22 +499,20 @@
         <text x="679" y="141" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="10" class="dim">yes</text>
         <line x1="804" y1="150" x2="826" y2="150" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar)"></line>
 
-        <!-- refusals -->
         <line x1="348" y1="176" x2="348" y2="228" stroke="#c9563f" stroke-width="1.4" marker-end="url(#ar-stop)"></line>
         <text x="358" y="200" font-family="IBM Plex Mono, monospace" font-size="10" fill="#c9563f">no</text>
-        <text x="348" y="248" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="12" fill="#c9563f">Refused · NO_LENS</text>
-        <text x="348" y="264" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="11" class="dim">7 of the 12 states land here</text>
+        <text x="348" y="248" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="12" fill="#c9563f">Stop · no web of trust</text>
+        <text x="348" y="264" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="11" class="dim">7 of the 12 outcomes land here</text>
 
         <line x1="618" y1="176" x2="618" y2="228" stroke="#c9563f" stroke-width="1.4" marker-end="url(#ar-stop)"></line>
         <text x="628" y="200" font-family="IBM Plex Mono, monospace" font-size="10" fill="#c9563f">no</text>
-        <text x="618" y="248" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="12" fill="#c9563f">Refused · QUIET</text>
+        <text x="618" y="248" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="12" fill="#c9563f">Stop · quiet window</text>
         <text x="618" y="264" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="11" class="dim">a real answer, and not a paper</text>
       </svg>
     </div>
     <figcaption>
-      The whole of <code>Press.gather</code>. Two gates can stop a run before anything
-      is billed; the storage chain hangs off the side because a reader with no media
-      server can still <em>read</em> today's paper — they just cannot publish it.
+      The whole pre-flight. Two gates can stop a run before anything is billed; the
+      storage question hangs off the side because it is about publishing, not printing.
     </figcaption>
   </figure>
 </section>
@@ -474,30 +526,30 @@
   <div class="rules">
     <div>
       <p class="rule-n">Rule 1</p>
-      <h3>The first unmet link wins</h3>
-      <p>Every link below the break reports <b>WAITING</b>, never a second failure. A column of red crosses says four things are wrong when one is, and sends the reader off to fix three that are fine.</p>
+      <h3>The first missing thing wins</h3>
+      <p>Every check below the break reports <b>waiting</b>, never a second failure. A column of red crosses says four things are wrong when one is, and sends the reader off to fix three that are fine.</p>
     </div>
     <div>
       <p class="rule-n">Rule 2</p>
-      <h3>The ranked probe is not redundant</h3>
-      <p>Cards can be present and not yet <b>projected</b> — the trust projection is per service, derived by a reconcile that runs at relay startup. Only asking the authed and the anonymous read the same question catches that.</p>
+      <h3>Counting the cards is not enough</h3>
+      <p>A relay can <b>hold</b> a scoring service's cards and not yet be ranking with them — the import and the indexing are separate. Only running a ranked search and comparing it to the unranked one catches that.</p>
     </div>
     <div>
       <p class="rule-n">Rule 3</p>
-      <h3>Your own posts are an aside</h3>
-      <p>Ranking is complete without them. Folded into the chain, it tells a reader whose lens is perfectly healthy that their search is broken — and the fix for it is <b>nothing at all</b>.</p>
+      <h3>“Your own posts are behind” is an aside</h3>
+      <p>The reader's own notes are not what the ranking needs. Folded into the chain, it tells somebody whose web of trust is perfectly healthy that their search is broken — and the fix for it is <b>nothing at all</b>.</p>
     </div>
     <div>
       <p class="rule-n">Rule 4</p>
-      <h3>Null is not zero</h3>
-      <p><b>“We have not looked”</b> and <b>“this relay holds none”</b> are different sentences with different next steps. NIP-45 COUNT is optional; a null denominator draws nothing rather than estimating.</p>
+      <h3>No answer is not zero</h3>
+      <p><b>“We did not get a count”</b> and <b>“the count is zero”</b> are different sentences with different next steps. NIP-45 is optional; a missing denominator draws nothing rather than estimating.</p>
     </div>
   </div>
 
   <figure class="narrow">
     <div class="scroller">
-      <svg viewBox="0 0 660 218" role="img" aria-label="Comparison: reporting every unmet link shows four crosses and four things to fix, whereas the chain shows one tick, one cross, and two waiting links — one thing to fix.">
-        <text x="0" y="16" font-family="IBM Plex Mono, monospace" font-size="12" class="dim">IF EVERY LINK REPORTED</text>
+      <svg viewBox="0 0 660 218" role="img" aria-label="Comparison: reporting every unmet check shows four crosses and four things to fix, whereas the chain shows one tick, one cross, and two waiting checks — one thing to fix.">
+        <text x="0" y="16" font-family="IBM Plex Mono, monospace" font-size="12" class="dim">IF EVERY CHECK REPORTED</text>
         <line x1="0" y1="26" x2="290" y2="26" class="grid-line" stroke-width="1"></line>
         <text x="2" y="58" font-family="IBM Plex Mono, monospace" font-size="13" fill="#c9563f">✕</text>
         <text x="26" y="58" font-family="IBM Plex Mono, monospace" font-size="12" fill="#c9563f">your relay list</text>
@@ -529,27 +581,29 @@
       </svg>
     </div>
     <figcaption>
-      Rule 1 drawn. The links below the break are not “passing” and not “failing” —
-      they were never asked, and <code>WAITING</code> is the only honest thing to print.
+      Rule 1 drawn. The checks below the break are not passing and not failing — they
+      were never run, and saying so is the only honest thing to print.
     </figcaption>
   </figure>
 </section>
 
 <section>
   <div class="sechead">
-    <p class="eyebrow">03 · The lens chain</p>
-    <h2>Four questions, asked of the relay</h2>
+    <p class="eyebrow">03 · The four checks</p>
+    <h2>What each one asks a relay</h2>
   </div>
 
   <div class="prose">
     <p>
-      <code>ReadinessProbe.gather</code> talks to the network and leaves every fact it
-      cannot establish <em>null</em>; <code>Readiness.assess</code> is pure and decides.
-      Links 1, 2 and 4 run concurrently — link 4 regardless of the rest, because it is the
-      only thing that can see a service whose cards are stored but not yet projected. The
-      four COUNTs run <em>one at a time</em>: run concurrently, <code>--check</code> went
-      from three seconds to hanging until killed, because this store sends an AUTH
-      challenge before answering a COUNT even though <code>auth_required</code> is false.
+      The two reads and the two searches run at once. The four COUNTs run <b>one at a
+      time</b>: run concurrently against this store, they hang — it sends an AUTH
+      challenge before answering a COUNT even though its NIP-11 document says
+      authentication is not required, and four handshakes racing on one socket is not
+      something a client can fix from the outside.
+    </p>
+    <p>
+      Check 4 runs no matter what checks 1–3 said. It is two cheap searches, and the
+      only thing that can see a relay holding cards it is not yet ranking with.
     </p>
   </div>
 
@@ -557,89 +611,88 @@
     <table>
       <thead>
         <tr>
-          <th>Link</th>
+          <th>Check</th>
           <th>The question</th>
           <th>Asked as</th>
-          <th>A broken answer</th>
+          <th>What a bad answer looks like</th>
         </tr>
       </thead>
       <tbody>
         <tr>
-          <td class="num">1 · <span class="mono">relayList</span></td>
-          <td>Do we know where you post?</td>
-          <td><span class="mono">kind 10002</span>, one fetch</td>
-          <td>no list, or nothing on <span class="mono">wss://</span></td>
+          <td class="num">1 · your relay list</td>
+          <td>Do we know where you publish?</td>
+          <td>read your kind 10002</td>
+          <td>no event, or nothing in it on <span class="mono">wss://</span></td>
         </tr>
         <tr>
-          <td class="num">2 · <span class="mono">scoreList</span></td>
-          <td>Do you name a service whose scores rank?</td>
-          <td><span class="mono">kind 10040</span>, one fetch</td>
-          <td>absent, or no <span class="mono">30382:rank</span> with a relay hint</td>
+          <td class="num">2 · your scoring service</td>
+          <td>Have you appointed someone to rank for you?</td>
+          <td>read your kind 10040</td>
+          <td>no event, or no usable rank entry in it</td>
         </tr>
         <tr>
-          <td class="num">3 · <span class="mono">scores</span></td>
-          <td>Have that service's cards arrived here?</td>
-          <td>COUNT <span class="mono">kind 30382</span>, here and there</td>
-          <td><span class="mono">0</span> here — the relay answered, and holds none</td>
+          <td class="num">3 · your trust scores</td>
+          <td>Have that service's cards reached the relay we search?</td>
+          <td>COUNT kind 30382 by that service — here, and on the service's own relay</td>
+          <td>zero here: the relay answered, and holds none</td>
         </tr>
         <tr>
-          <td class="num">4 · <span class="mono">ranked</span></td>
+          <td class="num">4 · ranking your feed</td>
           <td>Does a ranked read actually come back?</td>
-          <td>two NIP-50 searches, authed and anonymous, both <span class="mono">since = 24h</span></td>
-          <td>anon returns rows, authed returns none</td>
+          <td>the same 24-hour search twice — once naming you, once naming nobody</td>
+          <td>the unranked one returns rows and yours returns none</td>
         </tr>
         <tr>
-          <td class="num">— · <span class="mono">posts</span></td>
-          <td>Are your own posts caught up? <em>(an aside)</em></td>
-          <td>COUNT <span class="mono">kind 1</span>, here and their first write relay</td>
-          <td>never blocks anything</td>
+          <td class="num">— · your own posts</td>
+          <td>Is your own history caught up? <em>(an aside)</em></td>
+          <td>COUNT your kind 1 here, and on your own relay</td>
+          <td>nothing — it never blocks anything</td>
         </tr>
       </tbody>
     </table>
   </div>
 
   <div class="note" style="margin-top:1.6rem">
-    <span class="lbl">The trap this replaced</span>
+    <span class="lbl">Why check 4 has a 24-hour window on it</span>
     <p>
-      The ranked probe's <code>since</code> is not tidiness. Measured against
-      search-staging: that search returns 12 events immediately with a 24-hour
-      <code>since</code>, and times out with none at all without one. Both sides then come
-      back zero, which the chain correctly reads as a quiet window rather than a broken
-      lens — so link 4 passes every time while testing nothing. It shipped that way once.
+      That search returns 12 events immediately with a <code>since</code> of 24 hours,
+      and times out returning nothing without one. Both sides then come back empty,
+      which reads as a quiet day rather than a broken web of trust — so the check passes
+      every time while testing nothing. It shipped that way once.
     </p>
   </div>
 </section>
 
 <section>
   <div class="sechead">
-    <p class="eyebrow">04 · Every lens state</p>
-    <h2>Twelve verdicts, five of which print</h2>
+    <p class="eyebrow">04 · Every outcome</p>
+    <h2>Twelve answers, five of which print a paper</h2>
   </div>
 
   <div class="scroller">
     <table>
       <thead>
         <tr>
-          <th>State</th>
-          <th>Tone</th>
-          <th class="num">Percent</th>
-          <th>Breaks at</th>
-          <th>Gate</th>
+          <th>Outcome</th>
+          <th>Status</th>
+          <th class="num">Progress</th>
+          <th>Stops at</th>
+          <th>Result</th>
         </tr>
       </thead>
       <tbody>
-        <tr><td class="mono">checking</td><td>WORKING</td><td class="num">—</td><td>nothing asked yet</td><td>stops</td></tr>
-        <tr><td class="mono">no-relay-list</td><td>BLOCKED</td><td class="num">—</td><td>link 1</td><td>stops</td></tr>
-        <tr><td class="mono">no-usable-relays</td><td>BLOCKED</td><td class="num">—</td><td>link 1</td><td>stops</td></tr>
-        <tr><td class="mono">no-score-list</td><td>BLOCKED</td><td class="num">—</td><td>link 2</td><td>stops</td></tr>
-        <tr><td class="mono">no-rank-service</td><td>BLOCKED</td><td class="num">—</td><td>link 2</td><td>stops</td></tr>
-        <tr><td class="mono">no-scores-yet</td><td>BLOCKED</td><td class="num">0%</td><td>link 3</td><td>stops</td></tr>
-        <tr><td class="mono">projection-pending</td><td>BLOCKED</td><td class="num">99.9%</td><td>link 4</td><td>stops</td></tr>
-        <tr><td class="mono">importing</td><td>PARTIAL</td><td class="num">&lt; 90%</td><td>—</td><td>prints</td></tr>
-        <tr><td class="mono">importing</td><td>PARTIAL</td><td class="num">—</td><td>no denominator</td><td>prints</td></tr>
-        <tr><td class="mono">posts-behind</td><td>WORKING</td><td class="num">&lt; 100%</td><td>an aside</td><td>prints</td></tr>
-        <tr><td class="mono">ready</td><td>OK</td><td class="num">—</td><td>—</td><td>prints</td></tr>
-        <tr><td class="mono">ready</td><td>OK</td><td class="num">—</td><td>quiet window</td><td>prints</td></tr>
+        <tr><td>Still asking</td><td>working</td><td class="num">—</td><td>nothing has answered yet</td><td>stops</td></tr>
+        <tr><td>No relay list</td><td>blocked</td><td class="num">—</td><td>check 1</td><td>stops</td></tr>
+        <tr><td>Relays unreachable</td><td>blocked</td><td class="num">—</td><td>check 1</td><td>stops</td></tr>
+        <tr><td>No scoring service</td><td>blocked</td><td class="num">—</td><td>check 2</td><td>stops</td></tr>
+        <tr><td>Service cannot rank</td><td>blocked</td><td class="num">—</td><td>check 2</td><td>stops</td></tr>
+        <tr><td>No cards on this relay</td><td>blocked</td><td class="num">0%</td><td>check 3</td><td>stops</td></tr>
+        <tr><td>Cards here, not ranking yet</td><td>blocked</td><td class="num">99.9%</td><td>check 4</td><td>stops</td></tr>
+        <tr><td>Still importing</td><td>partial</td><td class="num">&lt; 90%</td><td>—</td><td>prints</td></tr>
+        <tr><td>Importing, no total</td><td>partial</td><td class="num">—</td><td>no denominator</td><td>prints</td></tr>
+        <tr><td>Your own posts are behind</td><td>working</td><td class="num">&lt; 100%</td><td>an aside</td><td>prints</td></tr>
+        <tr><td>Ready</td><td>ready</td><td class="num">—</td><td>—</td><td>prints</td></tr>
+        <tr><td>Ready, on a quiet day</td><td>ready</td><td class="num">—</td><td>both searches empty</td><td>prints</td></tr>
       </tbody>
     </table>
   </div>
@@ -650,210 +703,210 @@
 
     <article class="state" data-tone="WORKING">
       <header>
-        <h3>checking</h3>
-        <span class="chip" data-v="tone">Tone.WORKING</span>
+        <h3>Still asking</h3>
+        <span class="chip" data-v="tone">working</span>
         <span class="chip" data-v="stops">stops</span>
       </header>
-      <p class="trigger">any fact still null:<br>writeRelays · scoreListSeen · scores.here · probeAnon · probeAuthed</p>
+      <p class="trigger">a relay has not answered yet, or will not answer at all</p>
       <ul class="chain">
         <li data-status="OK"><span class="g">✓</span><span class="k">your relay list</span><span class="d">3 write relays</span></li>
         <li data-status="OK"><span class="g">✓</span><span class="k">your scoring service</span><span class="d">npub1w3ns8…7q4dl @ wss://scores.brainstorm.world</span></li>
       </ul>
       <p class="says">Checking your web of trust.</p>
-      <p class="why">Returned at <b>five</b> different points, and the chain simply stops where the asking did — no link is invented for a question nobody answered. <code>ranks</code> is false here, so a verdict still checking cannot print. The one that persists: a relay that will not answer the COUNT leaves <code>scores.here</code> null and the chain in <code>checking</code> indefinitely.</p>
+      <p class="why">The chain simply stops where the asking did — no check is drawn for a question nobody answered. This never prints, and one version of it does not clear on its own: a relay that will not answer a COUNT leaves check 3 with <b>no number at all</b>, and this reader waits indefinitely.</p>
     </article>
 
     <article class="state" data-tone="BLOCKED">
       <header>
-        <h3>no-relay-list</h3>
-        <span class="chip" data-v="tone">Tone.BLOCKED</span>
+        <h3>No relay list</h3>
+        <span class="chip" data-v="tone">blocked</span>
         <span class="chip" data-v="stops">stops</span>
       </header>
-      <p class="trigger">writeRelays.isEmpty() &amp;&amp; !relayListSeen</p>
+      <p class="trigger">no kind 10002 anywhere we looked</p>
       <ul class="chain">
-        <li data-status="BROKEN"><span class="g">✕</span><span class="k">your relay list</span><span class="d">declared=0</span></li>
+        <li data-status="BROKEN"><span class="g">✕</span><span class="k">your relay list</span><span class="d">none found</span></li>
         <li data-status="WAITING"><span class="g">…</span><span class="k">your scoring service</span></li>
         <li data-status="WAITING"><span class="g">…</span><span class="k">your trust scores</span></li>
         <li data-status="WAITING"><span class="g">…</span><span class="k">ranking your feed</span></li>
       </ul>
       <p class="says">Your account has not said which relays it uses, so nothing about you can be found. Set that up in your usual Nostr app — it is the one thing we cannot do for you.</p>
-      <p class="why">Permanent until they act: with no <code>kind 10002</code>, <b>nothing</b> will ever discover them. This is also the only failure the service genuinely cannot fix on their behalf.</p>
+      <p class="why">Permanent until they act. Without a relay list, <b>nothing</b> will ever discover them — not this service and not anybody else's client. It is also the only failure here that cannot be fixed on their behalf.</p>
     </article>
 
     <article class="state" data-tone="BLOCKED">
       <header>
-        <h3>no-usable-relays</h3>
-        <span class="chip" data-v="tone">Tone.BLOCKED</span>
+        <h3>Relays unreachable</h3>
+        <span class="chip" data-v="tone">blocked</span>
         <span class="chip" data-v="stops">stops</span>
       </header>
-      <p class="trigger">writeRelays.isEmpty() &amp;&amp; relayListSeen</p>
+      <p class="trigger">a kind 10002 exists, and nothing in it is a websocket we can dial</p>
       <ul class="chain">
-        <li data-status="BROKEN"><span class="g">✕</span><span class="k">your relay list</span><span class="d">declared=0</span></li>
+        <li data-status="BROKEN"><span class="g">✕</span><span class="k">your relay list</span><span class="d">none usable</span></li>
         <li data-status="WAITING"><span class="g">…</span><span class="k">your scoring service</span></li>
         <li data-status="WAITING"><span class="g">…</span><span class="k">your trust scores</span></li>
         <li data-status="WAITING"><span class="g">…</span><span class="k">ranking your feed</span></li>
       </ul>
       <p class="says">None of your relays are answering. Check them in your usual Nostr app.</p>
-      <p class="why">Same link, same detail, <b>different state</b> — the list exists, and nothing in it survives the <code>wss://</code> filter. quartz returns what the tag said and does not vet the scheme; a real 10002 in the wild carries <code>https://</code> entries, and we dial these.</p>
+      <p class="why">Same check, <b>different sentence</b> — and worth separating, because the fix is different. Relay lists in the wild really do carry <code>https://</code> entries and other things that are not relays; a tag says what it says, and dialling it is our problem.</p>
     </article>
 
     <article class="state" data-tone="BLOCKED">
       <header>
-        <h3>no-score-list</h3>
-        <span class="chip" data-v="tone">Tone.BLOCKED</span>
+        <h3>No scoring service</h3>
+        <span class="chip" data-v="tone">blocked</span>
         <span class="chip" data-v="stops">stops</span>
       </header>
-      <p class="trigger">scoreListSeen == false</p>
+      <p class="trigger">no kind 10040</p>
       <ul class="chain">
         <li data-status="OK"><span class="g">✓</span><span class="k">your relay list</span><span class="d">3 write relays</span></li>
-        <li data-status="BROKEN"><span class="g">✕</span><span class="k">your scoring service</span><span class="d">absent</span></li>
+        <li data-status="BROKEN"><span class="g">✕</span><span class="k">your scoring service</span><span class="d">none found</span></li>
         <li data-status="WAITING"><span class="g">…</span><span class="k">your trust scores</span></li>
         <li data-status="WAITING"><span class="g">…</span><span class="k">ranking your feed</span></li>
       </ul>
       <p class="says">You have not chosen who works out your web of trust. That is the last step, and we can do it for you.</p>
-      <p class="why">The common state for a first-time reader, and the reason there is <b>no fallback lens</b>: minting one needs a scoring service to compute a web of trust and publish <code>kind 30382</code> cards for it, which is an operator step today.</p>
+      <p class="why">The usual state for a first-time reader, and the reason there is <b>no fallback paper</b>. Somebody has to compute a web of trust for this npub and publish the cards for it; measured across the network, about 302 accounts have one, from 276 distinct providers.</p>
     </article>
 
     <article class="state" data-tone="BLOCKED">
       <header>
-        <h3>no-rank-service</h3>
-        <span class="chip" data-v="tone">Tone.BLOCKED</span>
+        <h3>Service cannot rank</h3>
+        <span class="chip" data-v="tone">blocked</span>
         <span class="chip" data-v="stops">stops</span>
       </header>
-      <p class="trigger">rankService.isNullOrBlank()</p>
+      <p class="trigger">a kind 10040 with no usable rank entry</p>
       <ul class="chain">
         <li data-status="OK"><span class="g">✓</span><span class="k">your relay list</span><span class="d">3 write relays</span></li>
-        <li data-status="BROKEN"><span class="g">✕</span><span class="k">your scoring service</span><span class="d">no rank dimension</span></li>
+        <li data-status="BROKEN"><span class="g">✕</span><span class="k">your scoring service</span><span class="d">nothing that ranks</span></li>
         <li data-status="WAITING"><span class="g">…</span><span class="k">your trust scores</span></li>
         <li data-status="WAITING"><span class="g">…</span><span class="k">ranking your feed</span></li>
       </ul>
       <p class="says">The scoring service you chose is not one we can read from. We can point it somewhere that works.</p>
-      <p class="why">Three different 10040s land here: one declaring only <code>30382:followers</code> (which can <b>order</b> a list but not <b>rank</b> one), a private NIP-44 entry, and an entry with no relay hint. quartz's own tag parser rejects the last two, so this project and the relay agree about what counts.</p>
+      <p class="why">Three different lists land here: one appointing a service only for <b>follower counts</b>, which can order a list but not rank one; an encrypted entry we cannot read; and an entry with no relay hint, which resolves to nothing. All three are a wrong appointment rather than a missing one.</p>
     </article>
 
     <article class="state" data-tone="BLOCKED">
       <header>
-        <h3>no-scores-yet</h3>
-        <span class="chip" data-v="tone">Tone.BLOCKED</span>
-        <span class="chip" data-v="warn">percent = 0.0</span>
+        <h3>No cards on this relay</h3>
+        <span class="chip" data-v="tone">blocked</span>
+        <span class="chip" data-v="warn">0%</span>
         <span class="chip" data-v="stops">stops</span>
       </header>
-      <p class="trigger">scores.here == 0L</p>
+      <p class="trigger">the relay answered the count, and the answer is zero</p>
       <ul class="chain">
         <li data-status="OK"><span class="g">✓</span><span class="k">your relay list</span><span class="d">3 write relays</span></li>
         <li data-status="OK"><span class="g">✓</span><span class="k">your scoring service</span><span class="d">npub1w3ns8…7q4dl @ wss://scores.brainstorm.world</span></li>
-        <li data-status="BROKEN"><span class="g">✕</span><span class="k">your trust scores</span><span class="d">0 here</span></li>
+        <li data-status="BROKEN"><span class="g">✕</span><span class="k">your trust scores</span><span class="d">0 on this relay</span></li>
         <li data-status="WAITING"><span class="g">…</span><span class="k">ranking your feed</span></li>
       </ul>
       <p class="says">Your web of trust is being worked out. Nothing for you to do — this is us waiting.</p>
-      <p class="why">Zero here <b>is a claim</b>: the relay answered, and holds none of that service's cards. Ranked search would return nothing, so this is blocked and not partial — whatever the upstream count says. Contrast <code>checking</code>, where the relay said nothing at all.</p>
+      <p class="why">Zero <b>is a claim</b>: the relay we search holds none of that service's cards, so a ranked search would return nothing ranked. Blocked rather than partial, whatever the service's own relay says it has published. Compare “still asking”, where nobody said anything.</p>
     </article>
 
     <article class="state" data-tone="BLOCKED">
       <header>
-        <h3>projection-pending</h3>
-        <span class="chip" data-v="tone">Tone.BLOCKED</span>
+        <h3>Cards here, not ranking yet</h3>
+        <span class="chip" data-v="tone">blocked</span>
         <span class="chip" data-v="stops">stops</span>
       </header>
-      <p class="trigger">probeAnon &gt; 0 &amp;&amp; probeAuthed == 0</p>
+      <p class="trigger">the unranked search returns rows; the same search naming you returns none</p>
       <ul class="chain">
         <li data-status="OK"><span class="g">✓</span><span class="k">your relay list</span><span class="d">3 write relays</span></li>
         <li data-status="OK"><span class="g">✓</span><span class="k">your scoring service</span><span class="d">npub1w3ns8…7q4dl @ wss://scores.brainstorm.world</span></li>
-        <li data-status="OK"><span class="g">✓</span><span class="k">your trust scores</span><span class="d">149,171 here</span></li>
-        <li data-status="BROKEN"><span class="g">✕</span><span class="k">ranking your feed</span><span class="d">authed=0 anon=12</span></li>
+        <li data-status="OK"><span class="g">✓</span><span class="k">your trust scores</span><span class="d">149,171 on this relay</span></li>
+        <li data-status="BROKEN"><span class="g">✕</span><span class="k">ranking your feed</span><span class="d">as you: 0 · as nobody: 12</span></li>
       </ul>
       <p class="says">Almost there. This clears on its own.</p>
-      <p class="why">The cards are here and the relay has <b>not projected them</b> for this service yet — projection is per service, derived by a reconcile that runs at startup. Rule 2 is the only thing in the chain that can see this: the score count above it says everything is fine.</p>
+      <p class="why">The cards are stored and the relay is not ranking with them yet — indexing per service happens on its own schedule. This is the state Rule 2 exists for: the count above it says everything is fine, and only running the search finds out.</p>
     </article>
 
     <article class="state" data-tone="PARTIAL">
       <header>
-        <h3>importing</h3>
-        <span class="chip" data-v="tone">Tone.PARTIAL</span>
-        <span class="chip" data-v="warn">percent = 0.41</span>
+        <h3>Still importing</h3>
+        <span class="chip" data-v="tone">partial</span>
+        <span class="chip" data-v="warn">41%</span>
         <span class="chip" data-v="prints">prints</span>
       </header>
-      <p class="trigger">round(here / there × 100) &lt; 90</p>
+      <p class="trigger">fewer than 90% of the service's cards have arrived</p>
       <ul class="chain">
         <li data-status="OK"><span class="g">✓</span><span class="k">your relay list</span><span class="d">3 write relays</span></li>
         <li data-status="OK"><span class="g">✓</span><span class="k">your scoring service</span><span class="d">npub1w3ns8…7q4dl @ wss://scores.brainstorm.world</span></li>
-        <li data-status="PARTIAL"><span class="g">◐</span><span class="k">your trust scores</span><span class="d">61,204 here</span></li>
-        <li data-status="PARTIAL"><span class="g">◐</span><span class="k">ranking your feed</span><span class="d">authed=12</span></li>
+        <li data-status="PARTIAL"><span class="g">◐</span><span class="k">your trust scores</span><span class="d">61,204 of 149,266</span></li>
+        <li data-status="PARTIAL"><span class="g">◐</span><span class="k">ranking your feed</span><span class="d">12 rows came back</span></li>
       </ul>
       <p class="says">Reading your web of trust — 41%.</p>
-      <p class="why">The first state that <b>prints</b>. The last few per cent buy a reader almost nothing — what is still to come is the tail of the service's own ranking, the accounts it scored lowest — so the cutoff is 90%, compared against the <b>rounded</b> percentage so the rule and the sentence agree. No panel ever prints 90% or more.</p>
+      <p class="why">The first outcome that <b>prints</b>. What is still to come is the tail of the service's own ranking — the accounts it scored lowest — so the last few per cent buy the reader almost nothing, and the cutoff is 90%. It is compared against the <b>rounded</b> figure, so no panel ever prints a warning headed “90%”.</p>
     </article>
 
     <article class="state" data-tone="PARTIAL">
       <header>
-        <h3>importing</h3>
-        <span class="chip" data-v="tone">Tone.PARTIAL</span>
-        <span class="chip" data-v="tone">percent = null</span>
+        <h3>Importing, no total</h3>
+        <span class="chip" data-v="tone">partial</span>
+        <span class="chip" data-v="tone">no percentage</span>
         <span class="chip" data-v="prints">prints</span>
       </header>
-      <p class="trigger">pct == null &amp;&amp; !counted(scores.there)</p>
+      <p class="trigger">cards are here; the service's own relay will not say how many there should be</p>
       <ul class="chain">
         <li data-status="OK"><span class="g">✓</span><span class="k">your relay list</span><span class="d">3 write relays</span></li>
         <li data-status="OK"><span class="g">✓</span><span class="k">your scoring service</span><span class="d">npub1w3ns8…7q4dl @ wss://scores.brainstorm.world</span></li>
-        <li data-status="OK"><span class="g">✓</span><span class="k">your trust scores</span><span class="d">3,197 here</span></li>
-        <li data-status="OK"><span class="g">✓</span><span class="k">ranking your feed</span><span class="d">authed=12</span></li>
+        <li data-status="OK"><span class="g">✓</span><span class="k">your trust scores</span><span class="d">3,197 on this relay</span></li>
+        <li data-status="OK"><span class="g">✓</span><span class="k">ranking your feed</span><span class="d">12 rows came back</span></li>
       </ul>
       <p class="says">Reading your web of trust.</p>
-      <p class="why">Every link is fine; the <b>provider's own relay</b> would not answer a COUNT, so there is no honest denominator. Still worth saying — “3,197 here” answers “is anything happening” — but there is no bar, and no sentence with a number in it. Note the consequence: this reader prints happily and never reaches <code>ready</code>.</p>
+      <p class="why">Every check passed and there is <b>no honest denominator</b> — NIP-45 is optional and the other relay declined. “3,197 here” still answers “is anything happening”, so it is said; there is no bar and no number in the sentence. Note the consequence: this reader prints happily and is never told they are finished.</p>
     </article>
 
     <article class="state" data-tone="WORKING">
       <header>
-        <h3>posts-behind</h3>
-        <span class="chip" data-v="tone">Tone.WORKING</span>
-        <span class="chip" data-v="warn">percent = 0.87</span>
+        <h3>Your own posts are behind</h3>
+        <span class="chip" data-v="tone">working</span>
+        <span class="chip" data-v="warn">87%</span>
         <span class="chip" data-v="prints">prints</span>
       </header>
-      <p class="trigger">postPct != null &amp;&amp; postPct &lt; 1.0</p>
+      <p class="trigger">the relay we search holds fewer of your notes than your own relay does</p>
       <ul class="chain">
         <li data-status="OK"><span class="g">✓</span><span class="k">your relay list</span><span class="d">3 write relays</span></li>
         <li data-status="OK"><span class="g">✓</span><span class="k">your scoring service</span><span class="d">npub1w3ns8…7q4dl @ wss://scores.brainstorm.world</span></li>
-        <li data-status="OK"><span class="g">✓</span><span class="k">your trust scores</span><span class="d">149,171 here</span></li>
-        <li data-status="OK"><span class="g">✓</span><span class="k">ranking your feed</span><span class="d">authed=12</span></li>
+        <li data-status="OK"><span class="g">✓</span><span class="k">your trust scores</span><span class="d">149,171 of 149,266</span></li>
+        <li data-status="OK"><span class="g">✓</span><span class="k">ranking your feed</span><span class="d">12 rows came back</span></li>
         <li data-status="ASIDE"><span class="g">→</span><span class="k">your own posts</span><span class="d">27,058 here</span></li>
       </ul>
       <p class="says">Ready.</p>
-      <p class="why">The state name is for the operator; the reader is told <b>Ready</b>, because they are. Rule 3 in one card: the aside is drawn, the percentage is carried, and neither changes what happens next.</p>
+      <p class="why">Rule 3 in one card. The aside is drawn and the number is carried, and neither changes what happens next — the reader is told <b>Ready</b>, because they are. Your own notes are not what ranks other people's.</p>
     </article>
 
     <article class="state" data-tone="OK">
       <header>
-        <h3>ready</h3>
-        <span class="chip" data-v="tone">Tone.OK</span>
+        <h3>Ready</h3>
+        <span class="chip" data-v="tone">ready</span>
         <span class="chip" data-v="prints">prints</span>
       </header>
-      <p class="trigger">every link OK · posts caught up, or never asked</p>
+      <p class="trigger">all four checks answered, and the cards are all here</p>
       <ul class="chain">
         <li data-status="OK"><span class="g">✓</span><span class="k">your relay list</span><span class="d">3 write relays</span></li>
         <li data-status="OK"><span class="g">✓</span><span class="k">your scoring service</span><span class="d">npub1w3ns8…7q4dl @ wss://scores.brainstorm.world</span></li>
-        <li data-status="OK"><span class="g">✓</span><span class="k">your trust scores</span><span class="d">149,171 here</span></li>
-        <li data-status="OK"><span class="g">✓</span><span class="k">ranking your feed</span><span class="d">authed=12</span></li>
+        <li data-status="OK"><span class="g">✓</span><span class="k">your trust scores</span><span class="d">149,171 of 149,266</span></li>
+        <li data-status="OK"><span class="g">✓</span><span class="k">ranking your feed</span><span class="d">12 rows came back</span></li>
         <li data-status="ASIDE"><span class="g">→</span><span class="k">your own posts</span><span class="d">27,058 here</span></li>
       </ul>
       <p class="says">Ready.</p>
-      <p class="why">Measured against search-staging for the prototype observer on 2026-08-17: 149,171 of the provider's 149,266 cards are here, 99.9%. Of 244 authors on the prototype front page, 228 cleared link 1 and 11 cleared link 2 — that ratio is why this module exists at all.</p>
+      <p class="why">Measured for one reader on 2026-08-17: 149,171 of the service's 149,266 cards had arrived, 99.9%. The rarity is the point — of 244 authors on a prototype front page, 228 had a relay list and <b>11</b> had appointed a scoring service.</p>
     </article>
 
     <article class="state" data-tone="OK">
       <header>
-        <h3>ready · quiet window</h3>
-        <span class="chip" data-v="tone">Tone.OK</span>
+        <h3>Ready, on a quiet day</h3>
+        <span class="chip" data-v="tone">ready</span>
         <span class="chip" data-v="prints">prints</span>
       </header>
-      <p class="trigger">probeAnon == 0 &amp;&amp; probeAuthed == 0</p>
+      <p class="trigger">both searches come back empty — yours and the unranked one</p>
       <ul class="chain">
         <li data-status="OK"><span class="g">✓</span><span class="k">your relay list</span><span class="d">3 write relays</span></li>
         <li data-status="OK"><span class="g">✓</span><span class="k">your scoring service</span><span class="d">npub1w3ns8…7q4dl @ wss://scores.brainstorm.world</span></li>
-        <li data-status="OK"><span class="g">✓</span><span class="k">your trust scores</span><span class="d">149,171 here</span></li>
-        <li data-status="OK"><span class="g">✓</span><span class="k">ranking your feed</span><span class="d">authed=0</span></li>
+        <li data-status="OK"><span class="g">✓</span><span class="k">your trust scores</span><span class="d">149,171 of 149,266</span></li>
+        <li data-status="OK"><span class="g">✓</span><span class="k">ranking your feed</span><span class="d">0 rows, and 0 unranked</span></li>
       </ul>
       <p class="says">Ready.</p>
-      <p class="why">Both sides zero is a <b>quiet window, not a broken lens</b> — asking the anonymous read as well is exactly what stops an empty corpus reading as a broken chain. This verdict clears the gate and is usually refused a few seconds later by <code>QUIET</code>, which is the correct order: only one of those two is about the reader's account.</p>
+      <p class="why">Both sides empty is a <b>quiet relay, not a broken web of trust</b> — which is exactly why the unranked search is run alongside yours. This clears the gate and is usually stopped a few seconds later by the empty window, and that order is right: only one of those two is about the reader's account.</p>
     </article>
 
   </div>
@@ -867,10 +920,10 @@
 
   <div class="prose">
     <p>
-      Link 3 is two COUNTs: how many of the service's cards this relay holds
-      (<em>here</em>) and how many the service's own relay serves (<em>there</em>).
-      Asking a second host is the whole point of the comparison, so failing to reach it
-      leaves a null denominator rather than borrowing ours.
+      Check 3 is two COUNTs: how many of the service's cards the relay we search holds,
+      and how many the service's own relay serves. Asking a second host is the whole
+      point of the comparison, so failing to reach it leaves the fraction undefined
+      rather than borrowing our own number for both sides.
     </p>
   </div>
 
@@ -878,19 +931,19 @@
     <table>
       <thead>
         <tr>
-          <th class="num">here</th>
-          <th class="num">there</th>
+          <th class="num">cards here</th>
+          <th class="num">cards there</th>
           <th class="num">fraction</th>
-          <th>What the chain does with it</th>
+          <th>What is done with it</th>
         </tr>
       </thead>
       <tbody>
-        <tr><td class="num">null</td><td class="num">—</td><td class="num">—</td><td><span class="mono">checking</span> — we have not looked, and that is not a zero</td></tr>
-        <tr><td class="num">0</td><td class="num">149,266</td><td class="num">0.00</td><td><span class="mono">no-scores-yet</span> — the relay answered and holds none. Blocked, not partial</td></tr>
-        <tr><td class="num">61,204</td><td class="num">149,266</td><td class="num">0.41</td><td><span class="mono">importing</span> — a bar, and a percentage in the sentence</td></tr>
-        <tr><td class="num">149,171</td><td class="num">149,266</td><td class="num">1.00</td><td><span class="mono">ready</span> — 99.9% rounds to 100, and no panel prints ≥ 90%</td></tr>
-        <tr><td class="num">3,197</td><td class="num">null</td><td class="num">—</td><td><span class="mono">importing</span> — a count worth saying, with nothing to divide it by</td></tr>
-        <tr><td class="num">180,000</td><td class="num">149,266</td><td class="num">1.00</td><td>capped — we can hold more than an upstream serves (it deleted, we did not), and “118%” reads as a bug</td></tr>
+        <tr><td class="num">no answer</td><td class="num">—</td><td class="num">—</td><td>keep waiting — we did not get a number, and that is not a zero</td></tr>
+        <tr><td class="num">0</td><td class="num">149,266</td><td class="num">0.00</td><td>blocked — the relay answered and holds none</td></tr>
+        <tr><td class="num">61,204</td><td class="num">149,266</td><td class="num">0.41</td><td>prints, with a bar and a percentage in the sentence</td></tr>
+        <tr><td class="num">149,171</td><td class="num">149,266</td><td class="num">1.00</td><td>ready — 99.9% rounds to 100, and no panel prints ≥ 90%</td></tr>
+        <tr><td class="num">3,197</td><td class="num">no answer</td><td class="num">—</td><td>prints — a count worth saying, with nothing to divide it by</td></tr>
+        <tr><td class="num">180,000</td><td class="num">149,266</td><td class="num">1.00</td><td>capped — a relay can hold more than an upstream currently serves, and “118%” reads as a bug</td></tr>
       </tbody>
     </table>
   </div>
@@ -898,17 +951,21 @@
 
 <section>
   <div class="sechead">
-    <p class="eyebrow">06 · The storage chain</p>
-    <h2>Asked at pre-flight, on purpose</h2>
+    <p class="eyebrow">06 · Somewhere to publish</p>
+    <h2>The second chain, asked at the start on purpose</h2>
   </div>
 
   <div class="prose">
     <p>
-      The second chain answers a different question — <em>can you host your paper?</em> —
-      and fails independently of the first. It used to be checked at publish time, which
-      is after an edition has been generated and paid for: the reader learned they had
-      nowhere to put their paper at the one moment the answer was most expensive. It is
-      now asked before anything is written, and it still <b>never blocks the model call</b>.
+      A finished edition is uploaded to the reader's own Blossom servers and announced
+      on their relays, so it lives in their archive rather than ours. That needs a
+      kind 10063 and a signature at upload time — and neither has anything to do with
+      whether a paper can be written.
+    </p>
+    <p>
+      It used to be checked at publish time, which is after an edition exists and has
+      been paid for: the reader found out they had nowhere to put their paper at the one
+      moment the answer was most expensive.
     </p>
   </div>
 
@@ -916,56 +973,56 @@
 
     <article class="state" data-tone="WORKING">
       <header>
-        <h3>checking</h3>
-        <span class="chip" data-v="tone">Tone.WORKING</span>
+        <h3>Still asking</h3>
+        <span class="chip" data-v="tone">working</span>
       </header>
-      <p class="trigger">serverListSeen == null</p>
+      <p class="trigger">nobody has answered about your servers yet</p>
       <ul class="chain">
         <li data-status="WAITING"><span class="g">…</span><span class="k">nothing asked yet</span></li>
       </ul>
       <p class="says">Checking where you can publish.</p>
-      <p class="why">An empty chain rather than a chain of unknowns — same rule as the lens: a link that was never asked is not drawn.</p>
+      <p class="why">An empty list rather than a list of unknowns — same rule as the trust chain: a question nobody asked is not drawn as a failure.</p>
     </article>
 
     <article class="state" data-tone="BLOCKED">
       <header>
-        <h3>no-blossom-server</h3>
-        <span class="chip" data-v="tone">Tone.BLOCKED</span>
-        <span class="chip" data-v="warn">publish only</span>
+        <h3>Nowhere to publish</h3>
+        <span class="chip" data-v="tone">blocked</span>
+        <span class="chip" data-v="warn">publishing only</span>
       </header>
-      <p class="trigger">serverListSeen == true &amp;&amp; servers.isEmpty()</p>
+      <p class="trigger">a kind 10063 exists, and nothing in it is an https server</p>
       <ul class="chain">
-        <li data-status="BROKEN"><span class="g">✕</span><span class="k">your media servers</span><span class="d">list names no usable server</span></li>
+        <li data-status="BROKEN"><span class="g">✕</span><span class="k">your media servers</span><span class="d">none usable</span></li>
         <li data-status="WAITING"><span class="g">…</span><span class="k">permission to upload</span></li>
       </ul>
       <p class="says">You have not set up anywhere to store files, so there is nowhere to publish to. Add one in your usual Nostr app — you can still read today's paper without it.</p>
-      <p class="why">A <code>kind 10063</code> exists and nothing in it survives: a Blossom PUT is an HTTPS call and the sanitizer allows no other scheme, so a <code>http://</code> entry is a server we cannot use. The console only shows this line when it is <b>the thing in the way</b> — a reader who can print does not need to hear about media servers until they publish.</p>
+      <p class="why">A Blossom upload is an HTTPS call, and a published page may not load anything over plain http, so a plain-http entry is a server we cannot use. The reader is only told this when it is <b>the thing in the way</b> — somebody who can print does not need to hear about media servers until they publish.</p>
     </article>
 
     <article class="state" data-tone="BLOCKED">
       <header>
-        <h3>no-blossom-server</h3>
-        <span class="chip" data-v="tone">Tone.BLOCKED</span>
-        <span class="chip" data-v="tone">pure API only</span>
+        <h3>Nowhere to publish · no list at all</h3>
+        <span class="chip" data-v="tone">blocked</span>
+        <span class="chip" data-v="warn">publishing only</span>
       </header>
-      <p class="trigger">serverListSeen == false &amp;&amp; servers.isEmpty()</p>
+      <p class="trigger">no kind 10063 anywhere we looked</p>
       <ul class="chain">
-        <li data-status="BROKEN"><span class="g">✕</span><span class="k">your media servers</span><span class="d">absent</span></li>
+        <li data-status="BROKEN"><span class="g">✕</span><span class="k">your media servers</span><span class="d">none found</span></li>
         <li data-status="WAITING"><span class="g">…</span><span class="k">permission to upload</span></li>
       </ul>
       <p class="says">You have not set up anywhere to store files, so there is nowhere to publish to. Add one in your usual Nostr app — you can still read today's paper without it.</p>
-      <p class="why">The same distinction the relay list draws — never published a list, or published one naming nothing usable. Today <code>Press.storage</code> always passes <code>serverListSeen = true</code>, so this wording is reachable only through the pure function; it is kept because the two are different sentences the moment anything else calls it.</p>
+      <p class="why">The same distinction the relay list draws: never published a list, or published one naming nothing usable. The two are held apart even though today they lead the reader to the same place — the moment anything acts on them, they are different fixes.</p>
     </article>
 
     <article class="state" data-tone="OK">
       <header>
-        <h3>can-publish</h3>
-        <span class="chip" data-v="tone">Tone.OK</span>
+        <h3>Can publish</h3>
+        <span class="chip" data-v="tone">ready</span>
         <span class="chip" data-v="prints">has published before</span>
       </header>
-      <p class="trigger">servers.isNotEmpty() &amp;&amp; publishedBefore == true</p>
+      <p class="trigger">servers listed, and this reader has completed an upload before</p>
       <ul class="chain">
-        <li data-status="OK"><span class="g">✓</span><span class="k">your media servers</span><span class="d">2 server(s)</span></li>
+        <li data-status="OK"><span class="g">✓</span><span class="k">your media servers</span><span class="d">2 servers</span></li>
         <li data-status="OK"><span class="g">✓</span><span class="k">permission to upload</span><span class="d">has published before</span></li>
       </ul>
       <p class="says">Ready to publish.</p>
@@ -974,17 +1031,17 @@
 
     <article class="state" data-tone="OK">
       <header>
-        <h3>can-publish</h3>
-        <span class="chip" data-v="tone">Tone.OK</span>
+        <h3>Can publish</h3>
+        <span class="chip" data-v="tone">ready</span>
         <span class="chip" data-v="prints">asked at publish</span>
       </header>
-      <p class="trigger">servers.isNotEmpty() &amp;&amp; publishedBefore == null | false</p>
+      <p class="trigger">servers listed, and we have no record either way</p>
       <ul class="chain">
-        <li data-status="OK"><span class="g">✓</span><span class="k">your media servers</span><span class="d">2 server(s)</span></li>
+        <li data-status="OK"><span class="g">✓</span><span class="k">your media servers</span><span class="d">2 servers</span></li>
         <li data-status="WAITING"><span class="g">…</span><span class="k">permission to upload</span><span class="d">asked at publish</span></li>
       </ul>
       <p class="says">Ready to publish.</p>
-      <p class="why">Consent <b>cannot</b> be pre-flighted. Whether a signer will produce a <code>kind 24242</code> is knowable only when it is asked, and asking means a prompt on the reader's device for an upload they have not requested. So this link reports history and the publish path reports refusal. The web console passes <code>publishedBefore = null</code> deliberately: both branches return the identical verdict, and working out the true answer meant fetching every site event the reader has ever published, on every page load, to choose between two words inside a closed <code>&lt;details&gt;</code>.</p>
+      <p class="why">Consent <b>cannot</b> be checked in advance. Whether a signer will produce an upload authorization is knowable only by asking, and asking means a prompt on the reader's device for an upload they have not requested. So this line reports history, and the publish step reports refusal. Both branches say the same thing to the reader, which is why working out the true answer — fetching every edition they have ever announced, on every page load — was dropped.</p>
     </article>
 
   </div>
@@ -993,45 +1050,45 @@
 <section>
   <div class="sechead">
     <p class="eyebrow">07 · Past the gate, still before the call</p>
-    <h2>What the corpus has to survive</h2>
+    <h2>What the day's reading has to survive</h2>
   </div>
 
   <ol class="steps">
     <li>
       <div>
-        <h3>Pull the corpus — one REQ per desk</h3>
-        <p>Every desk asks on its <b>own subscription</b>, all at once, alongside the anonymous control run and an uncapped COUNT of the day's notes. Sharing one REQ meant recovering results by kind, which works right up until two filters share one — and two do: the control run is <code>kind 1</code> exactly like the notes desk. Merged, its anonymous results were filed as news.</p>
-        <p>Every ranked filter carries <code>observer:&lt;pk&gt; sort:rank filter:rank:gte:20</code>. The floor is not redundant with the cap: it turns <code>limit=400</code> from a target back into a ceiling, so a thin lens or a quiet day stops scraping downward for material nobody vouched for.</p>
+        <h3>Read the window — one subscription per section</h3>
+        <p>Notes, pictures, long-form, live streams, classifieds and the rest each get their <b>own</b> REQ, sent together, alongside one more: the same 24 hours read <em>without</em> the reader's ranking. Sharing one subscription meant sorting the answers out by kind afterwards, which works right up until two filters share a kind — and two do, since the unranked control is kind 1 exactly like the notes section. Merged, its results were filed as news.</p>
+        <p>Every ranked filter also carries a minimum score. That is not the same as a limit: it turns “the top 400” from a target back into a ceiling, so a thin web of trust or a quiet day stops scraping downward for people nobody vouched for.</p>
       </div>
     </li>
     <li>
       <div>
-        <h3>Refuse a window with nothing in it</h3>
-        <p><code>corpus.notes.isEmpty()</code> throws <code>Refused(QUIET)</code>. A thin paper is the right response to a quiet day; zero notes is not a thin paper, it is no paper. This is the second and last thing that can stop a run before the model is called.</p>
+        <h3>Stop if the window is empty</h3>
+        <p>Zero notes ends the run. A thin paper is the right response to a quiet day; nothing at all is not a thin paper. This is the second and last thing that can stop a run before the model is called.</p>
       </div>
     </li>
     <li>
       <div>
-        <h3>Read the overlap — an alarm, not a gate</h3>
-        <p>How many events the lens surfaced that the same window <b>without</b> it also returned. Near zero is the product thesis stated as a number. Near 100% is the desk-collision bug above, announcing itself in the progress list rather than in an edition three weeks later. Nothing stops on it; it is an instrument.</p>
+        <h3>Compare against the unranked read — an alarm, not a gate</h3>
+        <p>How much of the ranked window also appears in the anonymous one. Near zero is the whole product stated as a number. Near 100% means the two reads have been merged by mistake, announced in the progress list rather than discovered in an edition three weeks later. Nothing stops on it.</p>
       </div>
     </li>
     <li>
       <div>
-        <h3>Shortlist the art</h3>
-        <p>Candidates are chosen and <b>hotlinked</b> — never fetched, resized, re-hosted or inlined. There is no image library in this project, so nothing here can fail on somebody else's server.</p>
+        <h3>Shortlist the pictures</h3>
+        <p>Images are <b>hotlinked</b> — never fetched, resized, re-hosted or inlined. Nothing in this step can fail on somebody else's server, because nothing in this step touches one.</p>
       </div>
     </li>
     <li>
       <div>
-        <h3>Fit the digest to the budget</h3>
-        <p>250,000 characters, about 62,500 tokens, split as an <b>even share per desk</b> rather than spent in desk order — otherwise the notes desk ate the budget and the quiet desks below it printed nothing. What is kept and what is pruned is reported before the call, not after.</p>
+        <h3>Trim the day to fit</h3>
+        <p>About 62,000 tokens, divided as an <b>even share per section</b> rather than spent in order — otherwise the notes section ate the budget and everything below it printed nothing. What was kept and what was cut is reported before the call, not after.</p>
       </div>
     </li>
     <li>
       <div>
-        <h3>Only now: <span class="mono">Step.Writing</span></h3>
-        <p>One streaming call, a fixed system prompt that never reaches the client, and the house stylesheet. Roughly a dollar fifty, and every check above exists to make sure it is a dollar fifty spent on a paper somebody can actually be shown.</p>
+        <h3>Only now: write the paper</h3>
+        <p>One streaming call. The model writes the whole front page — markup and layout — from the day's reading and a fixed prompt the reader never sees or influences. Roughly a dollar fifty, and everything above exists so that it is a dollar fifty spent on a paper somebody can actually be shown.</p>
       </div>
     </li>
   </ol>
@@ -1039,33 +1096,33 @@
   <div class="states" style="margin-top:2.2rem">
     <article class="state" data-tone="BLOCKED">
       <header>
-        <h3>Refused · QUIET</h3>
+        <h3>Stop · quiet window</h3>
         <span class="chip" data-v="stops">stops</span>
       </header>
-      <p class="trigger">corpus.notes.isEmpty()</p>
+      <p class="trigger">the ranked read of the last 24 hours came back with nothing</p>
       <ul class="chain">
-        <li data-status="OK"><span class="g">✓</span><span class="k">lens chain</span><span class="d">ready</span></li>
-        <li data-status="BROKEN"><span class="g">✕</span><span class="k">the window</span><span class="d">0 notes of 0 surfaced</span></li>
+        <li data-status="OK"><span class="g">✓</span><span class="k">web of trust</span><span class="d">ready</span></li>
+        <li data-status="BROKEN"><span class="g">✕</span><span class="k">the window</span><span class="d">0 notes</span></li>
       </ul>
       <p class="says">Nothing came back for this window through your web of trust. A quiet day is a real answer and a thin paper is the right response to it, but with zero notes there is no paper at all.</p>
-      <p class="why">The only refusal that is about the <b>day</b> rather than the account. It arrives after roughly a minute of relay reads and before a cent is spent.</p>
+      <p class="why">The only stop that is about the <b>day</b> rather than the account. It arrives after about a minute of relay reads and before a cent is spent.</p>
     </article>
 
     <article class="state" data-tone="OK">
       <header>
-        <h3>Cleared · gathered</h3>
+        <h3>Cleared</h3>
         <span class="chip" data-v="prints">calls the model</span>
       </header>
-      <p class="trigger">the state the model call is made from</p>
+      <p class="trigger">the state every paid run starts from</p>
       <ul class="chain">
-        <li data-status="OK"><span class="g">✓</span><span class="k">lens chain</span><span class="d">ready</span></li>
-        <li data-status="OK"><span class="g">✓</span><span class="k">the window</span><span class="d">608 events of 35,084 surfaced · 244 people</span></li>
-        <li data-status="ASIDE"><span class="g">→</span><span class="k">control run</span><span class="d">400 anonymous notes · 1 of them also in the paper</span></li>
-        <li data-status="OK"><span class="g">✓</span><span class="k">digest</span><span class="d">431 kept · 177 pruned · ~48k tokens</span></li>
-        <li data-status="ASIDE"><span class="g">→</span><span class="k">art</span><span class="d">14 candidates, hotlinked</span></li>
+        <li data-status="OK"><span class="g">✓</span><span class="k">web of trust</span><span class="d">ready</span></li>
+        <li data-status="OK"><span class="g">✓</span><span class="k">the window</span><span class="d">608 events of 35,084 in the day · 244 people</span></li>
+        <li data-status="ASIDE"><span class="g">→</span><span class="k">unranked read</span><span class="d">400 notes · 1 of them also in the paper</span></li>
+        <li data-status="OK"><span class="g">✓</span><span class="k">trimmed</span><span class="d">431 kept · 177 cut · ~48k tokens</span></li>
+        <li data-status="ASIDE"><span class="g">→</span><span class="k">pictures</span><span class="d">14 shortlisted, hotlinked</span></li>
       </ul>
       <p class="says">Writing your front page — this is the slow part.</p>
-      <p class="why">Everything above is reported to whoever is watching before the call begins, because the call is several minutes long and a progress list that says what it is doing beats a bar with no honest denominator.</p>
+      <p class="why">All of it is reported before the call begins. The call takes several minutes, and a list of things that have actually happened beats a progress bar with no honest denominator.</p>
     </article>
   </div>
 </section>
@@ -1073,61 +1130,61 @@
 <section>
   <div class="sechead">
     <p class="eyebrow">08 · Outside the chain</p>
-    <h2>Four guards that are not links</h2>
+    <h2>Four guards that are not checks</h2>
   </div>
 
   <div class="states">
     <article class="state" data-tone="BLOCKED">
       <header>
-        <h3>that is a secret key</h3>
-        <span class="chip" data-v="stops">exit 2</span>
+        <h3>That is a secret key</h3>
+        <span class="chip" data-v="stops">stops</span>
       </header>
-      <p class="trigger">args[0].startsWith("nsec1")</p>
+      <p class="trigger">the pasted string starts with <span class="mono">nsec1</span></p>
       <ul class="chain">
         <li data-status="BROKEN"><span class="g">✕</span><span class="k">what you pasted</span><span class="d">rejected before any filter is built</span></li>
       </ul>
       <p class="says">That is a SECRET key. Paste your npub or hex public key instead.</p>
-      <p class="why">quartz owns NIP-19 decoding but <b>not</b> this guard, and the difference matters: <code>decodePublicKeyAsHexOrNull</code> decodes any 32-byte bech32 payload, so an <code>nsec</code> turns into the hex of the <b>secret</b> key rather than returning null. Without this check, a reader who pastes their private key into the front door would have it put into a relay filter and sent over the wire.</p>
+      <p class="why">Worth its own guard, because the obvious decode does not protect you: a general bech32-to-hex helper happily turns an <span class="mono">nsec</span> into 32 bytes that look exactly like a pubkey. Without this line, somebody pasting their private key into the front door would have it put into a relay filter and sent over the wire.</p>
     </article>
 
     <article class="state" data-tone="BLOCKED">
       <header>
-        <h3>not signed in</h3>
-        <span class="chip" data-v="stops">401</span>
+        <h3>Not signed in</h3>
+        <span class="chip" data-v="stops">stops</span>
       </header>
-      <p class="trigger">signedIn(app) == null</p>
+      <p class="trigger">no session — extension or remote signer</p>
       <ul class="chain">
-        <li data-status="BROKEN"><span class="g">✕</span><span class="k">your session</span><span class="d">no cookie, or an expired one</span></li>
+        <li data-status="BROKEN"><span class="g">✕</span><span class="k">your session</span><span class="d">missing or expired</span></li>
       </ul>
       <p class="says">not signed in</p>
-      <p class="why">Login is required to <b>generate</b> and never to read a published edition. Every route that costs money or touches somebody's archive checks this first.</p>
+      <p class="why">Signing in is required to <b>make</b> an edition and never to read a published one — a printed paper is a static page on somebody's own servers, and it does not care who is looking.</p>
     </article>
 
     <article class="state" data-tone="WORKING">
       <header>
-        <h3>already printing</h3>
+        <h3>Already printing</h3>
         <span class="chip" data-v="warn">no second run</span>
       </header>
-      <p class="trigger">runs.open(pubkey) — existing.state == RUNNING</p>
+      <p class="trigger">this npub already has a run in flight</p>
       <ul class="chain">
         <li data-status="ASIDE"><span class="g">→</span><span class="k">your run</span><span class="d">the one you already have is handed back</span></li>
       </ul>
       <p class="says">(the progress list simply continues)</p>
-      <p class="why">Generation costs real money and reads somebody else's relay hard, so two clicks on a slow button must not become two runs. <code>compute</code> holds the bin lock for the key, so the check and the claim are <b>one step</b> — a get-then-put here is a race that only appears under exactly the condition that causes it.</p>
+      <p class="why">A paper costs real money and reads somebody else's relay hard, so two clicks on a slow button must not become two runs. The check and the claim happen as <b>one step</b> — checking first and claiming second is a race that shows up only under the exact condition that causes it.</p>
     </article>
 
     <article class="state" data-tone="PARTIAL">
       <header>
-        <h3>no API key</h3>
-        <span class="chip" data-v="warn">not pre-flighted</span>
+        <h3>No key for the model</h3>
+        <span class="chip" data-v="warn">not checked in advance</span>
       </header>
-      <p class="trigger">ANTHROPIC_API_KEY missing or wrong</p>
+      <p class="trigger">the API credential is missing or wrong</p>
       <ul class="chain">
         <li data-status="OK"><span class="g">✓</span><span class="k">every check on this page</span><span class="d">passes</span></li>
-        <li data-status="BROKEN"><span class="g">✕</span><span class="k">the call itself</span><span class="d">AnthropicServiceException · exit 5</span></li>
+        <li data-status="BROKEN"><span class="g">✕</span><span class="k">the call itself</span><span class="d">refused by the API</span></li>
       </ul>
       <p class="says">The model API refused: &lt;the API's own first line&gt;</p>
-      <p class="why">The one thing on this page that is <b>not</b> checked before the call — the client is built lazily from the environment, so a bad key is discovered by making the request. The server says so at boot (“no ANTHROPIC_API_KEY: readiness and previews will work, generation will not”) and the CLI prints the API's own sentence rather than forty lines of coroutine stack.</p>
+      <p class="why">The one thing here that is <b>not</b> established before the call — the credential is only exercised by making the request. The server says so at startup, and the failure is reported as the API's own sentence rather than a stack trace at somebody who typed one command.</p>
     </article>
   </div>
 </section>
@@ -1140,21 +1197,21 @@
 
   <div class="prose">
     <p>
-      Three checks run <em>after</em> the model call, and belong there. The model writes
-      the whole document, markup and stylesheet; safety is enforced after generation by
-      the sanitizer, not before it by constraining the writer.
+      Three checks run <em>after</em> the model writes, and belong there. The model writes
+      the whole document rather than filling a template, and safety is enforced on what
+      comes back rather than by constraining what it can say.
     </p>
     <p>
-      The <b>sanitizer</b> proves the page cannot misbehave — no <code>&lt;a href&gt;</code> to the
-      open web survives, only permalinks back to a source event. The <b>proof</b> opens
-      it in a browser and, if it does not read, regenerates once and then drops the
-      author's stylesheet for the house one. The <b>validator</b> proves it does not lie,
-      and it is the only gate left before an edition reaches the reader's own archive: a
-      page that quotes something it cannot find in a source event is not published, though
-      the reader who paid for it still gets to read it.
+      The page is <b>stripped</b>: no script, no remote loads, and no link to the open
+      web survives — only addresses pointing back at the source events. It is then
+      <b>opened in a browser</b>, and if it does not render as a readable page it is
+      written once more, and after that reprinted in the house layout. Finally it is
+      <b>fact-checked against the day's events</b>: every quotation has to be found in a
+      note that was actually read. A page that quotes something nobody said is not
+      published, though the reader who paid for it still gets to read it.
     </p>
     <p>
-      That division is the whole shape of the thing. Everything on this page is about
+      That division is the shape of the whole thing. Everything on this page is about
       whether the call is worth making. Everything after it is about whether the answer
       is worth keeping.
     </p>
@@ -1163,11 +1220,10 @@
 
 <footer class="end">
   <p>
-    Sources: <code>generator/…/nostr/Readiness.kt</code>, <code>nostr/ReadinessProbe.kt</code>,
-    <code>nostr/Pull.kt</code>, <code>Press.kt</code>, <code>Main.kt</code>,
-    <code>server/…/press/Editions.kt</code>, <code>press/Routes.kt</code>,
-    <code>web/app.js</code>. Counts and ratios are the readings recorded in
-    <code>AGENTS.md</code> on 2026-08-17 and 2026-08-18 — re-measure before trusting them.
+    The numbers here are readings taken against one relay and one reader in August 2026 —
+    149,266 cards from one scoring service, 35,084 notes in a day, 302 accounts network-wide
+    with a web of trust published for them. They are measurements, not constants. Re-measure
+    before trusting any of them.
   </p>
 </footer>
 
