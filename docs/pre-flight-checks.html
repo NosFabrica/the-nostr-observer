@@ -1,0 +1,1174 @@
+<title>Before the Model Call</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,600;0,6..72,700;1,6..72,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+
+<style>
+  /* Tokens are the ones the console already uses (server/src/main/resources/web/style.css).
+     Two are added here: a card surface, and an accent for the one paid step. */
+  :root {
+    --ink: #14110d;
+    --paper: #f7f4ed;
+    --card: #fffdf8;
+    --sunk: #efeade;
+    --rule: #d6cfc0;
+    --hair: #e5dfd2;
+    --quiet: #6b6355;
+    --ok: #2f6b3a;
+    --waiting: #8a5a1b;
+    --lost: #a3301f;
+    --ok-wash: #e6efe6;
+    --waiting-wash: #f4e9d8;
+    --lost-wash: #f5e2dd;
+    --shadow: 0 1px 0 rgba(20, 17, 13, .04), 0 8px 24px -18px rgba(20, 17, 13, .5);
+  }
+
+  :root:not([data-theme="light"]) {
+    color-scheme: light;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --ink: #ece7dc;
+      --paper: #16150f;
+      --card: #1d1c15;
+      --sunk: #201e17;
+      --rule: #39352c;
+      --hair: #2b2820;
+      --quiet: #9d9484;
+      --ok: #8ec79a;
+      --waiting: #d6a45e;
+      --lost: #f0907f;
+      --ok-wash: #1f2a1f;
+      --waiting-wash: #2c2416;
+      --lost-wash: #2e1c18;
+      --shadow: 0 1px 0 rgba(0, 0, 0, .3), 0 10px 26px -20px #000;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --ink: #ece7dc;
+    --paper: #16150f;
+    --card: #1d1c15;
+    --sunk: #201e17;
+    --rule: #39352c;
+    --hair: #2b2820;
+    --quiet: #9d9484;
+    --ok: #8ec79a;
+    --waiting: #d6a45e;
+    --lost: #f0907f;
+    --ok-wash: #1f2a1f;
+    --waiting-wash: #2c2416;
+    --lost-wash: #2e1c18;
+    --shadow: 0 1px 0 rgba(0, 0, 0, .3), 0 10px 26px -20px #000;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    padding: 0 1.25rem 6rem;
+    background: var(--paper);
+    color: var(--ink);
+    font: 400 17px/1.6 Newsreader, Georgia, "Iowan Old Style", "Times New Roman", serif;
+    font-optical-sizing: auto;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap { max-width: 74rem; margin: 0 auto; }
+  .prose { max-width: 38rem; }
+  .prose p + p { margin-top: .85em; }
+
+  a { color: inherit; text-decoration-color: var(--rule); text-underline-offset: 2px; }
+  a:focus-visible, summary:focus-visible { outline: 2px solid var(--waiting); outline-offset: 3px; border-radius: 2px; }
+
+  code, .mono, kbd {
+    font-family: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+    font-size: .82em;
+    font-variant-ligatures: none;
+  }
+
+  code { background: var(--sunk); padding: .1em .35em; border-radius: 3px; }
+
+  .eyebrow {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: .69rem;
+    font-weight: 500;
+    letter-spacing: .18em;
+    text-transform: uppercase;
+    color: var(--quiet);
+    margin: 0;
+  }
+
+  /* ---------------------------------------------------------- masthead */
+  header.top {
+    border-bottom: 3px double var(--rule);
+    padding: 3.25rem 0 1.5rem;
+    margin-bottom: 2.75rem;
+  }
+
+  h1 {
+    font-size: clamp(2.4rem, 6.2vw, 4.1rem);
+    font-weight: 700;
+    line-height: .98;
+    letter-spacing: -.025em;
+    margin: .5rem 0 0;
+    text-wrap: balance;
+  }
+
+  .standfirst {
+    font-size: clamp(1.05rem, 2.2vw, 1.24rem);
+    line-height: 1.5;
+    color: var(--ink);
+    max-width: 40rem;
+    margin: 1rem 0 0;
+  }
+
+  .filed {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .45rem 1.4rem;
+    margin: 1.6rem 0 0;
+    padding-top: 1rem;
+    border-top: 1px solid var(--hair);
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: .7rem;
+    color: var(--quiet);
+  }
+
+  /* ---------------------------------------------------------- sections */
+  section { margin: 0 0 4.5rem; }
+
+  h2 {
+    font-size: clamp(1.45rem, 3vw, 1.95rem);
+    font-weight: 600;
+    letter-spacing: -.015em;
+    line-height: 1.15;
+    margin: .35rem 0 .9rem;
+    text-wrap: balance;
+  }
+
+  h3 { font-size: 1.05rem; font-weight: 600; margin: 0; letter-spacing: -.01em; }
+
+  .sechead { border-top: 1px solid var(--rule); padding-top: 1.1rem; margin-bottom: 1.8rem; }
+
+  /* ---------------------------------------------------------- figures */
+  figure { margin: 2rem 0; }
+
+  .scroller { overflow-x: auto; padding-bottom: .4rem; }
+
+  figure svg { display: block; width: 100%; height: auto; color: var(--ink); }
+  figure.wide svg { min-width: 700px; max-width: 940px; }
+  figure.narrow svg { min-width: 560px; max-width: 660px; }
+
+  figcaption {
+    margin-top: .9rem;
+    font-size: .88rem;
+    color: var(--quiet);
+    max-width: 40rem;
+    line-height: 1.5;
+  }
+
+  /* ---------------------------------------------------------- chain rows */
+  ul.chain { list-style: none; margin: 0; padding: 0; display: grid; gap: .3rem; }
+
+  ul.chain li {
+    display: grid;
+    grid-template-columns: 1.1rem minmax(8.5rem, auto) 1fr;
+    align-items: baseline;
+    gap: .1rem .55rem;
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: .74rem;
+    line-height: 1.45;
+  }
+
+  ul.chain .g { font-weight: 600; color: var(--quiet); }
+  ul.chain .k { color: var(--ink); }
+  ul.chain .d { color: var(--quiet); font-size: .95em; min-width: 0; overflow-wrap: anywhere; }
+  ul.chain .k { min-width: 0; overflow-wrap: anywhere; }
+
+  li[data-status="OK"] .g { color: var(--ok); }
+  li[data-status="PARTIAL"] .g { color: var(--waiting); }
+  li[data-status="BROKEN"] .g { color: var(--lost); }
+  li[data-status="BROKEN"] .k { color: var(--lost); }
+  li[data-status="WAITING"] .g,
+  li[data-status="WAITING"] .k { color: var(--quiet); }
+  li[data-status="ASIDE"] .g { color: var(--quiet); }
+
+  /* ---------------------------------------------------------- state cards */
+  .states { display: grid; grid-template-columns: repeat(auto-fill, minmax(20rem, 1fr)); gap: 1rem; align-items: start; }
+
+  article.state {
+    background: var(--card);
+    border: 1px solid var(--hair);
+    border-left: 3px solid var(--quiet);
+    border-radius: 2px;
+    padding: 1rem 1.1rem 1.1rem;
+    box-shadow: var(--shadow);
+    display: flex;
+    flex-direction: column;
+    gap: .7rem;
+  }
+
+  article.state[data-tone="OK"] { border-left-color: var(--ok); }
+  article.state[data-tone="PARTIAL"] { border-left-color: var(--waiting); }
+  article.state[data-tone="WORKING"] { border-left-color: var(--quiet); }
+  article.state[data-tone="BLOCKED"] { border-left-color: var(--lost); }
+
+  article.state > header { display: flex; flex-wrap: wrap; align-items: baseline; gap: .4rem .6rem; }
+
+  article.state h3 {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: .84rem;
+    font-weight: 600;
+    letter-spacing: -.01em;
+  }
+
+  .chip {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: .61rem;
+    font-weight: 500;
+    letter-spacing: .09em;
+    text-transform: uppercase;
+    padding: .18em .5em;
+    border-radius: 2px;
+    white-space: nowrap;
+    border: 1px solid transparent;
+  }
+
+  .chip[data-v="prints"] { color: var(--ok); background: var(--ok-wash); border-color: color-mix(in srgb, var(--ok) 30%, transparent); }
+  .chip[data-v="stops"] { color: var(--lost); background: var(--lost-wash); border-color: color-mix(in srgb, var(--lost) 30%, transparent); }
+  .chip[data-v="tone"] { color: var(--quiet); background: var(--sunk); border-color: var(--hair); }
+  .chip[data-v="warn"] { color: var(--waiting); background: var(--waiting-wash); border-color: color-mix(in srgb, var(--waiting) 32%, transparent); }
+
+  .trigger {
+    margin: 0;
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: .71rem;
+    line-height: 1.5;
+    color: var(--quiet);
+    background: var(--sunk);
+    border-radius: 2px;
+    padding: .45rem .55rem;
+    word-break: break-word;
+  }
+
+  .says { margin: 0; font-size: .95rem; line-height: 1.45; }
+  .says::before { content: "“"; }
+  .says::after { content: "”"; }
+  .why { margin: 0; font-size: .84rem; line-height: 1.5; color: var(--quiet); border-top: 1px solid var(--hair); padding-top: .6rem; }
+  .why b { font-weight: 600; color: var(--ink); }
+
+  /* ---------------------------------------------------------- tables */
+  table { border-collapse: collapse; width: 100%; font-size: .82rem; }
+  .scroller table { min-width: 34rem; }
+
+  th, td {
+    text-align: left;
+    padding: .5rem .7rem .5rem 0;
+    border-bottom: 1px solid var(--hair);
+    vertical-align: baseline;
+  }
+
+  thead th {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: .65rem;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--quiet);
+    font-weight: 500;
+    border-bottom: 1px solid var(--rule);
+  }
+
+  td.num, th.num { font-family: "IBM Plex Mono", ui-monospace, monospace; font-variant-numeric: tabular-nums; }
+  td .mono { color: var(--quiet); }
+
+  /* ---------------------------------------------------------- rules panel */
+  .rules { display: grid; grid-template-columns: repeat(auto-fit, minmax(15.5rem, 1fr)); gap: 1.4rem 2rem; margin: 1.8rem 0 0; }
+  .rule-n { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: .68rem; letter-spacing: .12em; color: var(--waiting); text-transform: uppercase; }
+  .rules h3 { margin: .35rem 0 .35rem; }
+  .rules p { margin: 0; font-size: .92rem; line-height: 1.55; color: var(--quiet); }
+  .rules p b { color: var(--ink); font-weight: 600; }
+
+  /* ---------------------------------------------------------- callout */
+  .note {
+    border-left: 3px solid var(--waiting);
+    background: var(--waiting-wash);
+    padding: .9rem 1.1rem;
+    border-radius: 0 2px 2px 0;
+    font-size: .95rem;
+    line-height: 1.55;
+    max-width: 44rem;
+  }
+  .note p { margin: 0; }
+  .note p + p { margin-top: .6em; }
+  .note .lbl { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: .65rem; letter-spacing: .12em; text-transform: uppercase; color: var(--waiting); display: block; margin-bottom: .3rem; }
+
+  /* ---------------------------------------------------------- step list */
+  ol.steps { list-style: none; counter-reset: s; margin: 1.6rem 0 0; padding: 0; display: grid; gap: 1.1rem; }
+  ol.steps > li { counter-increment: s; display: grid; grid-template-columns: 2.2rem 1fr; gap: .9rem; align-items: start; }
+  ol.steps > li::before {
+    content: counter(s, decimal-leading-zero);
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: .72rem;
+    color: var(--quiet);
+    border-top: 2px solid var(--rule);
+    padding-top: .3rem;
+  }
+  ol.steps h3 { margin-bottom: .2rem; }
+  ol.steps p { margin: 0; font-size: .93rem; line-height: 1.55; color: var(--quiet); max-width: 34rem; }
+  ol.steps p b { color: var(--ink); font-weight: 600; }
+  ol.steps p + p { margin-top: .45em; }
+
+  footer.end {
+    border-top: 3px double var(--rule);
+    padding-top: 1.2rem;
+    font-size: .82rem;
+    color: var(--quiet);
+    max-width: 40rem;
+  }
+
+  @media (max-width: 40rem) {
+    ul.chain li { grid-template-columns: 1.1rem 1fr; }
+    ul.chain .d { grid-column: 2; }
+  }
+</style>
+
+<style>
+  /* SVG bits that need the page tokens rather than currentColor. */
+  .swap { fill: var(--paper); }
+  .node { fill: var(--card); stroke: var(--rule); }
+  .grid-line { stroke: var(--hair); }
+  .dim { fill: var(--quiet); }
+</style>
+
+<div class="wrap">
+
+<header class="top">
+  <p class="eyebrow">The Nostr Observer · pre-flight</p>
+  <h1>Before the Model Call</h1>
+  <p class="standfirst">
+    A front page costs about a dollar fifty and several minutes of somebody else's
+    relay. Everything below runs first, in order, for free — and every one of these
+    states is a different sentence to tell the reader.
+  </p>
+  <div class="filed">
+    <span>Readiness.kt · ReadinessProbe.kt · Press.kt</span>
+    <span>lens chain: 4 links, 12 verdicts</span>
+    <span>storage chain: 2 links, 5 verdicts</span>
+    <span>gate: <code>verdict.ranks</code></span>
+  </div>
+</header>
+
+<section>
+  <div class="sechead">
+    <p class="eyebrow">01 · The gate</p>
+    <h2>Two chains, one of which can stop you</h2>
+  </div>
+
+  <div class="prose">
+    <p>
+      <code>Press.gather</code> is everything up to but not including the model call.
+      It runs the readiness chain first — the pre-flight the whole design turns on,
+      because the failure it catches is <em>silent</em>. Every filter this service sends
+      carries <code>observer:&lt;pk&gt; sort:rank</code>, and that token resolving to nothing
+      does not error: it quietly becomes the anonymous ranking. On a measured window
+      that was 209 of 400 posts from one spam account. Finding that out after the
+      model call is finding it late.
+    </p>
+    <p>
+      So the chain is the gate. A reader who has not cleared it gets
+      <code>Refused(NO_LENS)</code> and the name of the one unmet link — never a paper
+      built some other way.
+    </p>
+  </div>
+
+  <figure class="wide">
+    <div class="scroller">
+      <svg viewBox="0 0 940 300" role="img" aria-label="The pre-flight pipeline: sign-in, then the lens chain, then a ranks gate that refuses with NO_LENS, then the corpus pull, then a notes gate that refuses with QUIET, then the digest, and only then the model call. The storage chain branches off and never gates.">
+        <defs>
+          <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"></path>
+          </marker>
+          <marker id="ar-stop" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="#c9563f"></path>
+          </marker>
+        </defs>
+
+        <!-- storage branch -->
+        <rect x="140" y="40" width="212" height="32" rx="2" class="node" stroke-dasharray="4 3"></rect>
+        <text x="246" y="60" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="12" fill="currentColor">storage chain · 2 links</text>
+        <line x1="209" y1="126" x2="209" y2="76" stroke="currentColor" stroke-width="1.2" marker-end="url(#ar)" opacity="0.55"></line>
+        <text x="220" y="106" font-family="IBM Plex Mono, monospace" font-size="11" class="dim">also asked</text>
+        <text x="366" y="60" font-family="IBM Plex Mono, monospace" font-size="11" class="dim">reported, never gates</text>
+
+        <!-- spine -->
+        <rect x="8" y="126" width="104" height="48" rx="2" class="node"></rect>
+        <text x="60" y="149" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="12" fill="currentColor">signed in</text>
+        <text x="60" y="164" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="11" class="dim">+ not an nsec</text>
+
+        <rect x="140" y="126" width="138" height="48" rx="2" class="node"></rect>
+        <text x="209" y="149" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="12" fill="currentColor">lens chain</text>
+        <text x="209" y="164" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="11" class="dim">4 links</text>
+        <text x="209" y="196" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="11" class="dim">2 fetches · 2 searches · 4 COUNTs</text>
+        <text x="209" y="210" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="11" class="dim">~3s</text>
+
+        <polygon points="296,150 314,124 382,124 400,150 382,176 314,176" class="node"></polygon>
+        <text x="348" y="154" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="12" fill="currentColor">ranks?</text>
+
+        <rect x="424" y="126" width="118" height="48" rx="2" class="node"></rect>
+        <text x="483" y="149" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="12" fill="currentColor">pull corpus</text>
+        <text x="483" y="164" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="11" class="dim">1 REQ per desk</text>
+        <text x="483" y="196" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="11" class="dim">+ anonymous control run</text>
+
+        <polygon points="566,150 584,124 652,124 670,150 652,176 584,176" class="node"></polygon>
+        <text x="618" y="146" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="12" fill="currentColor">any</text>
+        <text x="618" y="160" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="12" fill="currentColor">notes?</text>
+
+        <rect x="694" y="126" width="110" height="48" rx="2" class="node"></rect>
+        <text x="749" y="149" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="12" fill="currentColor">digest</text>
+        <text x="749" y="164" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="11" class="dim">250k chars</text>
+
+        <rect x="832" y="126" width="100" height="48" rx="2" fill="currentColor"></rect>
+        <text x="882" y="149" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="12" font-weight="600" class="swap">model call</text>
+        <text x="882" y="164" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="11" class="swap" opacity="0.75">~$1.50</text>
+
+        <!-- spine arrows -->
+        <line x1="112" y1="150" x2="134" y2="150" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar)"></line>
+        <line x1="278" y1="150" x2="290" y2="150" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar)"></line>
+        <line x1="400" y1="150" x2="418" y2="150" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar)"></line>
+        <text x="409" y="141" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="10" class="dim">yes</text>
+        <line x1="542" y1="150" x2="560" y2="150" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar)"></line>
+        <line x1="670" y1="150" x2="688" y2="150" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar)"></line>
+        <text x="679" y="141" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="10" class="dim">yes</text>
+        <line x1="804" y1="150" x2="826" y2="150" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar)"></line>
+
+        <!-- refusals -->
+        <line x1="348" y1="176" x2="348" y2="228" stroke="#c9563f" stroke-width="1.4" marker-end="url(#ar-stop)"></line>
+        <text x="358" y="200" font-family="IBM Plex Mono, monospace" font-size="10" fill="#c9563f">no</text>
+        <text x="348" y="248" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="12" fill="#c9563f">Refused · NO_LENS</text>
+        <text x="348" y="264" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="11" class="dim">7 of the 12 states land here</text>
+
+        <line x1="618" y1="176" x2="618" y2="228" stroke="#c9563f" stroke-width="1.4" marker-end="url(#ar-stop)"></line>
+        <text x="628" y="200" font-family="IBM Plex Mono, monospace" font-size="10" fill="#c9563f">no</text>
+        <text x="618" y="248" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="12" fill="#c9563f">Refused · QUIET</text>
+        <text x="618" y="264" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="11" class="dim">a real answer, and not a paper</text>
+      </svg>
+    </div>
+    <figcaption>
+      The whole of <code>Press.gather</code>. Two gates can stop a run before anything
+      is billed; the storage chain hangs off the side because a reader with no media
+      server can still <em>read</em> today's paper — they just cannot publish it.
+    </figcaption>
+  </figure>
+</section>
+
+<section>
+  <div class="sechead">
+    <p class="eyebrow">02 · How the chain behaves</p>
+    <h2>Four properties, none of them obvious</h2>
+  </div>
+
+  <div class="rules">
+    <div>
+      <p class="rule-n">Rule 1</p>
+      <h3>The first unmet link wins</h3>
+      <p>Every link below the break reports <b>WAITING</b>, never a second failure. A column of red crosses says four things are wrong when one is, and sends the reader off to fix three that are fine.</p>
+    </div>
+    <div>
+      <p class="rule-n">Rule 2</p>
+      <h3>The ranked probe is not redundant</h3>
+      <p>Cards can be present and not yet <b>projected</b> — the trust projection is per service, derived by a reconcile that runs at relay startup. Only asking the authed and the anonymous read the same question catches that.</p>
+    </div>
+    <div>
+      <p class="rule-n">Rule 3</p>
+      <h3>Your own posts are an aside</h3>
+      <p>Ranking is complete without them. Folded into the chain, it tells a reader whose lens is perfectly healthy that their search is broken — and the fix for it is <b>nothing at all</b>.</p>
+    </div>
+    <div>
+      <p class="rule-n">Rule 4</p>
+      <h3>Null is not zero</h3>
+      <p><b>“We have not looked”</b> and <b>“this relay holds none”</b> are different sentences with different next steps. NIP-45 COUNT is optional; a null denominator draws nothing rather than estimating.</p>
+    </div>
+  </div>
+
+  <figure class="narrow">
+    <div class="scroller">
+      <svg viewBox="0 0 660 218" role="img" aria-label="Comparison: reporting every unmet link shows four crosses and four things to fix, whereas the chain shows one tick, one cross, and two waiting links — one thing to fix.">
+        <text x="0" y="16" font-family="IBM Plex Mono, monospace" font-size="12" class="dim">IF EVERY LINK REPORTED</text>
+        <line x1="0" y1="26" x2="290" y2="26" class="grid-line" stroke-width="1"></line>
+        <text x="2" y="58" font-family="IBM Plex Mono, monospace" font-size="13" fill="#c9563f">✕</text>
+        <text x="26" y="58" font-family="IBM Plex Mono, monospace" font-size="12" fill="#c9563f">your relay list</text>
+        <text x="2" y="86" font-family="IBM Plex Mono, monospace" font-size="13" fill="#c9563f">✕</text>
+        <text x="26" y="86" font-family="IBM Plex Mono, monospace" font-size="12" fill="#c9563f">your scoring service</text>
+        <text x="2" y="114" font-family="IBM Plex Mono, monospace" font-size="13" fill="#c9563f">✕</text>
+        <text x="26" y="114" font-family="IBM Plex Mono, monospace" font-size="12" fill="#c9563f">your trust scores</text>
+        <text x="2" y="142" font-family="IBM Plex Mono, monospace" font-size="13" fill="#c9563f">✕</text>
+        <text x="26" y="142" font-family="IBM Plex Mono, monospace" font-size="12" fill="#c9563f">ranking your feed</text>
+        <line x1="0" y1="164" x2="290" y2="164" class="grid-line" stroke-width="1"></line>
+        <text x="0" y="186" font-family="IBM Plex Mono, monospace" font-size="12" class="dim">four things to go and fix.</text>
+        <text x="0" y="204" font-family="IBM Plex Mono, monospace" font-size="12" class="dim">three of them work.</text>
+
+        <line x1="325" y1="0" x2="325" y2="218" class="grid-line" stroke-width="1"></line>
+
+        <text x="360" y="16" font-family="IBM Plex Mono, monospace" font-size="12" class="dim">WHAT THE CHAIN REPORTS</text>
+        <line x1="360" y1="26" x2="650" y2="26" class="grid-line" stroke-width="1"></line>
+        <text x="362" y="58" font-family="IBM Plex Mono, monospace" font-size="13" fill="#4f8f5e">✓</text>
+        <text x="386" y="58" font-family="IBM Plex Mono, monospace" font-size="12" fill="currentColor">your relay list</text>
+        <text x="362" y="86" font-family="IBM Plex Mono, monospace" font-size="13" fill="#c9563f">✕</text>
+        <text x="386" y="86" font-family="IBM Plex Mono, monospace" font-size="12" fill="#c9563f">your scoring service</text>
+        <text x="362" y="114" font-family="IBM Plex Mono, monospace" font-size="13" class="dim">…</text>
+        <text x="386" y="114" font-family="IBM Plex Mono, monospace" font-size="12" class="dim">your trust scores</text>
+        <text x="362" y="142" font-family="IBM Plex Mono, monospace" font-size="13" class="dim">…</text>
+        <text x="386" y="142" font-family="IBM Plex Mono, monospace" font-size="12" class="dim">ranking your feed</text>
+        <line x1="360" y1="164" x2="650" y2="164" class="grid-line" stroke-width="1"></line>
+        <text x="360" y="186" font-family="IBM Plex Mono, monospace" font-size="12" class="dim">one thing to go and fix,</text>
+        <text x="360" y="204" font-family="IBM Plex Mono, monospace" font-size="12" class="dim">and one sentence saying which.</text>
+      </svg>
+    </div>
+    <figcaption>
+      Rule 1 drawn. The links below the break are not “passing” and not “failing” —
+      they were never asked, and <code>WAITING</code> is the only honest thing to print.
+    </figcaption>
+  </figure>
+</section>
+
+<section>
+  <div class="sechead">
+    <p class="eyebrow">03 · The lens chain</p>
+    <h2>Four questions, asked of the relay</h2>
+  </div>
+
+  <div class="prose">
+    <p>
+      <code>ReadinessProbe.gather</code> talks to the network and leaves every fact it
+      cannot establish <em>null</em>; <code>Readiness.assess</code> is pure and decides.
+      Links 1, 2 and 4 run concurrently — link 4 regardless of the rest, because it is the
+      only thing that can see a service whose cards are stored but not yet projected. The
+      four COUNTs run <em>one at a time</em>: run concurrently, <code>--check</code> went
+      from three seconds to hanging until killed, because this store sends an AUTH
+      challenge before answering a COUNT even though <code>auth_required</code> is false.
+    </p>
+  </div>
+
+  <div class="scroller">
+    <table>
+      <thead>
+        <tr>
+          <th>Link</th>
+          <th>The question</th>
+          <th>Asked as</th>
+          <th>A broken answer</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="num">1 · <span class="mono">relayList</span></td>
+          <td>Do we know where you post?</td>
+          <td><span class="mono">kind 10002</span>, one fetch</td>
+          <td>no list, or nothing on <span class="mono">wss://</span></td>
+        </tr>
+        <tr>
+          <td class="num">2 · <span class="mono">scoreList</span></td>
+          <td>Do you name a service whose scores rank?</td>
+          <td><span class="mono">kind 10040</span>, one fetch</td>
+          <td>absent, or no <span class="mono">30382:rank</span> with a relay hint</td>
+        </tr>
+        <tr>
+          <td class="num">3 · <span class="mono">scores</span></td>
+          <td>Have that service's cards arrived here?</td>
+          <td>COUNT <span class="mono">kind 30382</span>, here and there</td>
+          <td><span class="mono">0</span> here — the relay answered, and holds none</td>
+        </tr>
+        <tr>
+          <td class="num">4 · <span class="mono">ranked</span></td>
+          <td>Does a ranked read actually come back?</td>
+          <td>two NIP-50 searches, authed and anonymous, both <span class="mono">since = 24h</span></td>
+          <td>anon returns rows, authed returns none</td>
+        </tr>
+        <tr>
+          <td class="num">— · <span class="mono">posts</span></td>
+          <td>Are your own posts caught up? <em>(an aside)</em></td>
+          <td>COUNT <span class="mono">kind 1</span>, here and their first write relay</td>
+          <td>never blocks anything</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="note" style="margin-top:1.6rem">
+    <span class="lbl">The trap this replaced</span>
+    <p>
+      The ranked probe's <code>since</code> is not tidiness. Measured against
+      search-staging: that search returns 12 events immediately with a 24-hour
+      <code>since</code>, and times out with none at all without one. Both sides then come
+      back zero, which the chain correctly reads as a quiet window rather than a broken
+      lens — so link 4 passes every time while testing nothing. It shipped that way once.
+    </p>
+  </div>
+</section>
+
+<section>
+  <div class="sechead">
+    <p class="eyebrow">04 · Every lens state</p>
+    <h2>Twelve verdicts, five of which print</h2>
+  </div>
+
+  <div class="scroller">
+    <table>
+      <thead>
+        <tr>
+          <th>State</th>
+          <th>Tone</th>
+          <th class="num">Percent</th>
+          <th>Breaks at</th>
+          <th>Gate</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td class="mono">checking</td><td>WORKING</td><td class="num">—</td><td>nothing asked yet</td><td>stops</td></tr>
+        <tr><td class="mono">no-relay-list</td><td>BLOCKED</td><td class="num">—</td><td>link 1</td><td>stops</td></tr>
+        <tr><td class="mono">no-usable-relays</td><td>BLOCKED</td><td class="num">—</td><td>link 1</td><td>stops</td></tr>
+        <tr><td class="mono">no-score-list</td><td>BLOCKED</td><td class="num">—</td><td>link 2</td><td>stops</td></tr>
+        <tr><td class="mono">no-rank-service</td><td>BLOCKED</td><td class="num">—</td><td>link 2</td><td>stops</td></tr>
+        <tr><td class="mono">no-scores-yet</td><td>BLOCKED</td><td class="num">0%</td><td>link 3</td><td>stops</td></tr>
+        <tr><td class="mono">projection-pending</td><td>BLOCKED</td><td class="num">99.9%</td><td>link 4</td><td>stops</td></tr>
+        <tr><td class="mono">importing</td><td>PARTIAL</td><td class="num">&lt; 90%</td><td>—</td><td>prints</td></tr>
+        <tr><td class="mono">importing</td><td>PARTIAL</td><td class="num">—</td><td>no denominator</td><td>prints</td></tr>
+        <tr><td class="mono">posts-behind</td><td>WORKING</td><td class="num">&lt; 100%</td><td>an aside</td><td>prints</td></tr>
+        <tr><td class="mono">ready</td><td>OK</td><td class="num">—</td><td>—</td><td>prints</td></tr>
+        <tr><td class="mono">ready</td><td>OK</td><td class="num">—</td><td>quiet window</td><td>prints</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p class="eyebrow" style="margin:2.4rem 0 1rem">Drawn as the reader sees them</p>
+
+  <div class="states">
+
+    <article class="state" data-tone="WORKING">
+      <header>
+        <h3>checking</h3>
+        <span class="chip" data-v="tone">Tone.WORKING</span>
+        <span class="chip" data-v="stops">stops</span>
+      </header>
+      <p class="trigger">any fact still null:<br>writeRelays · scoreListSeen · scores.here · probeAnon · probeAuthed</p>
+      <ul class="chain">
+        <li data-status="OK"><span class="g">✓</span><span class="k">your relay list</span><span class="d">3 write relays</span></li>
+        <li data-status="OK"><span class="g">✓</span><span class="k">your scoring service</span><span class="d">npub1w3ns8…7q4dl @ wss://scores.brainstorm.world</span></li>
+      </ul>
+      <p class="says">Checking your web of trust.</p>
+      <p class="why">Returned at <b>five</b> different points, and the chain simply stops where the asking did — no link is invented for a question nobody answered. <code>ranks</code> is false here, so a verdict still checking cannot print. The one that persists: a relay that will not answer the COUNT leaves <code>scores.here</code> null and the chain in <code>checking</code> indefinitely.</p>
+    </article>
+
+    <article class="state" data-tone="BLOCKED">
+      <header>
+        <h3>no-relay-list</h3>
+        <span class="chip" data-v="tone">Tone.BLOCKED</span>
+        <span class="chip" data-v="stops">stops</span>
+      </header>
+      <p class="trigger">writeRelays.isEmpty() &amp;&amp; !relayListSeen</p>
+      <ul class="chain">
+        <li data-status="BROKEN"><span class="g">✕</span><span class="k">your relay list</span><span class="d">declared=0</span></li>
+        <li data-status="WAITING"><span class="g">…</span><span class="k">your scoring service</span></li>
+        <li data-status="WAITING"><span class="g">…</span><span class="k">your trust scores</span></li>
+        <li data-status="WAITING"><span class="g">…</span><span class="k">ranking your feed</span></li>
+      </ul>
+      <p class="says">Your account has not said which relays it uses, so nothing about you can be found. Set that up in your usual Nostr app — it is the one thing we cannot do for you.</p>
+      <p class="why">Permanent until they act: with no <code>kind 10002</code>, <b>nothing</b> will ever discover them. This is also the only failure the service genuinely cannot fix on their behalf.</p>
+    </article>
+
+    <article class="state" data-tone="BLOCKED">
+      <header>
+        <h3>no-usable-relays</h3>
+        <span class="chip" data-v="tone">Tone.BLOCKED</span>
+        <span class="chip" data-v="stops">stops</span>
+      </header>
+      <p class="trigger">writeRelays.isEmpty() &amp;&amp; relayListSeen</p>
+      <ul class="chain">
+        <li data-status="BROKEN"><span class="g">✕</span><span class="k">your relay list</span><span class="d">declared=0</span></li>
+        <li data-status="WAITING"><span class="g">…</span><span class="k">your scoring service</span></li>
+        <li data-status="WAITING"><span class="g">…</span><span class="k">your trust scores</span></li>
+        <li data-status="WAITING"><span class="g">…</span><span class="k">ranking your feed</span></li>
+      </ul>
+      <p class="says">None of your relays are answering. Check them in your usual Nostr app.</p>
+      <p class="why">Same link, same detail, <b>different state</b> — the list exists, and nothing in it survives the <code>wss://</code> filter. quartz returns what the tag said and does not vet the scheme; a real 10002 in the wild carries <code>https://</code> entries, and we dial these.</p>
+    </article>
+
+    <article class="state" data-tone="BLOCKED">
+      <header>
+        <h3>no-score-list</h3>
+        <span class="chip" data-v="tone">Tone.BLOCKED</span>
+        <span class="chip" data-v="stops">stops</span>
+      </header>
+      <p class="trigger">scoreListSeen == false</p>
+      <ul class="chain">
+        <li data-status="OK"><span class="g">✓</span><span class="k">your relay list</span><span class="d">3 write relays</span></li>
+        <li data-status="BROKEN"><span class="g">✕</span><span class="k">your scoring service</span><span class="d">absent</span></li>
+        <li data-status="WAITING"><span class="g">…</span><span class="k">your trust scores</span></li>
+        <li data-status="WAITING"><span class="g">…</span><span class="k">ranking your feed</span></li>
+      </ul>
+      <p class="says">You have not chosen who works out your web of trust. That is the last step, and we can do it for you.</p>
+      <p class="why">The common state for a first-time reader, and the reason there is <b>no fallback lens</b>: minting one needs a scoring service to compute a web of trust and publish <code>kind 30382</code> cards for it, which is an operator step today.</p>
+    </article>
+
+    <article class="state" data-tone="BLOCKED">
+      <header>
+        <h3>no-rank-service</h3>
+        <span class="chip" data-v="tone">Tone.BLOCKED</span>
+        <span class="chip" data-v="stops">stops</span>
+      </header>
+      <p class="trigger">rankService.isNullOrBlank()</p>
+      <ul class="chain">
+        <li data-status="OK"><span class="g">✓</span><span class="k">your relay list</span><span class="d">3 write relays</span></li>
+        <li data-status="BROKEN"><span class="g">✕</span><span class="k">your scoring service</span><span class="d">no rank dimension</span></li>
+        <li data-status="WAITING"><span class="g">…</span><span class="k">your trust scores</span></li>
+        <li data-status="WAITING"><span class="g">…</span><span class="k">ranking your feed</span></li>
+      </ul>
+      <p class="says">The scoring service you chose is not one we can read from. We can point it somewhere that works.</p>
+      <p class="why">Three different 10040s land here: one declaring only <code>30382:followers</code> (which can <b>order</b> a list but not <b>rank</b> one), a private NIP-44 entry, and an entry with no relay hint. quartz's own tag parser rejects the last two, so this project and the relay agree about what counts.</p>
+    </article>
+
+    <article class="state" data-tone="BLOCKED">
+      <header>
+        <h3>no-scores-yet</h3>
+        <span class="chip" data-v="tone">Tone.BLOCKED</span>
+        <span class="chip" data-v="warn">percent = 0.0</span>
+        <span class="chip" data-v="stops">stops</span>
+      </header>
+      <p class="trigger">scores.here == 0L</p>
+      <ul class="chain">
+        <li data-status="OK"><span class="g">✓</span><span class="k">your relay list</span><span class="d">3 write relays</span></li>
+        <li data-status="OK"><span class="g">✓</span><span class="k">your scoring service</span><span class="d">npub1w3ns8…7q4dl @ wss://scores.brainstorm.world</span></li>
+        <li data-status="BROKEN"><span class="g">✕</span><span class="k">your trust scores</span><span class="d">0 here</span></li>
+        <li data-status="WAITING"><span class="g">…</span><span class="k">ranking your feed</span></li>
+      </ul>
+      <p class="says">Your web of trust is being worked out. Nothing for you to do — this is us waiting.</p>
+      <p class="why">Zero here <b>is a claim</b>: the relay answered, and holds none of that service's cards. Ranked search would return nothing, so this is blocked and not partial — whatever the upstream count says. Contrast <code>checking</code>, where the relay said nothing at all.</p>
+    </article>
+
+    <article class="state" data-tone="BLOCKED">
+      <header>
+        <h3>projection-pending</h3>
+        <span class="chip" data-v="tone">Tone.BLOCKED</span>
+        <span class="chip" data-v="stops">stops</span>
+      </header>
+      <p class="trigger">probeAnon &gt; 0 &amp;&amp; probeAuthed == 0</p>
+      <ul class="chain">
+        <li data-status="OK"><span class="g">✓</span><span class="k">your relay list</span><span class="d">3 write relays</span></li>
+        <li data-status="OK"><span class="g">✓</span><span class="k">your scoring service</span><span class="d">npub1w3ns8…7q4dl @ wss://scores.brainstorm.world</span></li>
+        <li data-status="OK"><span class="g">✓</span><span class="k">your trust scores</span><span class="d">149,171 here</span></li>
+        <li data-status="BROKEN"><span class="g">✕</span><span class="k">ranking your feed</span><span class="d">authed=0 anon=12</span></li>
+      </ul>
+      <p class="says">Almost there. This clears on its own.</p>
+      <p class="why">The cards are here and the relay has <b>not projected them</b> for this service yet — projection is per service, derived by a reconcile that runs at startup. Rule 2 is the only thing in the chain that can see this: the score count above it says everything is fine.</p>
+    </article>
+
+    <article class="state" data-tone="PARTIAL">
+      <header>
+        <h3>importing</h3>
+        <span class="chip" data-v="tone">Tone.PARTIAL</span>
+        <span class="chip" data-v="warn">percent = 0.41</span>
+        <span class="chip" data-v="prints">prints</span>
+      </header>
+      <p class="trigger">round(here / there × 100) &lt; 90</p>
+      <ul class="chain">
+        <li data-status="OK"><span class="g">✓</span><span class="k">your relay list</span><span class="d">3 write relays</span></li>
+        <li data-status="OK"><span class="g">✓</span><span class="k">your scoring service</span><span class="d">npub1w3ns8…7q4dl @ wss://scores.brainstorm.world</span></li>
+        <li data-status="PARTIAL"><span class="g">◐</span><span class="k">your trust scores</span><span class="d">61,204 here</span></li>
+        <li data-status="PARTIAL"><span class="g">◐</span><span class="k">ranking your feed</span><span class="d">authed=12</span></li>
+      </ul>
+      <p class="says">Reading your web of trust — 41%.</p>
+      <p class="why">The first state that <b>prints</b>. The last few per cent buy a reader almost nothing — what is still to come is the tail of the service's own ranking, the accounts it scored lowest — so the cutoff is 90%, compared against the <b>rounded</b> percentage so the rule and the sentence agree. No panel ever prints 90% or more.</p>
+    </article>
+
+    <article class="state" data-tone="PARTIAL">
+      <header>
+        <h3>importing</h3>
+        <span class="chip" data-v="tone">Tone.PARTIAL</span>
+        <span class="chip" data-v="tone">percent = null</span>
+        <span class="chip" data-v="prints">prints</span>
+      </header>
+      <p class="trigger">pct == null &amp;&amp; !counted(scores.there)</p>
+      <ul class="chain">
+        <li data-status="OK"><span class="g">✓</span><span class="k">your relay list</span><span class="d">3 write relays</span></li>
+        <li data-status="OK"><span class="g">✓</span><span class="k">your scoring service</span><span class="d">npub1w3ns8…7q4dl @ wss://scores.brainstorm.world</span></li>
+        <li data-status="OK"><span class="g">✓</span><span class="k">your trust scores</span><span class="d">3,197 here</span></li>
+        <li data-status="OK"><span class="g">✓</span><span class="k">ranking your feed</span><span class="d">authed=12</span></li>
+      </ul>
+      <p class="says">Reading your web of trust.</p>
+      <p class="why">Every link is fine; the <b>provider's own relay</b> would not answer a COUNT, so there is no honest denominator. Still worth saying — “3,197 here” answers “is anything happening” — but there is no bar, and no sentence with a number in it. Note the consequence: this reader prints happily and never reaches <code>ready</code>.</p>
+    </article>
+
+    <article class="state" data-tone="WORKING">
+      <header>
+        <h3>posts-behind</h3>
+        <span class="chip" data-v="tone">Tone.WORKING</span>
+        <span class="chip" data-v="warn">percent = 0.87</span>
+        <span class="chip" data-v="prints">prints</span>
+      </header>
+      <p class="trigger">postPct != null &amp;&amp; postPct &lt; 1.0</p>
+      <ul class="chain">
+        <li data-status="OK"><span class="g">✓</span><span class="k">your relay list</span><span class="d">3 write relays</span></li>
+        <li data-status="OK"><span class="g">✓</span><span class="k">your scoring service</span><span class="d">npub1w3ns8…7q4dl @ wss://scores.brainstorm.world</span></li>
+        <li data-status="OK"><span class="g">✓</span><span class="k">your trust scores</span><span class="d">149,171 here</span></li>
+        <li data-status="OK"><span class="g">✓</span><span class="k">ranking your feed</span><span class="d">authed=12</span></li>
+        <li data-status="ASIDE"><span class="g">→</span><span class="k">your own posts</span><span class="d">27,058 here</span></li>
+      </ul>
+      <p class="says">Ready.</p>
+      <p class="why">The state name is for the operator; the reader is told <b>Ready</b>, because they are. Rule 3 in one card: the aside is drawn, the percentage is carried, and neither changes what happens next.</p>
+    </article>
+
+    <article class="state" data-tone="OK">
+      <header>
+        <h3>ready</h3>
+        <span class="chip" data-v="tone">Tone.OK</span>
+        <span class="chip" data-v="prints">prints</span>
+      </header>
+      <p class="trigger">every link OK · posts caught up, or never asked</p>
+      <ul class="chain">
+        <li data-status="OK"><span class="g">✓</span><span class="k">your relay list</span><span class="d">3 write relays</span></li>
+        <li data-status="OK"><span class="g">✓</span><span class="k">your scoring service</span><span class="d">npub1w3ns8…7q4dl @ wss://scores.brainstorm.world</span></li>
+        <li data-status="OK"><span class="g">✓</span><span class="k">your trust scores</span><span class="d">149,171 here</span></li>
+        <li data-status="OK"><span class="g">✓</span><span class="k">ranking your feed</span><span class="d">authed=12</span></li>
+        <li data-status="ASIDE"><span class="g">→</span><span class="k">your own posts</span><span class="d">27,058 here</span></li>
+      </ul>
+      <p class="says">Ready.</p>
+      <p class="why">Measured against search-staging for the prototype observer on 2026-08-17: 149,171 of the provider's 149,266 cards are here, 99.9%. Of 244 authors on the prototype front page, 228 cleared link 1 and 11 cleared link 2 — that ratio is why this module exists at all.</p>
+    </article>
+
+    <article class="state" data-tone="OK">
+      <header>
+        <h3>ready · quiet window</h3>
+        <span class="chip" data-v="tone">Tone.OK</span>
+        <span class="chip" data-v="prints">prints</span>
+      </header>
+      <p class="trigger">probeAnon == 0 &amp;&amp; probeAuthed == 0</p>
+      <ul class="chain">
+        <li data-status="OK"><span class="g">✓</span><span class="k">your relay list</span><span class="d">3 write relays</span></li>
+        <li data-status="OK"><span class="g">✓</span><span class="k">your scoring service</span><span class="d">npub1w3ns8…7q4dl @ wss://scores.brainstorm.world</span></li>
+        <li data-status="OK"><span class="g">✓</span><span class="k">your trust scores</span><span class="d">149,171 here</span></li>
+        <li data-status="OK"><span class="g">✓</span><span class="k">ranking your feed</span><span class="d">authed=0</span></li>
+      </ul>
+      <p class="says">Ready.</p>
+      <p class="why">Both sides zero is a <b>quiet window, not a broken lens</b> — asking the anonymous read as well is exactly what stops an empty corpus reading as a broken chain. This verdict clears the gate and is usually refused a few seconds later by <code>QUIET</code>, which is the correct order: only one of those two is about the reader's account.</p>
+    </article>
+
+  </div>
+</section>
+
+<section>
+  <div class="sechead">
+    <p class="eyebrow">05 · Counting</p>
+    <h2>What a pair of counts is allowed to mean</h2>
+  </div>
+
+  <div class="prose">
+    <p>
+      Link 3 is two COUNTs: how many of the service's cards this relay holds
+      (<em>here</em>) and how many the service's own relay serves (<em>there</em>).
+      Asking a second host is the whole point of the comparison, so failing to reach it
+      leaves a null denominator rather than borrowing ours.
+    </p>
+  </div>
+
+  <div class="scroller">
+    <table>
+      <thead>
+        <tr>
+          <th class="num">here</th>
+          <th class="num">there</th>
+          <th class="num">fraction</th>
+          <th>What the chain does with it</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td class="num">null</td><td class="num">—</td><td class="num">—</td><td><span class="mono">checking</span> — we have not looked, and that is not a zero</td></tr>
+        <tr><td class="num">0</td><td class="num">149,266</td><td class="num">0.00</td><td><span class="mono">no-scores-yet</span> — the relay answered and holds none. Blocked, not partial</td></tr>
+        <tr><td class="num">61,204</td><td class="num">149,266</td><td class="num">0.41</td><td><span class="mono">importing</span> — a bar, and a percentage in the sentence</td></tr>
+        <tr><td class="num">149,171</td><td class="num">149,266</td><td class="num">1.00</td><td><span class="mono">ready</span> — 99.9% rounds to 100, and no panel prints ≥ 90%</td></tr>
+        <tr><td class="num">3,197</td><td class="num">null</td><td class="num">—</td><td><span class="mono">importing</span> — a count worth saying, with nothing to divide it by</td></tr>
+        <tr><td class="num">180,000</td><td class="num">149,266</td><td class="num">1.00</td><td>capped — we can hold more than an upstream serves (it deleted, we did not), and “118%” reads as a bug</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section>
+  <div class="sechead">
+    <p class="eyebrow">06 · The storage chain</p>
+    <h2>Asked at pre-flight, on purpose</h2>
+  </div>
+
+  <div class="prose">
+    <p>
+      The second chain answers a different question — <em>can you host your paper?</em> —
+      and fails independently of the first. It used to be checked at publish time, which
+      is after an edition has been generated and paid for: the reader learned they had
+      nowhere to put their paper at the one moment the answer was most expensive. It is
+      now asked before anything is written, and it still <b>never blocks the model call</b>.
+    </p>
+  </div>
+
+  <div class="states" style="margin-top:1.8rem">
+
+    <article class="state" data-tone="WORKING">
+      <header>
+        <h3>checking</h3>
+        <span class="chip" data-v="tone">Tone.WORKING</span>
+      </header>
+      <p class="trigger">serverListSeen == null</p>
+      <ul class="chain">
+        <li data-status="WAITING"><span class="g">…</span><span class="k">nothing asked yet</span></li>
+      </ul>
+      <p class="says">Checking where you can publish.</p>
+      <p class="why">An empty chain rather than a chain of unknowns — same rule as the lens: a link that was never asked is not drawn.</p>
+    </article>
+
+    <article class="state" data-tone="BLOCKED">
+      <header>
+        <h3>no-blossom-server</h3>
+        <span class="chip" data-v="tone">Tone.BLOCKED</span>
+        <span class="chip" data-v="warn">publish only</span>
+      </header>
+      <p class="trigger">serverListSeen == true &amp;&amp; servers.isEmpty()</p>
+      <ul class="chain">
+        <li data-status="BROKEN"><span class="g">✕</span><span class="k">your media servers</span><span class="d">list names no usable server</span></li>
+        <li data-status="WAITING"><span class="g">…</span><span class="k">permission to upload</span></li>
+      </ul>
+      <p class="says">You have not set up anywhere to store files, so there is nowhere to publish to. Add one in your usual Nostr app — you can still read today's paper without it.</p>
+      <p class="why">A <code>kind 10063</code> exists and nothing in it survives: a Blossom PUT is an HTTPS call and the sanitizer allows no other scheme, so a <code>http://</code> entry is a server we cannot use. The console only shows this line when it is <b>the thing in the way</b> — a reader who can print does not need to hear about media servers until they publish.</p>
+    </article>
+
+    <article class="state" data-tone="BLOCKED">
+      <header>
+        <h3>no-blossom-server</h3>
+        <span class="chip" data-v="tone">Tone.BLOCKED</span>
+        <span class="chip" data-v="tone">pure API only</span>
+      </header>
+      <p class="trigger">serverListSeen == false &amp;&amp; servers.isEmpty()</p>
+      <ul class="chain">
+        <li data-status="BROKEN"><span class="g">✕</span><span class="k">your media servers</span><span class="d">absent</span></li>
+        <li data-status="WAITING"><span class="g">…</span><span class="k">permission to upload</span></li>
+      </ul>
+      <p class="says">You have not set up anywhere to store files, so there is nowhere to publish to. Add one in your usual Nostr app — you can still read today's paper without it.</p>
+      <p class="why">The same distinction the relay list draws — never published a list, or published one naming nothing usable. Today <code>Press.storage</code> always passes <code>serverListSeen = true</code>, so this wording is reachable only through the pure function; it is kept because the two are different sentences the moment anything else calls it.</p>
+    </article>
+
+    <article class="state" data-tone="OK">
+      <header>
+        <h3>can-publish</h3>
+        <span class="chip" data-v="tone">Tone.OK</span>
+        <span class="chip" data-v="prints">has published before</span>
+      </header>
+      <p class="trigger">servers.isNotEmpty() &amp;&amp; publishedBefore == true</p>
+      <ul class="chain">
+        <li data-status="OK"><span class="g">✓</span><span class="k">your media servers</span><span class="d">2 server(s)</span></li>
+        <li data-status="OK"><span class="g">✓</span><span class="k">permission to upload</span><span class="d">has published before</span></li>
+      </ul>
+      <p class="says">Ready to publish.</p>
+      <p class="why">History, not a prediction.</p>
+    </article>
+
+    <article class="state" data-tone="OK">
+      <header>
+        <h3>can-publish</h3>
+        <span class="chip" data-v="tone">Tone.OK</span>
+        <span class="chip" data-v="prints">asked at publish</span>
+      </header>
+      <p class="trigger">servers.isNotEmpty() &amp;&amp; publishedBefore == null | false</p>
+      <ul class="chain">
+        <li data-status="OK"><span class="g">✓</span><span class="k">your media servers</span><span class="d">2 server(s)</span></li>
+        <li data-status="WAITING"><span class="g">…</span><span class="k">permission to upload</span><span class="d">asked at publish</span></li>
+      </ul>
+      <p class="says">Ready to publish.</p>
+      <p class="why">Consent <b>cannot</b> be pre-flighted. Whether a signer will produce a <code>kind 24242</code> is knowable only when it is asked, and asking means a prompt on the reader's device for an upload they have not requested. So this link reports history and the publish path reports refusal. The web console passes <code>publishedBefore = null</code> deliberately: both branches return the identical verdict, and working out the true answer meant fetching every site event the reader has ever published, on every page load, to choose between two words inside a closed <code>&lt;details&gt;</code>.</p>
+    </article>
+
+  </div>
+</section>
+
+<section>
+  <div class="sechead">
+    <p class="eyebrow">07 · Past the gate, still before the call</p>
+    <h2>What the corpus has to survive</h2>
+  </div>
+
+  <ol class="steps">
+    <li>
+      <div>
+        <h3>Pull the corpus — one REQ per desk</h3>
+        <p>Every desk asks on its <b>own subscription</b>, all at once, alongside the anonymous control run and an uncapped COUNT of the day's notes. Sharing one REQ meant recovering results by kind, which works right up until two filters share one — and two do: the control run is <code>kind 1</code> exactly like the notes desk. Merged, its anonymous results were filed as news.</p>
+        <p>Every ranked filter carries <code>observer:&lt;pk&gt; sort:rank filter:rank:gte:20</code>. The floor is not redundant with the cap: it turns <code>limit=400</code> from a target back into a ceiling, so a thin lens or a quiet day stops scraping downward for material nobody vouched for.</p>
+      </div>
+    </li>
+    <li>
+      <div>
+        <h3>Refuse a window with nothing in it</h3>
+        <p><code>corpus.notes.isEmpty()</code> throws <code>Refused(QUIET)</code>. A thin paper is the right response to a quiet day; zero notes is not a thin paper, it is no paper. This is the second and last thing that can stop a run before the model is called.</p>
+      </div>
+    </li>
+    <li>
+      <div>
+        <h3>Read the overlap — an alarm, not a gate</h3>
+        <p>How many events the lens surfaced that the same window <b>without</b> it also returned. Near zero is the product thesis stated as a number. Near 100% is the desk-collision bug above, announcing itself in the progress list rather than in an edition three weeks later. Nothing stops on it; it is an instrument.</p>
+      </div>
+    </li>
+    <li>
+      <div>
+        <h3>Shortlist the art</h3>
+        <p>Candidates are chosen and <b>hotlinked</b> — never fetched, resized, re-hosted or inlined. There is no image library in this project, so nothing here can fail on somebody else's server.</p>
+      </div>
+    </li>
+    <li>
+      <div>
+        <h3>Fit the digest to the budget</h3>
+        <p>250,000 characters, about 62,500 tokens, split as an <b>even share per desk</b> rather than spent in desk order — otherwise the notes desk ate the budget and the quiet desks below it printed nothing. What is kept and what is pruned is reported before the call, not after.</p>
+      </div>
+    </li>
+    <li>
+      <div>
+        <h3>Only now: <span class="mono">Step.Writing</span></h3>
+        <p>One streaming call, a fixed system prompt that never reaches the client, and the house stylesheet. Roughly a dollar fifty, and every check above exists to make sure it is a dollar fifty spent on a paper somebody can actually be shown.</p>
+      </div>
+    </li>
+  </ol>
+
+  <div class="states" style="margin-top:2.2rem">
+    <article class="state" data-tone="BLOCKED">
+      <header>
+        <h3>Refused · QUIET</h3>
+        <span class="chip" data-v="stops">stops</span>
+      </header>
+      <p class="trigger">corpus.notes.isEmpty()</p>
+      <ul class="chain">
+        <li data-status="OK"><span class="g">✓</span><span class="k">lens chain</span><span class="d">ready</span></li>
+        <li data-status="BROKEN"><span class="g">✕</span><span class="k">the window</span><span class="d">0 notes of 0 surfaced</span></li>
+      </ul>
+      <p class="says">Nothing came back for this window through your web of trust. A quiet day is a real answer and a thin paper is the right response to it, but with zero notes there is no paper at all.</p>
+      <p class="why">The only refusal that is about the <b>day</b> rather than the account. It arrives after roughly a minute of relay reads and before a cent is spent.</p>
+    </article>
+
+    <article class="state" data-tone="OK">
+      <header>
+        <h3>Cleared · gathered</h3>
+        <span class="chip" data-v="prints">calls the model</span>
+      </header>
+      <p class="trigger">the state the model call is made from</p>
+      <ul class="chain">
+        <li data-status="OK"><span class="g">✓</span><span class="k">lens chain</span><span class="d">ready</span></li>
+        <li data-status="OK"><span class="g">✓</span><span class="k">the window</span><span class="d">608 events of 35,084 surfaced · 244 people</span></li>
+        <li data-status="ASIDE"><span class="g">→</span><span class="k">control run</span><span class="d">400 anonymous notes · 1 of them also in the paper</span></li>
+        <li data-status="OK"><span class="g">✓</span><span class="k">digest</span><span class="d">431 kept · 177 pruned · ~48k tokens</span></li>
+        <li data-status="ASIDE"><span class="g">→</span><span class="k">art</span><span class="d">14 candidates, hotlinked</span></li>
+      </ul>
+      <p class="says">Writing your front page — this is the slow part.</p>
+      <p class="why">Everything above is reported to whoever is watching before the call begins, because the call is several minutes long and a progress list that says what it is doing beats a bar with no honest denominator.</p>
+    </article>
+  </div>
+</section>
+
+<section>
+  <div class="sechead">
+    <p class="eyebrow">08 · Outside the chain</p>
+    <h2>Four guards that are not links</h2>
+  </div>
+
+  <div class="states">
+    <article class="state" data-tone="BLOCKED">
+      <header>
+        <h3>that is a secret key</h3>
+        <span class="chip" data-v="stops">exit 2</span>
+      </header>
+      <p class="trigger">args[0].startsWith("nsec1")</p>
+      <ul class="chain">
+        <li data-status="BROKEN"><span class="g">✕</span><span class="k">what you pasted</span><span class="d">rejected before any filter is built</span></li>
+      </ul>
+      <p class="says">That is a SECRET key. Paste your npub or hex public key instead.</p>
+      <p class="why">quartz owns NIP-19 decoding but <b>not</b> this guard, and the difference matters: <code>decodePublicKeyAsHexOrNull</code> decodes any 32-byte bech32 payload, so an <code>nsec</code> turns into the hex of the <b>secret</b> key rather than returning null. Without this check, a reader who pastes their private key into the front door would have it put into a relay filter and sent over the wire.</p>
+    </article>
+
+    <article class="state" data-tone="BLOCKED">
+      <header>
+        <h3>not signed in</h3>
+        <span class="chip" data-v="stops">401</span>
+      </header>
+      <p class="trigger">signedIn(app) == null</p>
+      <ul class="chain">
+        <li data-status="BROKEN"><span class="g">✕</span><span class="k">your session</span><span class="d">no cookie, or an expired one</span></li>
+      </ul>
+      <p class="says">not signed in</p>
+      <p class="why">Login is required to <b>generate</b> and never to read a published edition. Every route that costs money or touches somebody's archive checks this first.</p>
+    </article>
+
+    <article class="state" data-tone="WORKING">
+      <header>
+        <h3>already printing</h3>
+        <span class="chip" data-v="warn">no second run</span>
+      </header>
+      <p class="trigger">runs.open(pubkey) — existing.state == RUNNING</p>
+      <ul class="chain">
+        <li data-status="ASIDE"><span class="g">→</span><span class="k">your run</span><span class="d">the one you already have is handed back</span></li>
+      </ul>
+      <p class="says">(the progress list simply continues)</p>
+      <p class="why">Generation costs real money and reads somebody else's relay hard, so two clicks on a slow button must not become two runs. <code>compute</code> holds the bin lock for the key, so the check and the claim are <b>one step</b> — a get-then-put here is a race that only appears under exactly the condition that causes it.</p>
+    </article>
+
+    <article class="state" data-tone="PARTIAL">
+      <header>
+        <h3>no API key</h3>
+        <span class="chip" data-v="warn">not pre-flighted</span>
+      </header>
+      <p class="trigger">ANTHROPIC_API_KEY missing or wrong</p>
+      <ul class="chain">
+        <li data-status="OK"><span class="g">✓</span><span class="k">every check on this page</span><span class="d">passes</span></li>
+        <li data-status="BROKEN"><span class="g">✕</span><span class="k">the call itself</span><span class="d">AnthropicServiceException · exit 5</span></li>
+      </ul>
+      <p class="says">The model API refused: &lt;the API's own first line&gt;</p>
+      <p class="why">The one thing on this page that is <b>not</b> checked before the call — the client is built lazily from the environment, so a bad key is discovered by making the request. The server says so at boot (“no ANTHROPIC_API_KEY: readiness and previews will work, generation will not”) and the CLI prints the API's own sentence rather than forty lines of coroutine stack.</p>
+    </article>
+  </div>
+</section>
+
+<section>
+  <div class="sechead">
+    <p class="eyebrow">09 · The other side of the call</p>
+    <h2>What deliberately is not checked here</h2>
+  </div>
+
+  <div class="prose">
+    <p>
+      Three checks run <em>after</em> the model call, and belong there. The model writes
+      the whole document, markup and stylesheet; safety is enforced after generation by
+      the sanitizer, not before it by constraining the writer.
+    </p>
+    <p>
+      The <b>sanitizer</b> proves the page cannot misbehave — no <code>&lt;a href&gt;</code> to the
+      open web survives, only permalinks back to a source event. The <b>proof</b> opens
+      it in a browser and, if it does not read, regenerates once and then drops the
+      author's stylesheet for the house one. The <b>validator</b> proves it does not lie,
+      and it is the only gate left before an edition reaches the reader's own archive: a
+      page that quotes something it cannot find in a source event is not published, though
+      the reader who paid for it still gets to read it.
+    </p>
+    <p>
+      That division is the whole shape of the thing. Everything on this page is about
+      whether the call is worth making. Everything after it is about whether the answer
+      is worth keeping.
+    </p>
+  </div>
+</section>
+
+<footer class="end">
+  <p>
+    Sources: <code>generator/…/nostr/Readiness.kt</code>, <code>nostr/ReadinessProbe.kt</code>,
+    <code>nostr/Pull.kt</code>, <code>Press.kt</code>, <code>Main.kt</code>,
+    <code>server/…/press/Editions.kt</code>, <code>press/Routes.kt</code>,
+    <code>web/app.js</code>. Counts and ratios are the readings recorded in
+    <code>AGENTS.md</code> on 2026-08-17 and 2026-08-18 — re-measure before trusting them.
+  </p>
+</footer>
+
+</div>
