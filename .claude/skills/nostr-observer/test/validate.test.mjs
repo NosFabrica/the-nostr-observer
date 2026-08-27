@@ -129,12 +129,23 @@ test('resolve encodes a cited event id as a jumble.social nevent permalink', () 
   const writer = `https://jumble.social/notes/${EVENT_ID}`
   const { html, changes } = resolve(`<a href="${writer}">source</a>`, corpus)
   const canonical = toPermalink(EVENT_ID)
-  assert.equal(html, `<a href="${canonical}">source</a>`)
+  assert.match(html, new RegExp(`href="${canonical}"`))
+  assert.match(html, /target="_blank"/)
+  assert.match(html, /rel="[^"]*noopener/)
   assert.deepEqual(changes.map((c) => c.kind), ['permalink'])
   // A leftover njump.me hex URL is upgraded the same way, so an old page
   // still ships rather than having every citation unwrapped.
   const legacy = resolve(`<a href="https://njump.me/${EVENT_ID}">source</a>`, corpus)
-  assert.equal(legacy.html, `<a href="${canonical}">source</a>`)
+  assert.match(legacy.html, new RegExp(`href="${canonical}"`))
+  assert.match(legacy.html, /target="_blank"/)
+})
+
+test('a permalink already in canonical form still opens in a new tab', () => {
+  const canonical = toPermalink(EVENT_ID)
+  const { html, changes } = resolve(`<a href="${canonical}">source</a>`, corpus)
+  assert.match(html, /target="_blank"/)
+  assert.match(html, /rel="[^"]*noopener/)
+  assert.deepEqual(changes.map((c) => c.kind), [])
 })
 
 test('resolve then validate leaves nothing for validate to complain about', () => {

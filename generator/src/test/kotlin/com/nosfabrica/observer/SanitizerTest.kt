@@ -62,6 +62,14 @@ class SanitizerTest {
     }
 
     @Test
+    fun `permalinks open in a new tab`() {
+        val id = "a".repeat(64)
+        val r = clean("""<a href="https://njump.me/$id">source</a>""")
+        assertTrue(r.html.contains("target=\"_blank\""), "the paper stays put")
+        assertTrue(r.html.contains("noopener"), "the new tab must not get window.opener")
+    }
+
+    @Test
     fun `removes at-import and remote url from the stylesheet`() {
         val r =
             sanitizer.sanitize(

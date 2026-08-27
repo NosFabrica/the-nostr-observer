@@ -26,12 +26,27 @@ import { fromNevent } from './nostr.mjs'
 import { tags, attributes } from './html.mjs'
 
 /**
- * Event id from a permalink the writer is allowed to cite.
- *
- * The writer writes jumble.social/notes/<hex>. resolve encodes the nevent.
- * A leftover njump.me hex URL is upgraded the same way. An already-encoded
- * jumble nevent is recognised so a second pass is a no-op.
+ * Jumble is a source citation, not a page the paper should be replaced by.
+ * `noopener` stops the opened tab from reaching `window.opener`.
  */
+export function openInNewTab (raw) {
+  let tag = raw
+  const attrs = attributes(raw)
+  if ((attrs.target || '').toLowerCase() !== '_blank') {
+    tag = 'target' in attrs
+      ? tag.replace(/(\btarget\s*=\s*)("[^"]*"|'[^']*'|[^\s>]+)/i, '$1"_blank"')
+      : tag.replace(/^<a\b/i, '<a target="_blank"')
+  }
+  const rel = new Set((attrs.rel || '').split(/\s+/).filter(Boolean))
+  rel.add('noopener')
+  rel.add('noreferrer')
+  const next = [...rel].join(' ')
+  tag = 'rel' in attributes(tag)
+    ? tag.replace(/(\brel\s*=\s*)("[^"]*"|'[^']*'|[^\s>]+)/i, `$1"${next}"`)
+    : tag.replace(/^<a\b/i, `<a rel="${next}"`)
+  return tag
+}
+
 function citedEventId (href) {
   const jumble = permalinkTarget(href)
   if (jumble) return jumble
@@ -113,11 +128,19 @@ export function resolve (html, corpus) {
     if (close === -1) continue
     if (id && eventIds.has(id)) {
       const canonical = toPermalink(id)
-      if (url === canonical) continue
-      out = out.slice(0, anchor.start)
-        + anchor.raw.replace(/(\bhref\s*=\s*)("[^"]*"|'[^']*'|[^\s>]+)/i, `$1"${canonical}"`)
-        + out.slice(anchor.end)
-      changes.push({ kind: 'permalink', detail: `${url} -> ${canonical}` })
+      let tag = anchor.raw
+      if (url !== canonical) {
+        tag = tag.replace(/(\bhref\s*=\s*)("[^"]*"|'[^']*'|[^\s>]+)/i, `$1"${canonical}"`)
+      }
+      // The paper stays put; Jumble is a citation, not a destination that
+      // replaces the edition. A writer who forgets target=_blank still gets it.
+      tag = openInNewTab(tag)
+      if (tag !== anchor.raw) {
+        out = out.slice(0, anchor.start) + tag + out.slice(anchor.end)
+        if (url !== canonical) {
+          changes.push({ kind: 'permalink', detail: `${url} -> ${canonical}` })
+        }
+      }
       continue
     }
     out = out.slice(0, anchor.start) + out.slice(anchor.end, close) + out.slice(close + 4)

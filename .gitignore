@@ -23,8 +23,11 @@ local.properties
 
 # Runtime data
 data/
-# Skill run output (corpus, digest, editions)
+# Printed papers plus corpus/digest (every run)
+editions/
+# The public shelf — selected papers only, staged for Vercel
 dist/
+.vercel/
 *.db
 *.sqlite
 *.sqlite3

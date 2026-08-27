@@ -4,16 +4,16 @@
  *
  * Tokens and primitives, not a layout. The generator composes the page out of
  * these each morning; the point of the file is that it never has to reinvent a
- * palette, a type scale, or the dark-theme handling.
+ * palette, a type scale, or the newsprint.
  *
- * THEMES: three states, not two. An explicit choice stamps data-theme on <html>;
- * the default "system" setting stamps nothing, so prefers-color-scheme is the
- * only separator. Every colour is defined on bare :root first and only
- * REDEFINED in the other two blocks — a colour whose sole definition sits behind
- * a media query renders one theme's text on the other theme's ground.
+ * THEME: one. The paper is cream stock, always. Following prefers-color-scheme
+ * turned the same edition into a night mode in some browsers and a newspaper
+ * in others. color-scheme: light keeps the chrome (scrollbars, form controls)
+ * on the same side. There is no dark theme. Do not add one.
  */
 
 :root {
+  color-scheme: light;
   --paper: #FAF8F3;
   --paper-2: #F2EFE8;
   --ink: #16121B;
@@ -32,40 +32,6 @@
   --body: Georgia, "Liberation Serif", "Times New Roman", Times, serif;
   --util: "Helvetica Neue", Helvetica, Arial, "Liberation Sans", sans-serif;
   --mono: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --paper: #131017;
-    --paper-2: #1B1721;
-    --ink: #EDE7E0;
-    --ink-2: #B4ABBB;
-    --ink-3: #928A99;
-    --rule: #3B3444;
-    --rule-soft: #2A2432;
-    --accent: #C6A2E8;
-    --spot: #E38375;
-    --reverse-bg: #241E2E;
-    --reverse-ink: #F3EEEA;
-    --reverse-ink-2: #B0A5BC;
-  --reverse-spot: #E38375;
-    --reverse-spot: #E38375;
-  }
-}
-
-:root[data-theme="dark"] {
-  --paper: #131017;
-  --paper-2: #1B1721;
-  --ink: #EDE7E0;
-  --ink-2: #B4ABBB;
-  --ink-3: #928A99;
-  --rule: #3B3444;
-  --rule-soft: #2A2432;
-  --accent: #C6A2E8;
-  --spot: #E38375;
-  --reverse-bg: #241E2E;
-  --reverse-ink: #F3EEEA;
-  --reverse-ink-2: #B0A5BC;
 }
 
 * { box-sizing: border-box; }
@@ -282,11 +248,11 @@ q { quotes: "“" "”"; }
 
 /* Reverse panel — for the one thing on the page that should stop the reader.
  *
- * IT IS DARK IN BOTH THEMES, which is why it gets its own accent. `--spot` is
- * tuned against the PAGE's ground, so in the light theme it is a deep red for
- * cream paper — and printing that on the reverse panel's near-black put the
- * kicker at 2.45:1, on every story that had one. Measured, not noticed: it
- * reads as "small red caps" until you check it. */
+ * IT IS DARK ON PURPOSE, which is why it gets its own accent. `--spot` is
+ * tuned against the PAGE's cream, so it is a deep red for newsprint — and
+ * printing that on the reverse panel's near-black put the kicker at 2.45:1,
+ * on every story that had one. Measured, not noticed: it reads as "small red
+ * caps" until you check it. */
 .reverse { background: var(--reverse-bg); color: var(--reverse-ink); padding: 26px; }
 .reverse h2, .reverse h3 { color: var(--reverse-ink); }
 .reverse .dek, .reverse .byline { color: var(--reverse-ink-2); }

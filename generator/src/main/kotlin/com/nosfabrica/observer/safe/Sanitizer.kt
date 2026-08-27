@@ -113,6 +113,7 @@ class Sanitizer(
 
         val cleanedBody = Cleaner(safelist()).clean(doc).body()
         cleanInlineStyles(cleanedBody, removed)
+        openCitationsInNewTab(cleanedBody)
 
         return Result(rebuild(title, house, css, cleanedBody.html()), removed)
     }
@@ -172,6 +173,18 @@ class Sanitizer(
             if (cited != null && (corpusEventIds.isEmpty() || cited in corpusEventIds)) continue
             removed.add("link to ${href.take(60)} (unwrapped to text)")
             a.unwrap()
+        }
+    }
+
+    /**
+     * A citation is a source, not a page that should replace the edition.
+     * Whatever survived [unwrapExternalLinks] is a permalink; send it to a
+     * new tab and cut `window.opener`.
+     */
+    private fun openCitationsInNewTab(body: Element) {
+        for (a in body.select("a[href]")) {
+            a.attr("target", "_blank")
+            a.attr("rel", "noopener noreferrer")
         }
     }
 
