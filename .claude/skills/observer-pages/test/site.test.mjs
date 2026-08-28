@@ -6,6 +6,10 @@ import { join } from 'node:path'
 import {
   parseName,
   headlineOf,
+  dekOf,
+  firstImageOf,
+  socialMetaBlock,
+  withSocialMeta,
   formatDate,
   matchSelectors,
   papersIn,
@@ -16,6 +20,7 @@ import {
   renderIndex,
   withFavicon,
   localToday,
+  PUBLIC_ORIGIN,
 } from '../scripts/site.mjs'
 
 function paper (file, headline) {
@@ -53,6 +58,44 @@ test('headlineOf takes the first h2, not the masthead', () => {
     headlineOf(paper('x', 'In Goma, Life Without Banks Turns to Bitcoin')),
     'In Goma, Life Without Banks Turns to Bitcoin',
   )
+})
+
+test('headlineOf prefers lead-head over an earlier section h2', () => {
+  const html = `<!doctype html><html><body>
+    <h2>Gazette</h2>
+    <h2 class="main-head">The Real Lead</h2>
+    <h2 class="lead-head">A Secondary Lead</h2>
+  </body></html>`
+  assert.equal(headlineOf(html), 'The Real Lead')
+})
+
+test('withSocialMeta stamps og and twitter tags from the lead story', () => {
+  const html = `<!doctype html><html><head><title>T</title></head><body>
+    <h2 class="lead-head">Robotics Fleet Floods Relays</h2>
+    <p class="dek">An accidental signaling proof.</p>
+    <img src="https://example.test/photo.jpg" alt="x">
+  </body></html>`
+  const out = withSocialMeta(html, {
+    file: 'observer-2026-08-28-5FE9EE.html',
+    date: '2026-08-28',
+    code: '5FE9EE',
+    headline: 'Robotics Fleet Floods Relays',
+  })
+  assert.ok(out.includes(`property="og:url" content="${PUBLIC_ORIGIN}/observer-2026-08-28-5FE9EE.html"`))
+  assert.ok(out.includes('property="og:title" content="Robotics Fleet Floods Relays"'))
+  assert.ok(out.includes('property="og:description" content="An accidental signaling proof."'))
+  assert.ok(out.includes('property="og:image" content="https://example.test/photo.jpg"'))
+  assert.ok(out.includes('name="twitter:card" content="summary_large_image"'))
+})
+
+test('socialMetaBlock falls back to the favicon when there is no art', () => {
+  const block = socialMetaBlock({
+    headline: 'A quiet day',
+    description: 'Nothing much happened.',
+    url: `${PUBLIC_ORIGIN}/observer-2026-08-22-D8C3EA.html`,
+    image: `${PUBLIC_ORIGIN}/favicon.svg`,
+  })
+  assert.ok(block.includes(`${PUBLIC_ORIGIN}/favicon.svg`))
 })
 
 test('formatDate is UTC, so evening in the Americas does not slip the day', () => {

@@ -138,6 +138,14 @@ change from day to day — this is a newspaper, not a template.
 Friday, August 28, 2026`, same form as the folio's centred span. The code stays
 in the folio only.
 
+**Add Open Graph and Twitter Card meta tags** after `<title>` so link previews
+work when the paper is shared. `og:title` / `twitter:title` are the lead
+headline; descriptions are the lead dek; `og:image` / `twitter:image` are the
+first resolved photograph (or `https://thenostrobserver.vercel.app/favicon.svg`
+if the edition has no art). `og:url` is
+`https://thenostrobserver.vercel.app/observer-<YYYY-MM-DD>-<code>.html`. See
+the Output section in `reference/editorial.md` for the full list.
+
 **Pictures go in as their id — `<img src="art-3">`, never as a URL.** Step 5
 resolves them. This is not a formality: a URL you compose is indistinguishable
 from one you invented, and citing ids makes a fabricated picture structurally

@@ -21,6 +21,7 @@ export const EDITION_RE = /^observer-(\d{4}-\d{2}-\d{2})-([0-9A-Fa-f]+)\.html$/
 const SITE_FILES = new Set(['index.html', 'vercel.json', 'favicon.svg'])
 const FAVICON_SRC = join(dirname(fileURLToPath(import.meta.url)), '..', 'favicon.svg')
 export const FAVICON_LINK = '<link rel="icon" href="/favicon.svg" type="image/svg+xml">'
+export const PUBLIC_ORIGIN = 'https://thenostrobserver.vercel.app'
 
 export function localToday (now = new Date()) {
   const y = now.getFullYear()
@@ -60,6 +61,10 @@ function decodeEntities (text) {
 }
 
 export function headlineOf (html) {
+  for (const h of html.matchAll(/<h[12]\b[^>]*\bclass=["'][^"']*\b(lead-head|main-head)\b[^"']*["'][^>]*>([\s\S]*?)<\/h[12]>/gi)) {
+    const text = decodeEntities(stripTags(h[2])).replace(/\s+/g, ' ').trim()
+    if (text) return text
+  }
   const h2 = html.match(/<h2\b[^>]*>([\s\S]*?)<\/h2>/i)
   if (h2) {
     const text = decodeEntities(stripTags(h2[1])).replace(/\s+/g, ' ').trim()
@@ -71,6 +76,45 @@ export function headlineOf (html) {
     if (text) return text
   }
   return 'Untitled edition'
+}
+
+export function dekOf (html) {
+  const dek = html.match(/<(?:p|div)\b[^>]*\bclass=["'][^"']*\bdek\b[^"']*["'][^>]*>([\s\S]*?)<\/(?:p|div)>/i)
+  if (dek) {
+    const text = decodeEntities(stripTags(dek[1])).replace(/\s+/g, ' ').trim()
+    if (text) return text
+  }
+  return ''
+}
+
+export function firstImageOf (html) {
+  const img = html.match(/<img\b[^>]*\bsrc=["'](https:[^"']+)["']/i)
+  return img ? img[1] : `${PUBLIC_ORIGIN}/favicon.svg`
+}
+
+export function socialMetaBlock ({ headline, description, url, image }) {
+  const desc = description || headline
+  const imageUrl = image || `${PUBLIC_ORIGIN}/favicon.svg`
+  return [
+    `<meta name="description" content="${escapeHtml(desc)}">`,
+    `<meta property="og:type" content="article">`,
+    `<meta property="og:site_name" content="The Nostr Observer">`,
+    `<meta property="og:title" content="${escapeHtml(headline)}">`,
+    `<meta property="og:description" content="${escapeHtml(desc)}">`,
+    `<meta property="og:url" content="${escapeHtml(url)}">`,
+    `<meta property="og:image" content="${escapeHtml(imageUrl)}">`,
+    `<meta name="twitter:card" content="summary_large_image">`,
+    `<meta name="twitter:title" content="${escapeHtml(headline)}">`,
+    `<meta name="twitter:description" content="${escapeHtml(desc)}">`,
+    `<meta name="twitter:image" content="${escapeHtml(imageUrl)}">`,
+  ].join('\n  ')
+}
+
+export function stripSocialMeta (html) {
+  return html
+    .replace(/^\s*<meta\b[^>]*\bname=["']description["'][^>]*>\s*$/gim, '')
+    .replace(/^\s*<meta\b[^>]*\bproperty=["']og:[^"']+["'][^>]*>\s*$/gim, '')
+    .replace(/^\s*<meta\b[^>]*\bname=["']twitter:[^"']+["'][^>]*>\s*$/gim, '')
 }
 
 export function formatDate (iso) {
@@ -265,6 +309,22 @@ export function withFavicon (html) {
   return html
 }
 
+export function withSocialMeta (html, paper) {
+  const headline = paper.headline || headlineOf(html)
+  const description = dekOf(html)
+  const url = `${PUBLIC_ORIGIN}/${paper.file}`
+  const image = firstImageOf(html)
+  const block = socialMetaBlock({ headline, description, url, image })
+  const stripped = stripSocialMeta(html)
+  if (/<\/title>/i.test(stripped)) {
+    return stripped.replace(/<\/title>/i, `</title>\n  ${block}`)
+  }
+  if (/<head[^>]*>/i.test(stripped)) {
+    return stripped.replace(/<head([^>]*)>/i, `<head$1>\n  ${block}`)
+  }
+  return stripped
+}
+
 export function writeSite (distDir) {
   mkdirSync(distDir, { recursive: true })
   const papers = papersIn(distDir)
@@ -273,7 +333,7 @@ export function writeSite (distDir) {
   copyFileSync(FAVICON_SRC, join(distDir, 'favicon.svg'))
   for (const paper of papers) {
     const path = join(distDir, paper.file)
-    const stamped = withFavicon(readFileSync(path, 'utf8'))
+    const stamped = withSocialMeta(withFavicon(readFileSync(path, 'utf8')), paper)
     writeFileSync(path, stamped)
   }
   return papers

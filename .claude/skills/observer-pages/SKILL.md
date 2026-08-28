@@ -79,6 +79,10 @@ that is not an edition — usually `corpus.json`. `favicon.svg` is site
 furniture and is allowed. Fix junk before Vercel sees the folder. Do not
 pass `--force`. Do not point Vercel at `editions/`.
 
+`add` and `index` stamp each edition with Open Graph and Twitter Card meta
+tags (canonical URL, lead headline, dek, first photograph) so link previews
+work on the public shelf.
+
 Local preview, optional:
 
 ```bash

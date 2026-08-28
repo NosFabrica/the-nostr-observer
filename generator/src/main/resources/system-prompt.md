@@ -262,3 +262,26 @@ The `<title>` is the date, not the edition code: `The Nostr Observer — Tuesday
 August 18, 2026`. Use the same date string as the folio's centred span — day of
 the week, month, day, year. The edition code belongs on the page in the folio,
 not in the document title.
+
+Add link-preview meta tags in `<head>`, immediately after `<title>`:
+
+    <meta name="description" content="…">
+    <meta property="og:type" content="article">
+    <meta property="og:site_name" content="The Nostr Observer">
+    <meta property="og:title" content="…">
+    <meta property="og:description" content="…">
+    <meta property="og:url" content="https://thenostrobserver.vercel.app/observer-YYYY-MM-DD-CODE.html">
+    <meta property="og:image" content="…">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="…">
+    <meta name="twitter:description" content="…">
+    <meta name="twitter:image" content="…">
+
+`og:title` and `twitter:title` are the lead headline — the centred story above
+the fold, not the masthead and not the date. It is the first `<h2>` with class
+`lead-head` or `main-head` in the markup. `og:description`, `twitter:description`,
+and `name="description"` are the lead dek. `og:image` and `twitter:image` are
+the resolved URL of the first photograph on the page; if there is no art, use
+`https://thenostrobserver.vercel.app/favicon.svg`. Put the edition filename in
+`og:url`. After art ids are resolved to real URLs, the image meta tags must
+carry those same URLs.
