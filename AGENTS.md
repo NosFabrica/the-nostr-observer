@@ -624,8 +624,10 @@ timeline is whether `nip85.nosfabrica.com` can onboard new observers on demand.
 ## Conventions
 
 Mirror vespa-relay: Kotlin, Gradle version catalog, spotless + ktlint, git hooks
-that run `spotlessCheck` pre-commit and tests pre-push. Run `spotlessApply`
-before committing or the hook will reject you on formatting alone.
+that run `spotlessCheck` pre-commit and tests pre-push. Run
+`./tools/install-hooks.sh` once per clone to put them in `.git/hooks`, and
+`./gradlew spotlessApply` before committing or the hook will reject you on
+formatting alone.
 
 Comments explain *why*, and especially why-not — a comment that restates the code
 is noise, a comment recording the thing that cost a day is the point. Stacked

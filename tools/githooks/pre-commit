@@ -1,0 +1,5 @@
+#!/bin/sh
+# Formatting alone fails CI. Catch it here so a push never lights red for ktlint.
+set -e
+cd "$(git rev-parse --show-toplevel)"
+./gradlew spotlessCheck --quiet

@@ -205,6 +205,22 @@ export function streamWriterUrl (eventId) {
   return `https://zap.stream/stream/${id}`
 }
 
+export const CLASSIFIED_KIND = 30402
+
+/** Canonical Shopstr listing page for a classified. */
+export function toShopstrUrl (event) {
+  const d = tagValue(event, 'd')
+  if (!d || event.kind !== CLASSIFIED_KIND) throw new Error('Not a classified address')
+  return `https://shopstr.store/listing/${toNaddr({ kind: CLASSIFIED_KIND, pubkey: event.pubkey, identifier: d })}`
+}
+
+/** Writer form: event id hex. resolve.mjs encodes the naddr afterwards. */
+export function classifiedWriterUrl (eventId) {
+  const id = String(eventId || '').toLowerCase()
+  if (!/^[0-9a-f]{64}$/.test(id)) throw new Error(`Not an event id: ${String(eventId).slice(0, 16)}`)
+  return `https://shopstr.store/listing/${id}`
+}
+
 /** `nevent1…` to lowercase event-id hex. Throws if it is not an nevent that names an id. */
 export function fromNevent (input) {
   const value = String(input || '').trim()

@@ -89,6 +89,24 @@ object Fixtures {
                 ),
         )
 
+    val LISTING_ID = "dd44".repeat(16)
+    const val LISTING_D = "tallow-bars"
+
+    fun classified() =
+        event(
+            LISTING_ID,
+            ALICE,
+            "Four bars of rough-cut tallow.",
+            kind = 30402,
+            tags =
+                listOf(
+                    listOf("d", LISTING_D),
+                    listOf("title", "4 Bars Rough Cut Tallow"),
+                    listOf("price", "35", "USD"),
+                    listOf("status", "active"),
+                ),
+        )
+
     /**
      * A corpus of one desk.
      *

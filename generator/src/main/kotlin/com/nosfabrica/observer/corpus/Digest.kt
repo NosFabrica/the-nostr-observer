@@ -1,5 +1,6 @@
 package com.nosfabrica.observer.corpus
 
+import com.nosfabrica.observer.nostr.Classifieds
 import com.nosfabrica.observer.nostr.Corpus
 import com.nosfabrica.observer.nostr.Desk
 import com.nosfabrica.observer.nostr.Names
@@ -336,6 +337,12 @@ class Digest(
         // advertises a sold item sends readers after something that is gone.
         event.value("status")?.takeIf { it.isNotBlank() }?.let { sb.append("STATUS: ").append(it.take(20)).append("\n") }
         event.value("condition")?.takeIf { it.isNotBlank() }?.let { sb.append("CONDITION: ").append(it.take(20)).append("\n") }
+        // Classifieds.listed / Sanitizer / Validator only allowlist events with
+        // a `d` tag; printing a listing URL without one invites a link the
+        // sanitizer unwraps before publish.
+        if (!event.value("d").isNullOrBlank()) {
+            sb.append("listing: ").append(Classifieds.writerUrl(event.id)).append("\n")
+        }
     }
 
     /**

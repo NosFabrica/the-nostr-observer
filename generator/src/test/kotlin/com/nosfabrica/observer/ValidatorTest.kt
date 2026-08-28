@@ -1,5 +1,6 @@
 package com.nosfabrica.observer
 
+import com.nosfabrica.observer.nostr.Classifieds
 import com.nosfabrica.observer.nostr.Desk
 import com.nosfabrica.observer.nostr.Streams
 import com.nosfabrica.observer.safe.Validator
@@ -118,6 +119,15 @@ class ValidatorTest {
     }
 
     @Test
+    fun `accepts a verified shopstr listing link after encoding`() {
+        val listing = Fixtures.classified()
+        val validator = Validator(Fixtures.corpus(listOf(listing), Desk.CLASSIFIEDS), Fixtures.art())
+        val canonical = Classifieds.canonicalUrl(listing)
+        val r = validator.validate("""<html><body><a href="$canonical">4 Bars Rough Cut Tallow</a></body></html>""")
+        assertTrue(r.ok, r.summary())
+    }
+
+    @Test
     fun `rejects a zap stream url copied from a post body`() {
         val invented =
             Streams.canonicalUrl(
@@ -131,6 +141,25 @@ class ValidatorTest {
             )
         val stream = Fixtures.liveStream()
         val validator = Validator(Fixtures.corpus(listOf(stream), Desk.LIVE), Fixtures.art())
+        val r = validator.validate("""<html><body><a href="$invented">fake</a></body></html>""")
+        assertFalse(r.ok)
+        assertTrue(r.violations.single().kind == Validator.Kind.LINK)
+    }
+
+    @Test
+    fun `rejects a shopstr url copied from a post body`() {
+        val invented =
+            Classifieds.canonicalUrl(
+                Fixtures.event(
+                    "f".repeat(64),
+                    "ee55".repeat(16),
+                    "",
+                    kind = 30402,
+                    tags = listOf(listOf("d", "fake-listing")),
+                ),
+            )
+        val listing = Fixtures.classified()
+        val validator = Validator(Fixtures.corpus(listOf(listing), Desk.CLASSIFIEDS), Fixtures.art())
         val r = validator.validate("""<html><body><a href="$invented">fake</a></body></html>""")
         assertFalse(r.ok)
         assertTrue(r.violations.single().kind == Validator.Kind.LINK)

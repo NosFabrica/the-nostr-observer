@@ -21,7 +21,7 @@
 
 import { readFileSync, writeFileSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
-import { permalinkTarget, toPermalink, streamLinkTarget, streamWriterTarget, toStreamLink } from './validate.mjs'
+import { permalinkTarget, toPermalink, streamLinkTarget, streamWriterTarget, toStreamLink, listingLinkTarget, listingWriterTarget, toListingLink } from './validate.mjs'
 import { fromNevent } from './nostr.mjs'
 import { tags, attributes } from './html.mjs'
 
@@ -115,14 +115,18 @@ export function resolve (html, corpus) {
 
   // --- links to the open web ----------------------------------------------
   // The paper prints addresses; it does not make them clickable — except
-  // source citations and verified zap.stream watch links for live streams.
-  // A permalink back to an event we read is rewritten to jumble.social's nevent
-  // URL (the writer cites hex; this is the afterwards). A stream watch link in
-  // writer form is encoded to zap.stream's naddr. Everything else is unwrapped
-  // to its own text. Rebuilt back to front so each edit leaves earlier offsets
-  // untouched.
+  // source citations, verified zap.stream watch links, and verified Shopstr
+  // listing links. A permalink back to an event we read is rewritten to
+  // jumble.social's nevent URL (the writer cites hex; this is the afterwards).
+  // A stream watch link in writer form is encoded to zap.stream's naddr; a
+  // classified listing link likewise to Shopstr's. Everything else is
+  // unwrapped to its own text. Rebuilt back to front so each edit leaves
+  // earlier offsets untouched.
   const streams = new Map(Object.values(corpus.desks).flat()
     .filter((e) => e.kind === 30311)
+    .map((e) => [e.id, e]))
+  const listings = new Map(Object.values(corpus.desks).flat()
+    .filter((e) => e.kind === 30402)
     .map((e) => [e.id, e]))
   const anchors = tags(out, 'a').reverse()
   for (const anchor of anchors) {
@@ -143,6 +147,22 @@ export function resolve (html, corpus) {
         out = out.slice(0, anchor.start) + tag + out.slice(anchor.end)
         if (url !== canonical) {
           changes.push({ kind: 'stream', detail: `${url} -> ${canonical}` })
+        }
+      }
+      continue
+    }
+    const listingId = listingWriterTarget(url, corpus) || listingLinkTarget(url, corpus)
+    if (listingId && listings.has(listingId)) {
+      const canonical = toListingLink(listings.get(listingId))
+      let tag = anchor.raw
+      if (url !== canonical) {
+        tag = tag.replace(/(\bhref\s*=\s*)("[^"]*"|'[^']*'|[^\s>]+)/i, `$1"${canonical}"`)
+      }
+      tag = openInNewTab(tag)
+      if (tag !== anchor.raw) {
+        out = out.slice(0, anchor.start) + tag + out.slice(anchor.end)
+        if (url !== canonical) {
+          changes.push({ kind: 'listing', detail: `${url} -> ${canonical}` })
         }
       }
       continue
@@ -187,12 +207,13 @@ function main () {
   console.log(`  Resolved ${counts.resolved || 0} art id(s).`)
   if (counts.permalink) console.log(`  Encoded ${counts.permalink} permalink(s) to jumble.social.`)
   if (counts.stream) console.log(`  Encoded ${counts.stream} stream watch link(s) to zap.stream.`)
+  if (counts.listing) console.log(`  Encoded ${counts.listing} classified listing link(s) to Shopstr.`)
   if (counts.dropped || counts.unwrapped) {
     console.log('')
     console.log('  CHANGES WORTH READING - each of these is the page trying to do something')
     console.log('  the paper does not do. Look at them before you ship:')
     console.log('')
-    for (const change of changes.filter((c) => c.kind !== 'resolved' && c.kind !== 'permalink')) {
+    for (const change of changes.filter((c) => c.kind !== 'resolved' && c.kind !== 'permalink' && c.kind !== 'stream' && c.kind !== 'listing')) {
       console.log(`  ${change.kind.toUpperCase()}: ${change.detail}`)
     }
   }

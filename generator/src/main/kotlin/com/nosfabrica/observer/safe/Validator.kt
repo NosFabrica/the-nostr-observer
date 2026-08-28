@@ -1,6 +1,7 @@
 package com.nosfabrica.observer.safe
 
 import com.nosfabrica.observer.corpus.Art
+import com.nosfabrica.observer.nostr.Classifieds
 import com.nosfabrica.observer.nostr.Corpus
 import com.nosfabrica.observer.nostr.Streams
 import com.vitorpamplona.quartz.nip01Core.core.Event
@@ -49,14 +50,18 @@ class Validator(
      * the reader. Presence in the corpus is evidence of nothing.
      *
      * So the paper does not link to the open web at all, except permalinks back
-     * to Nostr events we read and verified zap.stream watch links for live
-     * streams in the digest. [Sanitizer] unwraps the rest to plain text; this is
-     * the second line, in case that ever regresses.
+     * to Nostr events we read, verified zap.stream watch links for live streams,
+     * and verified Shopstr listing links for classifieds in the digest.
+     * [Sanitizer] unwraps the rest to plain text; this is the second line, in
+     * case that ever regresses.
      */
     private val corpusEventIds: Set<String> = corpus.all().map { it.id }.toSet()
 
     /** Live streams we read — the only streams a watch link may name. */
     private val liveStreams: List<Event> = Streams.live(corpus)
+
+    /** Classifieds we read — the only listings a Shopstr link may name. */
+    private val listings: List<Event> = Classifieds.listed(corpus)
 
     enum class Kind { QUOTE, IMAGE, LINK }
 
@@ -147,10 +152,12 @@ class Validator(
             if (id != null && id in corpusEventIds) continue
             val streamId = Streams.streamLinkTarget(href, liveStreams)
             if (streamId != null && liveStreams.any { it.id.equals(streamId, ignoreCase = true) }) continue
+            val listingId = Classifieds.listingLinkTarget(href, listings)
+            if (listingId != null && listings.any { it.id.equals(listingId, ignoreCase = true) }) continue
             violations.add(
                 Violation(
                     Kind.LINK,
-                    "only source citations and verified zap.stream watch links may be links",
+                    "only source citations, verified zap.stream watch links, and verified Shopstr listing links may be links",
                     href.take(120),
                 ),
             )

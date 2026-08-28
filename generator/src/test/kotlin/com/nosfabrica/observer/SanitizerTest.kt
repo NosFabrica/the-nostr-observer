@@ -1,5 +1,6 @@
 package com.nosfabrica.observer
 
+import com.nosfabrica.observer.nostr.Classifieds
 import com.nosfabrica.observer.nostr.Streams
 import com.nosfabrica.observer.safe.Sanitizer
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -91,11 +92,40 @@ class SanitizerTest {
     }
 
     @Test
+    fun `keeps a verified shopstr listing link and encodes it`() {
+        val listing = Fixtures.classified()
+        val sanitizer =
+            Sanitizer(
+                Fixtures.art(),
+                emptySet(),
+                emptyMap(),
+                mapOf(listing.id.lowercase() to listing),
+            )
+        val writer = Classifieds.writerUrl(listing.id)
+        val r =
+            sanitizer.sanitize(
+                """<!doctype html><html><head><title>T</title></head><body>
+               <a href="$writer">4 Bars Rough Cut Tallow</a></body></html>""",
+            )
+        assertTrue(r.html.contains("shopstr.store/listing/naddr1"), "writer form is encoded to naddr")
+        assertTrue(r.html.contains("4 Bars Rough Cut Tallow"), "the title stays linked")
+        assertTrue(r.clean, r.removed.toString())
+    }
+
+    @Test
     fun `unwraps a zap stream url that names no stream we read`() {
         val writer = Streams.writerUrl("f".repeat(64))
         val r = clean("""<p><a href="$writer">fake stream</a></p>""")
         assertFalse(r.html.contains("<a "), "no anchor survived")
         assertTrue(r.html.contains("fake stream"))
+    }
+
+    @Test
+    fun `unwraps a shopstr url that names no listing we read`() {
+        val writer = Classifieds.writerUrl("f".repeat(64))
+        val r = clean("""<p><a href="$writer">fake listing</a></p>""")
+        assertFalse(r.html.contains("<a "), "no anchor survived")
+        assertTrue(r.html.contains("fake listing"))
     }
 
     @Test

@@ -7,7 +7,7 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { toHex, toNpub, shortNpub, toNevent, fromNevent, toNaddr, fromNaddr, toZapStreamUrl, streamWriterUrl, tagValue, tagsNamed } from '../scripts/nostr.mjs'
+import { toHex, toNpub, shortNpub, toNevent, fromNevent, toNaddr, fromNaddr, toZapStreamUrl, streamWriterUrl, toShopstrUrl, classifiedWriterUrl, tagValue, tagsNamed } from '../scripts/nostr.mjs'
 
 // The NIP-19 worked example.
 const HEX = '3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d'
@@ -76,4 +76,15 @@ test('an naddr round-trips a live stream address', () => {
   const event = { kind: 30311, pubkey, tags: [['d', identifier]] }
   assert.equal(toZapStreamUrl(event), `https://zap.stream/${naddr}`)
   assert.equal(streamWriterUrl('a'.repeat(64)), `https://zap.stream/stream/${'a'.repeat(64)}`)
+})
+
+test('an naddr round-trips a classified listing address', () => {
+  const pubkey = 'aa11'.repeat(16)
+  const identifier = 'tallow-bars'
+  const naddr = toNaddr({ kind: 30402, pubkey, identifier })
+  assert.match(naddr, /^naddr1/)
+  assert.deepEqual(fromNaddr(naddr), { kind: 30402, pubkey, identifier })
+  const event = { kind: 30402, pubkey, tags: [['d', identifier]] }
+  assert.equal(toShopstrUrl(event), `https://shopstr.store/listing/${naddr}`)
+  assert.equal(classifiedWriterUrl('b'.repeat(64)), `https://shopstr.store/listing/${'b'.repeat(64)}`)
 })

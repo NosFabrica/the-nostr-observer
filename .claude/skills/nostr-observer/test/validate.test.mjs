@@ -10,7 +10,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync, existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { check, quotedText, attributes, normalize, isQuoted, PERMALINK, toPermalink, permalinkTarget, streamLinkTarget, toStreamLink } from '../scripts/validate.mjs'
+import { check, quotedText, attributes, normalize, isQuoted, PERMALINK, toPermalink, permalinkTarget, streamLinkTarget, toStreamLink, listingLinkTarget, toListingLink } from '../scripts/validate.mjs'
 import { resolve } from '../scripts/resolve.mjs'
 
 const EVENT_ID = 'a'.repeat(64)
@@ -20,6 +20,10 @@ const STREAM_ID = 'e'.repeat(64)
 const STREAM_PK = 'cf45a6ba1363ad7ed213a078e710d24115ae721c9b47bd1ebf4458eaefb4c2a5'
 const STREAM_D = '537a365c-f1ec-44ac-af10-22d14a7319fb'
 
+const LISTING_ID = '11'.repeat(32)
+const LISTING_PK = 'aa11'.repeat(16)
+const LISTING_D = 'tallow-bars'
+
 const corpus = {
   desks: {
     notes: [
@@ -28,6 +32,9 @@ const corpus = {
     ],
     live: [
       { id: STREAM_ID, kind: 30311, pubkey: STREAM_PK, tags: [['d', STREAM_D], ['title', 'NoGood Radio'], ['status', 'live']], content: '' },
+    ],
+    classifieds: [
+      { id: LISTING_ID, kind: 30402, pubkey: LISTING_PK, tags: [['d', LISTING_D], ['title', '4 Bars Rough Cut Tallow'], ['price', '35', 'USD']], content: '' },
     ],
   },
   control: [{ id: 'c'.repeat(64), pubkey: 'cc', content: 'Only the anonymous read ever saw this sentence.' }],
@@ -172,6 +179,25 @@ test('a verified zap.stream watch link is allowed after resolve', () => {
 test('a zap.stream URL copied from a post body is still refused', () => {
   const invented = toStreamLink({ kind: 30311, pubkey: 'd'.repeat(64), tags: [['d', 'fake-stream']] })
   assert.deepEqual(kinds(`<a href="${invented}">listen</a>`), ['LINK'])
+})
+
+test('a verified Shopstr listing link is allowed after resolve', () => {
+  const writer = `https://shopstr.store/listing/${LISTING_ID}`
+  const canonical = toListingLink(corpus.desks.classifieds[0])
+  const { html, changes } = resolve(`<a href="${writer}">4 Bars Rough Cut Tallow</a>`, corpus)
+  assert.match(html, new RegExp(`href="${canonical.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`))
+  assert.match(html, /target="_blank"/)
+  assert.deepEqual(changes.map((c) => c.kind), ['listing'])
+  assert.deepEqual(check(html, corpus).violations, [])
+  assert.equal(listingLinkTarget(canonical, corpus), LISTING_ID)
+  assert.equal(listingLinkTarget('https://shopstr.store/listing/' + 'a'.repeat(64), corpus), null)
+  assert.deepEqual(kinds(`<a href="${writer}">4 Bars Rough Cut Tallow</a>`), ['LINK'],
+    'writer form must be encoded before validate')
+})
+
+test('a shopstr URL copied from a post body is still refused', () => {
+  const invented = toListingLink({ kind: 30402, pubkey: 'd'.repeat(64), tags: [['d', 'fake-listing']] })
+  assert.deepEqual(kinds(`<a href="${invented}">buy</a>`), ['LINK'])
 })
 
 test('resolve then validate leaves nothing for validate to complain about', () => {

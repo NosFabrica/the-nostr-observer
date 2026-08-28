@@ -1,6 +1,7 @@
 package com.nosfabrica.observer.safe
 
 import com.nosfabrica.observer.corpus.Art
+import com.nosfabrica.observer.nostr.Classifieds
 import com.nosfabrica.observer.nostr.Streams
 import com.vitorpamplona.quartz.nip01Core.core.Event
 import org.jsoup.Jsoup
@@ -49,6 +50,13 @@ class Sanitizer(
      * anything else on zap.stream is unwrapped like any other open-web URL.
      */
     private val liveStreams: Map<String, Event> = emptyMap(),
+    /**
+     * Classifieds this edition read, keyed by event id.
+     *
+     * A listing link in writer form is kept and encoded to Shopstr's naddr;
+     * anything else on shopstr.store is unwrapped like any other open-web URL.
+     */
+    private val classifieds: Map<String, Event> = emptyMap(),
     /**
      * The house stylesheet, which SHIPS WITH THE PAGE.
      *
@@ -165,8 +173,9 @@ class Sanitizer(
 
     /**
      * The paper prints addresses; it does not make them clickable — except
-     * permalinks back to a source event and verified zap.stream watch links for
-     * live streams in the digest.
+     * permalinks back to a source event, verified zap.stream watch links for
+     * live streams, and verified Shopstr listing links for classifieds in the
+     * digest.
      *
      * A URL in the corpus is not evidence that the URL is safe — the corpus is
      * where the attacker writes. Anything that is not one of those exceptions
@@ -178,6 +187,7 @@ class Sanitizer(
         removed: MutableList<String>,
     ) {
         val streams = liveStreams.values.toList()
+        val listings = classifieds.values.toList()
         for (a in doc.select("a[href]").toList()) {
             val href = a.attr("href")
             if (!href.startsWith("http", ignoreCase = true)) continue
@@ -187,6 +197,13 @@ class Sanitizer(
             val stream = streamId?.let { liveStreams[it] }
             if (stream != null) {
                 val canonical = Streams.canonicalUrl(stream)
+                if (href != canonical) a.attr("href", canonical)
+                continue
+            }
+            val listingId = Classifieds.listingLinkTarget(href, listings)
+            val listing = listingId?.let { classifieds[it] }
+            if (listing != null) {
+                val canonical = Classifieds.canonicalUrl(listing)
                 if (href != canonical) a.attr("href", canonical)
                 continue
             }

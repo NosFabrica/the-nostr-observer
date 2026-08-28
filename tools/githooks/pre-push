@@ -1,0 +1,13 @@
+#!/bin/sh
+# Mirror .github/workflows/build.yml closely enough that a green push stays green.
+set -e
+cd "$(git rev-parse --show-toplevel)"
+
+./gradlew build --quiet
+node --test ".claude/skills/*/test/*.test.mjs"
+./tools/sync-skill.sh
+git diff --exit-code -- .claude/skills/nostr-observer/reference \
+  || {
+    echo "pre-push: .claude/skills/nostr-observer/reference is stale — run tools/sync-skill.sh" >&2
+    exit 1
+  }

@@ -652,12 +652,13 @@ class ListingTest {
     fun `a classified carries its price`() {
         val listing =
             Fixtures.event(
-                "s1",
+                Fixtures.LISTING_ID,
                 Fixtures.ALICE,
                 "Two modules, boxed.",
                 kind = 30402,
                 tags =
                     listOf(
+                        listOf("d", Fixtures.LISTING_D),
                         listOf("title", "Super rare Micron memory modules"),
                         listOf("price", "210000", "SATS"),
                         listOf("status", "active"),
@@ -668,6 +669,25 @@ class ListingTest {
         assertTrue(text.contains("PRICE: 210000 SATS"), text)
         assertTrue(text.contains("STATUS: active"), text)
         assertTrue(text.contains("CONDITION: used"), text)
+        assertTrue(text.contains("listing: https://shopstr.store/listing/${Fixtures.LISTING_ID}"), text)
+    }
+
+    @Test
+    fun `a classified without a d tag has no listing url`() {
+        val bare =
+            Fixtures.event(
+                Fixtures.LISTING_ID,
+                Fixtures.ALICE,
+                "Two modules, boxed.",
+                kind = 30402,
+                tags =
+                    listOf(
+                        listOf("title", "Super rare Micron memory modules"),
+                        listOf("price", "210000", "SATS"),
+                    ),
+            )
+        val text = render(Desk.CLASSIFIEDS, bare)
+        assertFalse(text.contains("listing:"), text)
     }
 
     @Test

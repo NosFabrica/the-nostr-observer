@@ -4,6 +4,7 @@ import com.anthropic.models.messages.OutputConfig
 import com.nosfabrica.observer.corpus.Art
 import com.nosfabrica.observer.corpus.ArtDesk
 import com.nosfabrica.observer.corpus.Digest
+import com.nosfabrica.observer.nostr.Classifieds
 import com.nosfabrica.observer.nostr.Corpus
 import com.nosfabrica.observer.nostr.Names
 import com.nosfabrica.observer.nostr.Pull
@@ -328,7 +329,8 @@ class Press(
         val (corpus, art, digest) = gather(observer, until, onStep)
 
         val live = Streams.live(corpus).associateBy { it.id.lowercase() }
-        val sanitizer = Sanitizer(art, corpus.all().map { it.id }.toSet(), live)
+        val classifieds = Classifieds.listed(corpus).associateBy { it.id.lowercase() }
+        val sanitizer = Sanitizer(art, corpus.all().map { it.id }.toSet(), live, classifieds)
 
         // WRITE, THEN OPEN IT.
         //
