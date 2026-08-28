@@ -107,6 +107,24 @@ object Fixtures {
                 ),
         )
 
+    val CALENDAR_ID = "ee55".repeat(16)
+    const val CALENDAR_D = "porto-meetup"
+
+    fun calendarEntry() =
+        event(
+            CALENDAR_ID,
+            ALICE,
+            "Bring a friend.",
+            kind = 31923,
+            tags =
+                listOf(
+                    listOf("d", CALENDAR_D),
+                    listOf("title", "Bitcoin Meetup in Porto"),
+                    listOf("start", "1792105200"),
+                    listOf("start_tzid", "Europe/Lisbon"),
+                ),
+        )
+
     /**
      * A corpus of one desk.
      *

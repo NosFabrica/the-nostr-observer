@@ -23,7 +23,7 @@
 import { readFileSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
 import { tags, attributes as attrsOf, textIn } from './html.mjs'
-import { toNevent, fromNevent, fromNaddr, toZapStreamUrl, LIVE_KIND, toShopstrUrl, CLASSIFIED_KIND, tagValue } from './nostr.mjs'
+import { toNevent, fromNevent, fromNaddr, toZapStreamUrl, LIVE_KIND, toShopstrUrl, CLASSIFIED_KIND, toNjumpCalendarUrl, CALENDAR_KINDS, tagValue } from './nostr.mjs'
 
 function arg (name, fallback = null) {
   const at = process.argv.indexOf(name)
@@ -144,6 +144,9 @@ export const STREAM_NADDR = /^https:\/\/zap\.stream\/(naddr1[0-9a-z]+)(?:[/?#].*
 export const LISTING_WRITER = /^https:\/\/shopstr\.store\/listing\/([0-9a-f]{64})(?:[/?#].*)?$/i
 export const LISTING_NADDR = /^https:\/\/shopstr\.store\/listing\/(naddr1[0-9a-z]+)(?:[/?#].*)?$/i
 
+export const CALENDAR_WRITER = /^https:\/\/njump\.me\/([0-9a-f]{64})(?:[/?#].*)?$/i
+export const CALENDAR_NADDR = /^https:\/\/njump\.me\/(naddr1[0-9a-z]+)(?:[/?#].*)?$/i
+
 /** Live-stream events from the corpus — the only streams a watch link may name. */
 export function liveStreams (corpus) {
   return Object.values(corpus.desks).flat().filter((e) => e.kind === LIVE_KIND && tagValue(e, 'd'))
@@ -152,6 +155,11 @@ export function liveStreams (corpus) {
 /** Classified events from the corpus — the only listings a Shopstr link may name. */
 export function classifiedListings (corpus) {
   return Object.values(corpus.desks).flat().filter((e) => e.kind === CLASSIFIED_KIND && tagValue(e, 'd'))
+}
+
+/** Calendar events from the corpus — the only listings an njump calendar link may name. */
+export function calendarListings (corpus) {
+  return Object.values(corpus.desks).flat().filter((e) => CALENDAR_KINDS.has(e.kind) && tagValue(e, 'd'))
 }
 
 /**
@@ -229,6 +237,47 @@ export function listingWriterTarget (href, corpus) {
 
 export function toListingLink (event) {
   return toShopstrUrl(event)
+}
+
+/**
+ * Event id if `href` is a verified njump calendar link for a listing we read;
+ * otherwise null.
+ *
+ * Two shapes after resolve: canonical naddr, or the writer form
+ * `njump.me/<64-hex>` which resolve encodes. Either way the naddr must decode
+ * to the same kind + pubkey + d-tag as a 31922/31923 in the corpus. An nevent
+ * would freeze one revision of a replaceable event; the naddr is the listing.
+ */
+export function calendarLinkTarget (href, corpus) {
+  const listings = calendarListings(corpus)
+  const naddr = CALENDAR_NADDR.exec(href)
+  if (!naddr) return null
+  try {
+    const { kind, pubkey, identifier } = fromNaddr(naddr[1])
+    if (!CALENDAR_KINDS.has(kind)) return null
+    const event = listings.find((e) =>
+      e.kind === kind &&
+      e.pubkey.toLowerCase() === pubkey.toLowerCase() &&
+      tagValue(e, 'd') === identifier,
+    )
+    return event?.id || null
+  } catch {
+    return null
+  }
+}
+
+/** Writer form, for resolve.mjs only. */
+export function calendarWriterTarget (href, corpus) {
+  const listings = calendarListings(corpus)
+  const byId = new Map(listings.map((e) => [e.id, e]))
+  const writer = CALENDAR_WRITER.exec(href)
+  if (!writer) return null
+  const id = writer[1].toLowerCase()
+  return byId.has(id) ? id : null
+}
+
+export function toCalendarLink (event) {
+  return toNjumpCalendarUrl(event)
 }
 
 // Things there is no sanitizer to strip, so they are refused instead.
@@ -327,6 +376,7 @@ export function check (html, corpus) {
     if (id && eventIds.has(id)) continue
     if (streamLinkTarget(href, corpus)) continue
     if (listingLinkTarget(href, corpus)) continue
+    if (calendarLinkTarget(href, corpus)) continue
     // Presence in the corpus is evidence of NOTHING. An earlier version of
     // this rule allowlisted every URL that appeared in the corpus, on the
     // theory that a link nobody posted must have been invented. The corpus
@@ -334,9 +384,9 @@ export function check (html, corpus) {
     // put that URL on the allowlist, and an injected instruction to link
     // every story to it then passed cleanly — a phishing link under the
     // reader's masthead. So the paper does not link to the open web at all,
-    // except verified zap.stream watch links and Shopstr listing links for
-    // events in the corpus.
-    flag('LINK', 'only source citations, verified zap.stream watch links, and verified Shopstr listing links may be links', href.slice(0, 120))
+    // except verified zap.stream / Shopstr / njump-calendar links for events
+    // in the corpus.
+    flag('LINK', 'only source citations, verified zap.stream watch links, Shopstr listing links, and njump calendar links may be links', href.slice(0, 120))
   }
 
   return { violations, quotes, events: events.length, images: allowedImages.size }

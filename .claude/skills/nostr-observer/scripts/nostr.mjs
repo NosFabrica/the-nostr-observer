@@ -221,6 +221,29 @@ export function classifiedWriterUrl (eventId) {
   return `https://shopstr.store/listing/${id}`
 }
 
+/** NIP-52 calendar — 31922 all-day, 31923 timed. Both are parameterized replaceable. */
+export const CALENDAR_KINDS = new Set([31922, 31923])
+
+/**
+ * Canonical njump page for a calendar listing.
+ *
+ * jumble.social has no calendar view, and an nevent freezes one revision of a
+ * replaceable event. njump with an naddr is the address that stays on the
+ * listing as the organiser updates it.
+ */
+export function toNjumpCalendarUrl (event) {
+  const d = tagValue(event, 'd')
+  if (!d || !CALENDAR_KINDS.has(event.kind)) throw new Error('Not a calendar address')
+  return `https://njump.me/${toNaddr({ kind: event.kind, pubkey: event.pubkey, identifier: d })}`
+}
+
+/** Writer form: event id hex. resolve.mjs encodes the naddr afterwards. */
+export function calendarWriterUrl (eventId) {
+  const id = String(eventId || '').toLowerCase()
+  if (!/^[0-9a-f]{64}$/.test(id)) throw new Error(`Not an event id: ${String(eventId).slice(0, 16)}`)
+  return `https://njump.me/${id}`
+}
+
 /** `nevent1…` to lowercase event-id hex. Throws if it is not an nevent that names an id. */
 export function fromNevent (input) {
   const value = String(input || '').trim()

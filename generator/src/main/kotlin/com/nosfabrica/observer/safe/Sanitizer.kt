@@ -1,6 +1,7 @@
 package com.nosfabrica.observer.safe
 
 import com.nosfabrica.observer.corpus.Art
+import com.nosfabrica.observer.nostr.Calendar
 import com.nosfabrica.observer.nostr.Classifieds
 import com.nosfabrica.observer.nostr.Streams
 import com.vitorpamplona.quartz.nip01Core.core.Event
@@ -57,6 +58,15 @@ class Sanitizer(
      * anything else on shopstr.store is unwrapped like any other open-web URL.
      */
     private val classifieds: Map<String, Event> = emptyMap(),
+    /**
+     * Calendar listings this edition read, keyed by event id.
+     *
+     * A calendar link in writer form (`njump.me/<64-hex>`) is kept and encoded
+     * to an njump naddr — before the ordinary permalink keep, because writer
+     * form shares that host with source citations. Anything else on njump that
+     * is not a verified citation or calendar address is unwrapped.
+     */
+    private val calendars: Map<String, Event> = emptyMap(),
     /**
      * The house stylesheet, which SHIPS WITH THE PAGE.
      *
@@ -174,8 +184,12 @@ class Sanitizer(
     /**
      * The paper prints addresses; it does not make them clickable — except
      * permalinks back to a source event, verified zap.stream watch links for
-     * live streams, and verified Shopstr listing links for classifieds in the
-     * digest.
+     * live streams, verified Shopstr listing links for classifieds, and
+     * verified njump calendar links for Diary & Calendar listings.
+     *
+     * Calendar writer form shares `njump.me/<64-hex>` with ordinary citations,
+     * so it is checked before the permalink keep — otherwise a replaceable
+     * listing ships as bare hex and freezes one revision.
      *
      * A URL in the corpus is not evidence that the URL is safe — the corpus is
      * where the attacker writes. Anything that is not one of those exceptions
@@ -188,11 +202,10 @@ class Sanitizer(
     ) {
         val streams = liveStreams.values.toList()
         val listings = classifieds.values.toList()
+        val calendarListings = calendars.values.toList()
         for (a in doc.select("a[href]").toList()) {
             val href = a.attr("href")
             if (!href.startsWith("http", ignoreCase = true)) continue
-            val cited = Validator.permalinkTarget(href)
-            if (cited != null && (corpusEventIds.isEmpty() || cited in corpusEventIds)) continue
             val streamId = Streams.streamLinkTarget(href, streams)
             val stream = streamId?.let { liveStreams[it] }
             if (stream != null) {
@@ -207,6 +220,15 @@ class Sanitizer(
                 if (href != canonical) a.attr("href", canonical)
                 continue
             }
+            val calendarId = Calendar.calendarLinkTarget(href, calendarListings)
+            val calendar = calendarId?.let { calendars[it] }
+            if (calendar != null) {
+                val canonical = Calendar.canonicalUrl(calendar)
+                if (href != canonical) a.attr("href", canonical)
+                continue
+            }
+            val cited = Validator.permalinkTarget(href)
+            if (cited != null && (corpusEventIds.isEmpty() || cited in corpusEventIds)) continue
             removed.add("link to ${href.take(60)} (unwrapped to text)")
             a.unwrap()
         }

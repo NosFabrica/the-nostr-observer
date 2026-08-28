@@ -1,5 +1,6 @@
 package com.nosfabrica.observer.corpus
 
+import com.nosfabrica.observer.nostr.Calendar
 import com.nosfabrica.observer.nostr.Classifieds
 import com.nosfabrica.observer.nostr.Corpus
 import com.nosfabrica.observer.nostr.Desk
@@ -278,11 +279,18 @@ class Digest(
             // Silence here is what lets the posting time stand in for the
             // event time, so the absence is stated rather than left blank.
             sb.append("WHEN: not stated — this listing has no date, do not give it one\n")
-            return
+        } else {
+            sb.append("WHEN: ").append(starts)
+            event.value("end")?.let { moment(it, zone) }?.let { sb.append(" until ").append(it) }
+            sb.append("\n")
         }
-        sb.append("WHEN: ").append(starts)
-        event.value("end")?.let { moment(it, zone) }?.let { sb.append(" until ").append(it) }
-        sb.append("\n")
+        // Calendar.listed / Sanitizer / Validator only allowlist events with a
+        // `d` tag; printing a calendar URL without one invites a link the
+        // sanitizer unwraps before publish. Writer form is njump hex; Step 5
+        // encodes the naddr so a replaceable listing is not frozen as an nevent.
+        if (!event.value("d").isNullOrBlank()) {
+            sb.append("calendar: ").append(Calendar.writerUrl(event.id)).append("\n")
+        }
     }
 
     /**

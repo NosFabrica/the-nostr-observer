@@ -13,7 +13,7 @@
 //
 // Usage: node corpus.mjs <npub> [--relay wss://…] [--out corpus.json] [--floor 20]
 
-import { req, toHex, toNpub, shortNpub, streamWriterUrl, classifiedWriterUrl, tagValue, tagsNamed, closeAll, MAX_REQ_BYTES } from './nostr.mjs'
+import { req, toHex, toNpub, shortNpub, streamWriterUrl, classifiedWriterUrl, calendarWriterUrl, tagValue, tagsNamed, closeAll, MAX_REQ_BYTES } from './nostr.mjs'
 import { writeFileSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
 import { createHash } from 'node:crypto'
@@ -330,6 +330,9 @@ export function digest (corpus, budget = DEFAULT_DIGEST_BUDGET) {
       }
       if (desk.key === 'classifieds' && tagValue(event, 'd')) {
         p(`  listing: ${classifiedWriterUrl(event.id)}`)
+      }
+      if (desk.key === 'calendar' && tagValue(event, 'd')) {
+        p(`  calendar: ${calendarWriterUrl(event.id)}`)
       }
       const text = body(event, EXCERPT[desk.key] ?? DEFAULT_EXCERPT)
       if (text) p(`  ${text}`)

@@ -615,6 +615,45 @@ class ListingTest {
     }
 
     @Test
+    fun `a calendar entry carries a calendar url`() {
+        val meetup =
+            Fixtures.event(
+                Fixtures.CALENDAR_ID,
+                Fixtures.ALICE,
+                "Come along",
+                kind = 31923,
+                tags =
+                    listOf(
+                        listOf("d", Fixtures.CALENDAR_D),
+                        listOf("title", "Jersey City Bitcoin"),
+                        listOf("start", "1792105200"),
+                        listOf("start_tzid", "America/New_York"),
+                    ),
+            )
+        val text = render(Desk.CALENDAR, meetup)
+        assertTrue(text.contains("calendar: https://njump.me/${Fixtures.CALENDAR_ID}"), text)
+    }
+
+    @Test
+    fun `a calendar entry without a d tag has no calendar url`() {
+        val bare =
+            Fixtures.event(
+                Fixtures.CALENDAR_ID,
+                Fixtures.ALICE,
+                "Come along",
+                kind = 31923,
+                tags =
+                    listOf(
+                        listOf("title", "Jersey City Bitcoin"),
+                        listOf("start", "1792105200"),
+                        listOf("start_tzid", "America/New_York"),
+                    ),
+            )
+        val text = render(Desk.CALENDAR, bare)
+        assertFalse(text.contains("calendar:"), text)
+    }
+
+    @Test
     fun `a live stream carries a watch url`() {
         val stream =
             Fixtures.event(

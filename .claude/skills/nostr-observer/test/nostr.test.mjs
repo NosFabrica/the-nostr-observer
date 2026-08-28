@@ -7,7 +7,7 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { toHex, toNpub, shortNpub, toNevent, fromNevent, toNaddr, fromNaddr, toZapStreamUrl, streamWriterUrl, toShopstrUrl, classifiedWriterUrl, tagValue, tagsNamed } from '../scripts/nostr.mjs'
+import { toHex, toNpub, shortNpub, toNevent, fromNevent, toNaddr, fromNaddr, toZapStreamUrl, streamWriterUrl, toShopstrUrl, classifiedWriterUrl, toNjumpCalendarUrl, calendarWriterUrl, tagValue, tagsNamed } from '../scripts/nostr.mjs'
 
 // The NIP-19 worked example.
 const HEX = '3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d'
@@ -87,4 +87,15 @@ test('an naddr round-trips a classified listing address', () => {
   const event = { kind: 30402, pubkey, tags: [['d', identifier]] }
   assert.equal(toShopstrUrl(event), `https://shopstr.store/listing/${naddr}`)
   assert.equal(classifiedWriterUrl('b'.repeat(64)), `https://shopstr.store/listing/${'b'.repeat(64)}`)
+})
+
+test('an naddr round-trips a calendar listing address', () => {
+  const pubkey = 'bb22'.repeat(16)
+  const identifier = 'porto-meetup'
+  const naddr = toNaddr({ kind: 31923, pubkey, identifier })
+  assert.match(naddr, /^naddr1/)
+  assert.deepEqual(fromNaddr(naddr), { kind: 31923, pubkey, identifier })
+  const event = { kind: 31923, pubkey, tags: [['d', identifier]] }
+  assert.equal(toNjumpCalendarUrl(event), `https://njump.me/${naddr}`)
+  assert.equal(calendarWriterUrl('c'.repeat(64)), `https://njump.me/${'c'.repeat(64)}`)
 })

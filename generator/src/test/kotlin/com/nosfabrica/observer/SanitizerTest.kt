@@ -1,5 +1,6 @@
 package com.nosfabrica.observer
 
+import com.nosfabrica.observer.nostr.Calendar
 import com.nosfabrica.observer.nostr.Classifieds
 import com.nosfabrica.observer.nostr.Streams
 import com.nosfabrica.observer.safe.Sanitizer
@@ -113,6 +114,29 @@ class SanitizerTest {
     }
 
     @Test
+    fun `keeps a verified njump calendar link and encodes it`() {
+        val listing = Fixtures.calendarEntry()
+        val sanitizer =
+            Sanitizer(
+                Fixtures.art(),
+                emptySet(),
+                emptyMap(),
+                emptyMap(),
+                mapOf(listing.id.lowercase() to listing),
+            )
+        val writer = Calendar.writerUrl(listing.id)
+        val r =
+            sanitizer.sanitize(
+                """<!doctype html><html><head><title>T</title></head><body>
+               <a href="$writer">Bitcoin Meetup in Porto</a></body></html>""",
+            )
+        assertTrue(r.html.contains("njump.me/naddr1"), "writer form is encoded to naddr")
+        assertFalse(r.html.contains("njump.me/${listing.id}"), "bare hex must not survive")
+        assertTrue(r.html.contains("Bitcoin Meetup in Porto"), "the title stays linked")
+        assertTrue(r.clean, r.removed.toString())
+    }
+
+    @Test
     fun `unwraps a zap stream url that names no stream we read`() {
         val writer = Streams.writerUrl("f".repeat(64))
         val r = clean("""<p><a href="$writer">fake stream</a></p>""")
@@ -126,6 +150,20 @@ class SanitizerTest {
         val r = clean("""<p><a href="$writer">fake listing</a></p>""")
         assertFalse(r.html.contains("<a "), "no anchor survived")
         assertTrue(r.html.contains("fake listing"))
+    }
+
+    @Test
+    fun `unwraps an njump calendar url that names no listing we read`() {
+        // Empty corpusEventIds would keep any njump hex as a citation; a real
+        // run always passes the corpus, so membership is what drops fakes.
+        val writer = Calendar.writerUrl("f".repeat(64))
+        val r =
+            Sanitizer(Fixtures.art(), setOf("a".repeat(64))).sanitize(
+                """<!doctype html><html><head><title>T</title></head><body>
+               <p><a href="$writer">fake meetup</a></p></body></html>""",
+            )
+        assertFalse(r.html.contains("<a "), "no anchor survived")
+        assertTrue(r.html.contains("fake meetup"))
     }
 
     @Test
