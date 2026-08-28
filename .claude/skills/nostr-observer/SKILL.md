@@ -138,6 +138,11 @@ change from day to day — this is a newspaper, not a template.
 Friday, August 28, 2026`, same form as the folio's centred span. The code stays
 in the folio only.
 
+**The digest window is UTC.** Its times end in `Z`. The folio stamp is
+`24h to HH:MM UTC` (the 24 hours *ending* at that clock). If you print prices,
+mempool fees or block heights in a table, stamp them `As of HH:MM UTC` and say
+they are not live — otherwise they read as a ticker.
+
 **Add Open Graph and Twitter Card meta tags** after `<title>` so link previews
 work when the paper is shared. `og:title` / `twitter:title` are the lead
 headline; descriptions are the lead dek; `og:image` / `twitter:image` are the

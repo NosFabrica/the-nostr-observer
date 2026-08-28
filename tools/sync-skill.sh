@@ -26,7 +26,7 @@ mkdir -p "$dst"
   Source: generator/src/main/resources/system-prompt.md
   Regenerate: tools/sync-skill.sh
 
-  Three corrections for this harness, which override the text below wherever
+  Four corrections for this harness, which override the text below wherever
   they disagree:
 
   1. THE "AFTERWARDS" IS scripts/resolve.mjs, AND IT IS PARTIAL. It does the
@@ -48,6 +48,12 @@ mkdir -p "$dst"
      `editions/observer-<date>-<code>.html`, run the validator, and publish the artifact.
      The "return HTML and nothing else" instruction at the end is about the API
      call this brief was written for.
+
+  4. THIS HARNESS'S DIGEST PRINTS UTC ONLY. The window line ends in `Z`. The
+     folio stamp is therefore `24h to HH:MM UTC`, and any "As of" note on a
+     prices / fees / heights box uses the same clock. Never strip the Z and
+     leave an unlabeled time — that reads as the reader's local clock and is
+     wrong for almost everyone. Do not convert to local yourself.
 -->
 
 BANNER
