@@ -21,7 +21,7 @@
 
 import { readFileSync, writeFileSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
-import { permalinkTarget, toPermalink } from './validate.mjs'
+import { permalinkTarget, toPermalink, streamLinkTarget, streamWriterTarget, toStreamLink } from './validate.mjs'
 import { fromNevent } from './nostr.mjs'
 import { tags, attributes } from './html.mjs'
 
@@ -114,11 +114,16 @@ export function resolve (html, corpus) {
   }
 
   // --- links to the open web ----------------------------------------------
-  // The paper prints addresses; it does not make them clickable. A permalink
-  // back to an event we actually read is rewritten to jumble.social's nevent
-  // URL (the writer cites hex; this is the afterwards). Everything else is
-  // unwrapped to its own text, which is what a printed newspaper does with a
-  // URL. Rebuilt back to front so each edit leaves earlier offsets untouched.
+  // The paper prints addresses; it does not make them clickable — except
+  // source citations and verified zap.stream watch links for live streams.
+  // A permalink back to an event we read is rewritten to jumble.social's nevent
+  // URL (the writer cites hex; this is the afterwards). A stream watch link in
+  // writer form is encoded to zap.stream's naddr. Everything else is unwrapped
+  // to its own text. Rebuilt back to front so each edit leaves earlier offsets
+  // untouched.
+  const streams = new Map(Object.values(corpus.desks).flat()
+    .filter((e) => e.kind === 30311)
+    .map((e) => [e.id, e]))
   const anchors = tags(out, 'a').reverse()
   for (const anchor of anchors) {
     const url = attributes(anchor.raw).href || ''
@@ -126,6 +131,22 @@ export function resolve (html, corpus) {
     const id = citedEventId(url)
     const close = out.toLowerCase().indexOf('</a>', anchor.end)
     if (close === -1) continue
+    const streamId = streamWriterTarget(url, corpus) || streamLinkTarget(url, corpus)
+    if (streamId && streams.has(streamId)) {
+      const canonical = toStreamLink(streams.get(streamId))
+      let tag = anchor.raw
+      if (url !== canonical) {
+        tag = tag.replace(/(\bhref\s*=\s*)("[^"]*"|'[^']*'|[^\s>]+)/i, `$1"${canonical}"`)
+      }
+      tag = openInNewTab(tag)
+      if (tag !== anchor.raw) {
+        out = out.slice(0, anchor.start) + tag + out.slice(anchor.end)
+        if (url !== canonical) {
+          changes.push({ kind: 'stream', detail: `${url} -> ${canonical}` })
+        }
+      }
+      continue
+    }
     if (id && eventIds.has(id)) {
       const canonical = toPermalink(id)
       let tag = anchor.raw
@@ -165,6 +186,7 @@ function main () {
   console.log('')
   console.log(`  Resolved ${counts.resolved || 0} art id(s).`)
   if (counts.permalink) console.log(`  Encoded ${counts.permalink} permalink(s) to jumble.social.`)
+  if (counts.stream) console.log(`  Encoded ${counts.stream} stream watch link(s) to zap.stream.`)
   if (counts.dropped || counts.unwrapped) {
     console.log('')
     console.log('  CHANGES WORTH READING - each of these is the page trying to do something')

@@ -615,6 +615,40 @@ class ListingTest {
     }
 
     @Test
+    fun `a live stream carries a watch url`() {
+        val stream =
+            Fixtures.event(
+                Fixtures.STREAM_ID,
+                Fixtures.ALICE,
+                "",
+                kind = 30311,
+                tags =
+                    listOf(
+                        listOf("d", Fixtures.STREAM_D),
+                        listOf("title", "NoGood Radio"),
+                        listOf("status", "live"),
+                        listOf("starts", "1786900000"),
+                    ),
+            )
+        val text = render(Desk.LIVE, stream)
+        assertTrue(text.contains("watch: https://zap.stream/stream/${Fixtures.STREAM_ID}"), text)
+    }
+
+    @Test
+    fun `a live stream without a d tag has no watch url`() {
+        val bare =
+            Fixtures.event(
+                Fixtures.STREAM_ID,
+                Fixtures.ALICE,
+                "",
+                kind = 30311,
+                tags = listOf(listOf("title", "NoGood Radio"), listOf("status", "live")),
+            )
+        val text = render(Desk.LIVE, bare)
+        assertFalse(text.contains("watch:"), text)
+    }
+
+    @Test
     fun `a classified carries its price`() {
         val listing =
             Fixtures.event(

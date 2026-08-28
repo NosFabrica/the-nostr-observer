@@ -1,6 +1,8 @@
 package com.nosfabrica.observer.safe
 
 import com.nosfabrica.observer.corpus.Art
+import com.nosfabrica.observer.nostr.Streams
+import com.vitorpamplona.quartz.nip01Core.core.Event
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
@@ -40,6 +42,13 @@ class Sanitizer(
      * this throws away one link.
      */
     private val corpusEventIds: Set<String> = emptySet(),
+    /**
+     * Live streams this edition read, keyed by event id.
+     *
+     * A watch link in writer form is kept and encoded to zap.stream's naddr;
+     * anything else on zap.stream is unwrapped like any other open-web URL.
+     */
+    private val liveStreams: Map<String, Event> = emptyMap(),
     /**
      * The house stylesheet, which SHIPS WITH THE PAGE.
      *
@@ -155,22 +164,32 @@ class Sanitizer(
     }
 
     /**
-     * The paper prints addresses; it does not make them clickable.
+     * The paper prints addresses; it does not make them clickable — except
+     * permalinks back to a source event and verified zap.stream watch links for
+     * live streams in the digest.
      *
      * A URL in the corpus is not evidence that the URL is safe — the corpus is
-     * where the attacker writes. Anything that is not a permalink back to an
-     * event we actually read is unwrapped to its own text: the reader still sees
-     * what was said, and nothing under their masthead is one tap from a drainer.
+     * where the attacker writes. Anything that is not one of those exceptions
+     * is unwrapped to its own text: the reader still sees what was said, and
+     * nothing under their masthead is one tap from a drainer.
      */
     private fun unwrapExternalLinks(
         doc: Document,
         removed: MutableList<String>,
     ) {
+        val streams = liveStreams.values.toList()
         for (a in doc.select("a[href]").toList()) {
             val href = a.attr("href")
             if (!href.startsWith("http", ignoreCase = true)) continue
             val cited = Validator.permalinkTarget(href)
             if (cited != null && (corpusEventIds.isEmpty() || cited in corpusEventIds)) continue
+            val streamId = Streams.streamLinkTarget(href, streams)
+            val stream = streamId?.let { liveStreams[it] }
+            if (stream != null) {
+                val canonical = Streams.canonicalUrl(stream)
+                if (href != canonical) a.attr("href", canonical)
+                continue
+            }
             removed.add("link to ${href.take(60)} (unwrapped to text)")
             a.unwrap()
         }

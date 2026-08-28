@@ -172,6 +172,12 @@ put. Do not write `njump.me`, and do not compose an `nevent1` yourself — a reg
 that accepted `nevent1` without decoding it once shipped a page whose every
 citation failed the boundary.
 
+**Link live streams in the Broadcasting column** using the `watch:` URL the
+digest printed (`https://zap.stream/stream/<64-hex-event-id>`). Step 5 encodes
+it as a zap.stream naddr. One line per stream; link the title or stream name.
+Do not compose an `naddr1` yourself, and do not use a zap.stream URL copied
+from a post body — only the derived watch line from Live now.
+
 Save it as `editions/observer-<YYYY-MM-DD>-<code>.html`, using the edition code the
 corpus digest printed.
 
@@ -185,7 +191,8 @@ node <skill>/scripts/resolve.mjs editions/observer-<date>-<code>.html --corpus e
 
 This is the "afterwards" the editorial brief refers to. It swaps every
 `art-N` for its real URL, removes any `<figure>` whose id is not on the
-shortlist, and unwraps links to the open web into plain text.
+shortlist, encodes source citations and stream watch links, and unwraps every
+other link to the open web into plain text.
 
 **Read what it reports.** It prints every change that was not a plain id
 resolution. A dropped figure or an unwrapped link is the visible edge of
@@ -212,7 +219,7 @@ even when it is inconvenient.
 |---|---|
 | **QUOTE** | Anything in `<q>` or `<blockquote>` must appear verbatim in a source event. Elision with `…` is allowed; the fragments must appear in order in **one** event. Paraphrase is not checked, because paraphrase is journalism — so paraphrase freely, and quote only what was said. |
 | **IMAGE** | After Step 5 every `<img src>` must be a shortlist URL. That happens by itself if you wrote ids; it fails if you wrote a URL yourself. |
-| **LINK** | After Step 5, the only permitted link is `https://jumble.social/notes/<nevent1…>` for an event in the corpus. Write `https://jumble.social/notes/<64-hex-event-id>`; resolve encodes the nevent and opens it in a new tab. Do not compose an `nevent1` yourself. Everything else — including a URL that appeared in the corpus — is refused. |
+| **LINK** | After Step 5, permitted links are: `https://jumble.social/notes/<nevent1…>` for a source event in the corpus, and `https://zap.stream/<naddr1…>` for a live stream from Live now. Write citations as `https://jumble.social/notes/<64-hex-event-id>` and stream watch links as `https://zap.stream/stream/<64-hex-event-id>` from the digest; resolve encodes both. Do not compose an `nevent1` or `naddr1` yourself. Everything else — including a URL that appeared in the corpus — is refused. |
 | **MARKUP** | No `<script>`, no `<iframe>`, no `on…=` handlers, no `javascript:`, no forms. The paper collects nothing and runs nothing. |
 
 The link rule is the one that looks too strict. It is not: an early version

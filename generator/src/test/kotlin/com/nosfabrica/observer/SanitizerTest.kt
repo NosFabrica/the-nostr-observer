@@ -1,5 +1,6 @@
 package com.nosfabrica.observer
 
+import com.nosfabrica.observer.nostr.Streams
 import com.nosfabrica.observer.safe.Sanitizer
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -67,6 +68,34 @@ class SanitizerTest {
         val r = clean("""<a href="https://njump.me/$id">source</a>""")
         assertTrue(r.html.contains("target=\"_blank\""), "the paper stays put")
         assertTrue(r.html.contains("noopener"), "the new tab must not get window.opener")
+    }
+
+    @Test
+    fun `keeps a verified stream watch link and encodes it`() {
+        val stream = Fixtures.liveStream()
+        val sanitizer =
+            Sanitizer(
+                Fixtures.art(),
+                emptySet(),
+                mapOf(stream.id.lowercase() to stream),
+            )
+        val writer = Streams.writerUrl(stream.id)
+        val r =
+            sanitizer.sanitize(
+                """<!doctype html><html><head><title>T</title></head><body>
+               <a href="$writer">NoGood Radio</a></body></html>""",
+            )
+        assertTrue(r.html.contains("zap.stream/naddr1"), "writer form is encoded to naddr")
+        assertTrue(r.html.contains("NoGood Radio"), "the title stays linked")
+        assertTrue(r.clean, r.removed.toString())
+    }
+
+    @Test
+    fun `unwraps a zap stream url that names no stream we read`() {
+        val writer = Streams.writerUrl("f".repeat(64))
+        val r = clean("""<p><a href="$writer">fake stream</a></p>""")
+        assertFalse(r.html.contains("<a "), "no anchor survived")
+        assertTrue(r.html.contains("fake stream"))
     }
 
     @Test
@@ -191,7 +220,7 @@ class HouseStyleTest {
         // ever been put in, so it tested nothing. This one feeds a house sheet
         // that DOES call home and asserts it is stripped.
         val hostile = "@import url(https://evil.example.com/x.css);\n.sheet { background: url(https://evil.example.com/beacon.png) }"
-        val result = Sanitizer(Fixtures.art(), emptySet(), hostile).sanitize("<html><body><p>x</p></body></html>")
+        val result = Sanitizer(Fixtures.art(), emptySet(), houseCss = hostile).sanitize("<html><body><p>x</p></body></html>")
         assertFalse(result.html.contains("evil.example.com"), "the house sheet reaches every reader of a published edition")
         assertTrue(result.removed.any { it.contains("@import") }, result.removed.toString())
     }

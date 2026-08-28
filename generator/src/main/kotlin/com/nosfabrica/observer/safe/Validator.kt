@@ -2,6 +2,8 @@ package com.nosfabrica.observer.safe
 
 import com.nosfabrica.observer.corpus.Art
 import com.nosfabrica.observer.nostr.Corpus
+import com.nosfabrica.observer.nostr.Streams
+import com.vitorpamplona.quartz.nip01Core.core.Event
 import com.vitorpamplona.quartz.nip19Bech32.Nip19Parser
 import com.vitorpamplona.quartz.nip19Bech32.entities.NEvent
 import com.vitorpamplona.quartz.nip19Bech32.entities.NNote
@@ -46,12 +48,15 @@ class Validator(
      * passed cleanly — a phishing link, under the reader's masthead, signed by
      * the reader. Presence in the corpus is evidence of nothing.
      *
-     * So the paper does not link to the open web at all. It links to Nostr
-     * events, the way a printed paper prints an address without making it
-     * clickable. [Sanitizer] unwraps the rest to plain text; this is the second
-     * line, in case that ever regresses.
+     * So the paper does not link to the open web at all, except permalinks back
+     * to Nostr events we read and verified zap.stream watch links for live
+     * streams in the digest. [Sanitizer] unwraps the rest to plain text; this is
+     * the second line, in case that ever regresses.
      */
     private val corpusEventIds: Set<String> = corpus.all().map { it.id }.toSet()
+
+    /** Live streams we read — the only streams a watch link may name. */
+    private val liveStreams: List<Event> = Streams.live(corpus)
 
     enum class Kind { QUOTE, IMAGE, LINK }
 
@@ -139,11 +144,16 @@ class Validator(
             val href = a.attr("href")
             if (!href.startsWith("http", ignoreCase = true)) continue
             val id = permalinkTarget(href)
-            if (id == null || id !in corpusEventIds) {
-                violations.add(
-                    Violation(Kind.LINK, "only permalinks back to a source event may be links", href.take(120)),
-                )
-            }
+            if (id != null && id in corpusEventIds) continue
+            val streamId = Streams.streamLinkTarget(href, liveStreams)
+            if (streamId != null && liveStreams.any { it.id.equals(streamId, ignoreCase = true) }) continue
+            violations.add(
+                Violation(
+                    Kind.LINK,
+                    "only source citations and verified zap.stream watch links may be links",
+                    href.take(120),
+                ),
+            )
         }
 
         return Report(violations, checked)

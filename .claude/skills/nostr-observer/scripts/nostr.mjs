@@ -143,6 +143,68 @@ export function toNevent (hex) {
   return encodeBech32('nevent', [0, 32, ...Buffer.from(id, 'hex')])
 }
 
+export const LIVE_KIND = 30311
+
+/**
+ * Kind 30311 address to `naddr1…` (NIP-19 TLV: 0=identifier, 2=author, 3=kind).
+ *
+ * The first version of this encoding put kind in type 0 and the d-tag in type 2,
+ * which produced bech32 that looked valid and failed on every gateway. NIP-19
+ * is explicit; follow it.
+ */
+export function toNaddr ({ kind, pubkey, identifier }) {
+  const id = String(identifier || '')
+  const pk = String(pubkey || '').toLowerCase()
+  if (!/^[0-9a-f]{64}$/.test(pk)) throw new Error(`Not a pubkey: ${pk.slice(0, 16)}`)
+  const idBytes = Buffer.from(id, 'utf8')
+  const bytes = [
+    0, idBytes.length, ...idBytes,
+    2, 32, ...Buffer.from(pk, 'hex'),
+    3, 4, (kind >>> 24) & 255, (kind >>> 16) & 255, (kind >>> 8) & 255, kind & 255,
+  ]
+  return encodeBech32('naddr', bytes)
+}
+
+/** `naddr1…` to `{ kind, pubkey, identifier }`. Throws on bad input. */
+export function fromNaddr (input) {
+  const value = String(input || '').trim()
+  const { hrp, bytes } = decodeBech32(value)
+  if (hrp !== 'naddr') throw new Error(`Not an naddr: ${value.slice(0, 24)}`)
+  let i = 0
+  let identifier = null
+  let pubkey = null
+  let kind = null
+  while (i + 2 <= bytes.length) {
+    const type = bytes[i]
+    const len = bytes[i + 1]
+    i += 2
+    if (i + len > bytes.length) break
+    const payload = bytes.slice(i, i + len)
+    i += len
+    if (type === 0) identifier = Buffer.from(payload).toString('utf8')
+    if (type === 2 && len === 32) pubkey = Buffer.from(payload).toString('hex')
+    if (type === 3 && len === 4) {
+      kind = ((payload[0] << 24) | (payload[1] << 16) | (payload[2] << 8) | payload[3]) >>> 0
+    }
+  }
+  if (identifier == null || !pubkey || kind == null) throw new Error('That naddr is missing fields.')
+  return { kind, pubkey, identifier }
+}
+
+/** Canonical zap.stream watch page for a live event. */
+export function toZapStreamUrl (event) {
+  const d = tagValue(event, 'd')
+  if (!d || event.kind !== LIVE_KIND) throw new Error('Not a live stream address')
+  return `https://zap.stream/${toNaddr({ kind: LIVE_KIND, pubkey: event.pubkey, identifier: d })}`
+}
+
+/** Writer form: event id hex. resolve.mjs encodes the naddr afterwards. */
+export function streamWriterUrl (eventId) {
+  const id = String(eventId || '').toLowerCase()
+  if (!/^[0-9a-f]{64}$/.test(id)) throw new Error(`Not an event id: ${String(eventId).slice(0, 16)}`)
+  return `https://zap.stream/stream/${id}`
+}
+
 /** `nevent1…` to lowercase event-id hex. Throws if it is not an nevent that names an id. */
 export function fromNevent (input) {
   const value = String(input || '').trim()

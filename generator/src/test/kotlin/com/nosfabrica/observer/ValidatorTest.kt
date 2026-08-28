@@ -1,5 +1,7 @@
 package com.nosfabrica.observer
 
+import com.nosfabrica.observer.nostr.Desk
+import com.nosfabrica.observer.nostr.Streams
 import com.nosfabrica.observer.safe.Validator
 import com.vitorpamplona.quartz.nip01Core.relay.normalizer.NormalizedRelayUrl
 import com.vitorpamplona.quartz.nip19Bech32.entities.NEvent
@@ -104,6 +106,34 @@ class ValidatorTest {
 
         val real = check("""<a href="https://njump.me/${"e1".padStart(64, '0')}">source</a>""")
         assertFalse(real.ok, "and that id has to be one of ours")
+    }
+
+    @Test
+    fun `accepts a verified stream watch link after encoding`() {
+        val stream = Fixtures.liveStream()
+        val validator = Validator(Fixtures.corpus(listOf(stream), Desk.LIVE), Fixtures.art())
+        val canonical = Streams.canonicalUrl(stream)
+        val r = validator.validate("""<html><body><a href="$canonical">NoGood Radio</a></body></html>""")
+        assertTrue(r.ok, r.summary())
+    }
+
+    @Test
+    fun `rejects a zap stream url copied from a post body`() {
+        val invented =
+            Streams.canonicalUrl(
+                Fixtures.event(
+                    "f".repeat(64),
+                    "dd44".repeat(16),
+                    "",
+                    kind = 30311,
+                    tags = listOf(listOf("d", "fake-stream")),
+                ),
+            )
+        val stream = Fixtures.liveStream()
+        val validator = Validator(Fixtures.corpus(listOf(stream), Desk.LIVE), Fixtures.art())
+        val r = validator.validate("""<html><body><a href="$invented">fake</a></body></html>""")
+        assertFalse(r.ok)
+        assertTrue(r.violations.single().kind == Validator.Kind.LINK)
     }
 
     @Test

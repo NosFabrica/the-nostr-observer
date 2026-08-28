@@ -7,7 +7,7 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { toHex, toNpub, shortNpub, toNevent, fromNevent, tagValue, tagsNamed } from '../scripts/nostr.mjs'
+import { toHex, toNpub, shortNpub, toNevent, fromNevent, toNaddr, fromNaddr, toZapStreamUrl, streamWriterUrl, tagValue, tagsNamed } from '../scripts/nostr.mjs'
 
 // The NIP-19 worked example.
 const HEX = '3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d'
@@ -65,4 +65,15 @@ test('tag readers', () => {
   assert.equal(tagValue(event, 'absent'), null)
   assert.equal(tagValue(null, 'status'), null)
   assert.equal(tagsNamed(event, 'r').length, 2)
+})
+
+test('an naddr round-trips a live stream address', () => {
+  const pubkey = 'cf45a6ba1363ad7ed213a078e710d24115ae721c9b47bd1ebf4458eaefb4c2a5'
+  const identifier = '537a365c-f1ec-44ac-af10-22d14a7319fb'
+  const naddr = toNaddr({ kind: 30311, pubkey, identifier })
+  assert.match(naddr, /^naddr1/)
+  assert.deepEqual(fromNaddr(naddr), { kind: 30311, pubkey, identifier })
+  const event = { kind: 30311, pubkey, tags: [['d', identifier]] }
+  assert.equal(toZapStreamUrl(event), `https://zap.stream/${naddr}`)
+  assert.equal(streamWriterUrl('a'.repeat(64)), `https://zap.stream/stream/${'a'.repeat(64)}`)
 })

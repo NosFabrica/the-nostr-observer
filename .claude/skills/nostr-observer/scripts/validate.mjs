@@ -23,7 +23,7 @@
 import { readFileSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
 import { tags, attributes as attrsOf, textIn } from './html.mjs'
-import { toNevent, fromNevent } from './nostr.mjs'
+import { toNevent, fromNevent, fromNaddr, toZapStreamUrl, LIVE_KIND, tagValue } from './nostr.mjs'
 
 function arg (name, fallback = null) {
   const at = process.argv.indexOf(name)
@@ -138,6 +138,53 @@ export function permalinkTarget (href) {
   }
 }
 
+export const STREAM_WRITER = /^https:\/\/zap\.stream\/stream\/([0-9a-f]{64})(?:[/?#].*)?$/i
+export const STREAM_NADDR = /^https:\/\/zap\.stream\/(naddr1[0-9a-z]+)(?:[/?#].*)?$/i
+
+/** Live-stream events from the corpus — the only streams a watch link may name. */
+export function liveStreams (corpus) {
+  return Object.values(corpus.desks).flat().filter((e) => e.kind === LIVE_KIND && tagValue(e, 'd'))
+}
+
+/**
+ * Event id if `href` is a verified zap.stream watch link for a live stream we
+ * read; otherwise null.
+ *
+ * Two shapes after resolve: canonical naddr, or the writer form
+ * `zap.stream/stream/<64-hex>` which resolve encodes. Either way the naddr
+ * must decode to the same pubkey + d-tag as a kind 30311 in the corpus — not
+ * merely appear in somebody's post.
+ */
+export function streamLinkTarget (href, corpus) {
+  const streams = liveStreams(corpus)
+  const naddr = STREAM_NADDR.exec(href)
+  if (!naddr) return null
+  try {
+    const { kind, pubkey, identifier } = fromNaddr(naddr[1])
+    if (kind !== LIVE_KIND) return null
+    const event = streams.find((e) =>
+      e.pubkey.toLowerCase() === pubkey.toLowerCase() && tagValue(e, 'd') === identifier,
+    )
+    return event?.id || null
+  } catch {
+    return null
+  }
+}
+
+/** Writer form, for resolve.mjs only. */
+export function streamWriterTarget (href, corpus) {
+  const streams = liveStreams(corpus)
+  const byId = new Map(streams.map((e) => [e.id, e]))
+  const writer = STREAM_WRITER.exec(href)
+  if (!writer) return null
+  const id = writer[1].toLowerCase()
+  return byId.has(id) ? id : null
+}
+
+export function toStreamLink (event) {
+  return toZapStreamUrl(event)
+}
+
 // Things there is no sanitizer to strip, so they are refused instead.
 //
 // Checked against PARSED TAGS, never against the raw document. The first
@@ -231,16 +278,17 @@ export function check (html, corpus) {
   for (const href of attributes(html, 'a', 'href')) {
     if (!/^https?:/i.test(href)) continue
     const id = permalinkTarget(href)
-    if (!id || !eventIds.has(id)) {
-      // Presence in the corpus is evidence of NOTHING. An earlier version of
-      // this rule allowlisted every URL that appeared in the corpus, on the
-      // theory that a link nobody posted must have been invented. The corpus
-      // is written by the attacker too: posting "click https://evil.example/x"
-      // put that URL on the allowlist, and an injected instruction to link
-      // every story to it then passed cleanly — a phishing link under the
-      // reader's masthead. So the paper does not link to the open web at all.
-      flag('LINK', 'only permalinks back to a source event may be links', href.slice(0, 120))
-    }
+    if (id && eventIds.has(id)) continue
+    if (streamLinkTarget(href, corpus)) continue
+    // Presence in the corpus is evidence of NOTHING. An earlier version of
+    // this rule allowlisted every URL that appeared in the corpus, on the
+    // theory that a link nobody posted must have been invented. The corpus
+    // is written by the attacker too: posting "click https://evil.example/x"
+    // put that URL on the allowlist, and an injected instruction to link
+    // every story to it then passed cleanly — a phishing link under the
+    // reader's masthead. So the paper does not link to the open web at all,
+    // except verified zap.stream watch links for live streams in the corpus.
+    flag('LINK', 'only source citations and verified zap.stream watch links may be links', href.slice(0, 120))
   }
 
   return { violations, quotes, events: events.length, images: allowedImages.size }

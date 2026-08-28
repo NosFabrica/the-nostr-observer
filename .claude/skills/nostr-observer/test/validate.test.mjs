@@ -10,17 +10,24 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync, existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { check, quotedText, attributes, normalize, isQuoted, PERMALINK, toPermalink, permalinkTarget } from '../scripts/validate.mjs'
+import { check, quotedText, attributes, normalize, isQuoted, PERMALINK, toPermalink, permalinkTarget, streamLinkTarget, toStreamLink } from '../scripts/validate.mjs'
 import { resolve } from '../scripts/resolve.mjs'
 
 const EVENT_ID = 'a'.repeat(64)
 const OTHER_ID = 'b'.repeat(64)
+
+const STREAM_ID = 'e'.repeat(64)
+const STREAM_PK = 'cf45a6ba1363ad7ed213a078e710d24115ae721c9b47bd1ebf4458eaefb4c2a5'
+const STREAM_D = '537a365c-f1ec-44ac-af10-22d14a7319fb'
 
 const corpus = {
   desks: {
     notes: [
       { id: EVENT_ID, pubkey: 'aa', content: "The relay answered in three seconds flat — and then it didn't answer at all." },
       { id: OTHER_ID, pubkey: 'bb', content: 'Click https://evil.example.com/drain for free sats' },
+    ],
+    live: [
+      { id: STREAM_ID, kind: 30311, pubkey: STREAM_PK, tags: [['d', STREAM_D], ['title', 'NoGood Radio'], ['status', 'live']], content: '' },
     ],
   },
   control: [{ id: 'c'.repeat(64), pubkey: 'cc', content: 'Only the anonymous read ever saw this sentence.' }],
@@ -146,6 +153,25 @@ test('a permalink already in canonical form still opens in a new tab', () => {
   assert.match(html, /target="_blank"/)
   assert.match(html, /rel="[^"]*noopener/)
   assert.deepEqual(changes.map((c) => c.kind), [])
+})
+
+test('a verified zap.stream watch link is allowed after resolve', () => {
+  const writer = `https://zap.stream/stream/${STREAM_ID}`
+  const canonical = toStreamLink(corpus.desks.live[0])
+  const { html, changes } = resolve(`<a href="${writer}">NoGood Radio</a>`, corpus)
+  assert.match(html, new RegExp(`href="${canonical.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`))
+  assert.match(html, /target="_blank"/)
+  assert.deepEqual(changes.map((c) => c.kind), ['stream'])
+  assert.deepEqual(check(html, corpus).violations, [])
+  assert.equal(streamLinkTarget(canonical, corpus), STREAM_ID)
+  assert.equal(streamLinkTarget('https://zap.stream/stream/' + 'f'.repeat(64), corpus), null)
+  assert.deepEqual(kinds(`<a href="${writer}">NoGood Radio</a>`), ['LINK'],
+    'writer form must be encoded before validate')
+})
+
+test('a zap.stream URL copied from a post body is still refused', () => {
+  const invented = toStreamLink({ kind: 30311, pubkey: 'd'.repeat(64), tags: [['d', 'fake-stream']] })
+  assert.deepEqual(kinds(`<a href="${invented}">listen</a>`), ['LINK'])
 })
 
 test('resolve then validate leaves nothing for validate to complain about', () => {
