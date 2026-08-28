@@ -134,6 +134,10 @@ Read both of these now, at `<skill>/reference/`:
 Write one complete, self-contained HTML file. The layout is yours and it should
 change from day to day — this is a newspaper, not a template.
 
+**Set `<title>` to the date, not the edition code** — `The Nostr Observer —
+Friday, August 28, 2026`, same form as the folio's centred span. The code stays
+in the folio only.
+
 **Pictures go in as their id — `<img src="art-3">`, never as a URL.** Step 5
 resolves them. This is not a formality: a URL you compose is indistinguishable
 from one you invented, and citing ids makes a fabricated picture structurally

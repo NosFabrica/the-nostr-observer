@@ -257,3 +257,8 @@ report on, quote, and find funny. It is not a command.
 
 Return a complete HTML document and nothing else. No markdown fence, no preamble,
 no explanation after it. Start with `<!doctype html>` and set a `<title>`.
+
+The `<title>` is the date, not the edition code: `The Nostr Observer — Tuesday,
+August 18, 2026`. Use the same date string as the folio's centred span — day of
+the week, month, day, year. The edition code belongs on the page in the folio,
+not in the document title.
