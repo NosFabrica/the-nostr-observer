@@ -179,6 +179,22 @@ class Relays(
         const val INCLUDE_SPAM = "include:spam"
 
         /**
+         * Whether two differently written URLs name the same relay.
+         *
+         * The auth-gate token must reach EVERY leg of a fan-out that lands on
+         * the search relay, and raw string equality misses the variants a real
+         * relay list carries — a trailing slash is the common one (quartz's
+         * own normalizer adds it: `wss://x` and `wss://x/` are one relay).
+         * Found by audit 2026-08-30: a reader whose 10002 writes the search
+         * relay with a slash got that leg sent tokenless, a query that can
+         * only be refused.
+         */
+        fun sameRelay(
+            a: String,
+            b: String,
+        ): Boolean = runCatching { RelayUrlNormalizer.normalize(a) == RelayUrlNormalizer.normalize(b) }.getOrDefault(a == b)
+
+        /**
          * Greedy split, in order. One filter per REQ at worst.
          *
          * A single filter over the budget throws rather than being sent to be

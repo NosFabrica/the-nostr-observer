@@ -63,23 +63,29 @@ class ReadinessProbe(
             // `auth_required` is false -- and four handshakes racing on one
             // socket is not something this project gets to fix from the outside.
             // The fetches above genuinely do run in parallel; these do not.
-            // The search-relay leg of each pair carries `include:spam` because
-            // the auth gate closes a tokenless COUNT too (measured 2026-08-30);
-            // the other host gets the plain filter, because it never asked for
-            // the token and may refuse a `search` field it does not implement.
+            // Any leg that lands on the search relay carries `include:spam`
+            // because the auth gate closes a tokenless COUNT too (measured
+            // 2026-08-30); any other host gets the plain filter, because it
+            // never asked for the token and may refuse a `search` field it
+            // does not implement. Decided per HOST and not per side — the
+            // "other" side of either pair can itself be the search relay,
+            // named by a 10040 hint or first in a reader's 10002.
             val scores =
                 provider?.let { (service, hint) ->
                     val cards = Filter(kinds = listOf(ContactCardEvent.KIND), authors = listOf(service))
                     // "There" is the provider's own relay. Asking a second host
                     // is the whole point of the comparison, so failing to reach
                     // it must leave a null denominator rather than borrow ours.
-                    Readiness.Counts(relays.count(searchRelay, cards.copy(search = Relays.INCLUDE_SPAM)), relays.count(hint, cards))
+                    Readiness.Counts(relays.count(searchRelay, dressed(searchRelay, cards)), relays.count(hint, dressed(hint, cards)))
                 }
 
             val posts =
                 writes.firstOrNull()?.let { theirRelay ->
                     val mine = Filter(kinds = listOf(1), authors = listOf(observer))
-                    Readiness.Counts(relays.count(searchRelay, mine.copy(search = Relays.INCLUDE_SPAM)), relays.count(theirRelay, mine))
+                    Readiness.Counts(
+                        relays.count(searchRelay, dressed(searchRelay, mine)),
+                        relays.count(theirRelay, dressed(theirRelay, mine)),
+                    )
                 }
 
             Readiness.Facts(
@@ -112,10 +118,6 @@ class ReadinessProbe(
         hosts: List<String>,
     ): List<String> {
         val filter = Filter(kinds = listOf(BlossomServersEvent.KIND), authors = listOf(observer))
-
-        // Ours demands the auth-gate token on a plain lookup; theirs never
-        // asked for it and may refuse a `search` field. See [Relays.INCLUDE_SPAM].
-        fun dressed(host: String) = if (host == searchRelay) filter.copy(search = Relays.INCLUDE_SPAM) else filter
         // A few of their relays, and ours as well -- deliberately NOT what
         // `Announce.editions` does, and for two reasons.
         //
@@ -134,8 +136,9 @@ class ReadinessProbe(
             coroutineScope {
                 (hosts.take(3) + searchRelay)
                     .distinct()
-                    .map { host -> async { runCatching { relays.fetch(host, dressed(host), idle = 10_000) }.getOrDefault(emptyList()) } }
-                    .awaitAll()
+                    .map { host ->
+                        async { runCatching { relays.fetch(host, dressed(host, filter), idle = 10_000) }.getOrDefault(emptyList()) }
+                    }.awaitAll()
                     .flatten()
             }
         val newest = events.maxByOrNull { it.createdAt } ?: return emptyList()
@@ -195,6 +198,19 @@ class ReadinessProbe(
             ?.serviceProviders()
             ?.firstOrNull { it.service == ProviderTypes.rank }
             ?.let { it.pubkey to it.relayUrl.url }
+
+    /**
+     * The filter a given host may be asked: the search relay's auth gate
+     * demands `include:spam` on any query naming no observer, while every
+     * other relay never asked for the token and may refuse a `search` field
+     * it does not implement. Matched with [Relays.sameRelay], not string
+     * equality — a reader's list writes the same host in more than one
+     * spelling, and the mismatched spelling used to get the tokenless filter.
+     */
+    internal fun dressed(
+        host: String,
+        filter: Filter,
+    ): Filter = if (Relays.sameRelay(host, searchRelay)) filter.copy(search = Relays.INCLUDE_SPAM) else filter
 
     private suspend fun one(
         kind: Int,

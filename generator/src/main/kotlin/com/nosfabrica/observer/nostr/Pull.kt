@@ -404,8 +404,9 @@ class Pull(
                         // auth gate CLOSES a tokenless REQ, while a reader's
                         // own relay may not implement `search` at all — so the
                         // token goes to the one host that demands it and to no
-                        // other. See [Relays.INCLUDE_SPAM].
-                        val token = if (host == searchRelay) Relays.INCLUDE_SPAM else null
+                        // other. [Relays.sameRelay], not `==`: a reader's list
+                        // can name the search relay in another spelling.
+                        val token = if (Relays.sameRelay(host, searchRelay)) Relays.INCLUDE_SPAM else null
                         val filters = chunks.map { ReadinessProbe.profileFilter(it, token) }
                         async { runCatching { relays.fetch(host, filters, idle = 20_000) }.getOrDefault(emptyList()) }
                     }.awaitAll()
