@@ -90,6 +90,20 @@ API key. A full run reads `ANTHROPIC_API_KEY` from the environment.
 - **`search-staging` sends an AUTH challenge before answering a COUNT**, even
   though `auth_required` is false. Anything resolving on the first non-EVENT
   frame reads the challenge as the answer.
+- **The relay is CLOSED to tokenless queries (2026-08-30).** Every REQ and
+  COUNT whose `search` carries neither an `observer:<64-hex>` token nor
+  `include:spam` gets `CLOSED auth-required: this relay answers through a web
+  of trust and has no house observer to lend you…` — so a plain lookup (a
+  kind 0, a 10002, a 10063) reads as empty, which looks exactly like a reader
+  who published nothing. Every unranked query we send now says `include:spam`;
+  the ranked desks already name their observer. `include:spam sort:rank` is
+  still the anonymous ranking, not a recency cut — measured the same day, its
+  top 100 shares 0 events with plain `include:spam` at the same limit — so the
+  control run keeps its meaning. The gate is the search relay's alone:
+  `scores.brainstorm.world` and `nip85.nosfabrica.com` answered tokenless
+  queries the same day, and a reader's own relays may refuse a `search` field
+  they do not implement, so the token goes only on the search-relay leg of any
+  fan-out. `Relays.INCLUDE_SPAM` / `INCLUDE_SPAM` in `nostr.mjs` hold this.
 - **A NIP-50 search with no `since` times out** on this store; the same search
   with a 24-hour `since` answers immediately.
 - **`observer:` RANKS, it does not filter.** The candidate set for a query is

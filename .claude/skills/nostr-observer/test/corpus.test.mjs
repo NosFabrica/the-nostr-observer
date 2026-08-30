@@ -20,9 +20,11 @@ test('the observed query carries the observer, the sort and the floor', () => {
 
 test('the control run has NO observer and NO floor', () => {
   // Filtering the anonymous read would destroy the only comparison this
-  // project makes.
+  // project makes. `include:spam` is the relay's auth-gate token, not a
+  // filter: without it a bare `sort:rank` is CLOSED outright, and with it the
+  // query is still the anonymous ranking (measured 2026-08-30).
   const filter = filterFor([1], SINCE, UNTIL, 400, null, 20)
-  assert.equal(filter.search, 'sort:rank')
+  assert.equal(filter.search, 'include:spam sort:rank')
   assert.doesNotMatch(filter.search, /observer:|filter:rank/)
 })
 

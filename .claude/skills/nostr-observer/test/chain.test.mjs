@@ -131,5 +131,7 @@ test('the ranked probe always carries `since` and never a trust floor', () => {
   assert.equal(observed.since, 1_786_900_000, 'without `since` this search times out and both sides read zero')
   assert.equal(observed.search, `observer:${OBSERVER} sort:rank`)
   assert.doesNotMatch(observed.search, /filter:rank:gte/, 'a floor here would hide the degradation it exists to catch')
-  assert.equal(rankedProbe(null, 1).search, 'sort:rank')
+  // A bare `sort:rank` is CLOSED by the relay's auth gate now; `include:spam`
+  // opens it and leaves the anonymous ranking intact (measured 2026-08-30).
+  assert.equal(rankedProbe(null, 1).search, 'include:spam sort:rank')
 })
