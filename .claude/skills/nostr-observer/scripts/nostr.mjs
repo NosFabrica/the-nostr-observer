@@ -296,10 +296,13 @@ export const MAX_REQ_BYTES = 240_000
  * 10063 — must say `include:spam` to be answered at all. The ranked desks
  * already name their observer and need nothing.
  *
- * Only on the search relay. The sibling stores (scores.brainstorm.world,
- * nip85.nosfabrica.com, measured the same day) answer tokenless queries, and
- * a reader's own relays may refuse a `search` field they do not implement —
- * so this is for what WE send to search-staging, never a default.
+ * This skill attaches it to every unranked query it sends, unconditionally,
+ * and that is correct BECAUSE the skill talks to exactly one relay: whatever
+ * `--relay` names must be a relay of the observer family anyway — the desks
+ * send `observer:` and `sort:rank` to the same host — so there is no leg of
+ * any read that could reach a relay that would misread the token as a text
+ * search. The Kotlin generator cannot say the same (its profile and Blossom
+ * reads fan out to the reader's own relays) and dresses per host there.
  */
 export const INCLUDE_SPAM = 'include:spam'
 

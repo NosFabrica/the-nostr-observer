@@ -44,8 +44,8 @@ function gatedRelay () {
 }
 
 test('every question the readiness chain asks clears the auth gate', async () => {
-  const { relay: pending } = gatedRelay()
-  const relay = await pending
+  const gate = gatedRelay()
+  const relay = await gate.relay
   try {
     const since = 1_786_800_000
     const [facts, hosting] = await Promise.all([
@@ -59,6 +59,9 @@ test('every question the readiness chain asks clears the auth gate', async () =>
     assert.ok(facts.probeObserved > 0, 'the observed probe was refused')
     assert.ok(facts.probeAnonymous > 0, 'the anonymous probe was refused')
     assert.equal(hosting.seen, true, 'the 10063 lookup was refused')
+    // Belt and braces over the per-fact checks above: nothing was refused and
+    // quietly recovered from either.
+    assert.equal(gate.refused, 0, `${gate.refused} query(ies) hit the gate tokenless`)
   } finally { closeAll(); await relay.close() }
 })
 

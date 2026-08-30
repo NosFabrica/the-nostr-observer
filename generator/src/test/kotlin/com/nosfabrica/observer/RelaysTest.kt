@@ -59,4 +59,16 @@ class RelaysTest {
         // and commas are not filter bytes.
         assertTrue(Relays.MAX_REQ_BYTES < 262_144)
     }
+
+    @Test
+    fun `sameRelay sees through the spellings a real relay list carries`() {
+        // Found by audit 2026-08-30: `host == searchRelay` sent the tokenless
+        // filter to a trailing-slash spelling of the search relay — a query the
+        // auth gate can only refuse.
+        // No case-insensitivity claim here: quartz REJECTS an uppercase scheme
+        // in normalize(), and a host it rejects cannot be fetched either, so
+        // there is no leg for the token to miss.
+        assertTrue(Relays.sameRelay("wss://search.example.com", "wss://search.example.com/"))
+        assertTrue(!Relays.sameRelay("wss://search.example.com", "wss://other.example.com"))
+    }
 }
