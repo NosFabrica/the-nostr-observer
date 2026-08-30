@@ -63,19 +63,29 @@ class ReadinessProbe(
             // `auth_required` is false -- and four handshakes racing on one
             // socket is not something this project gets to fix from the outside.
             // The fetches above genuinely do run in parallel; these do not.
+            // Any leg that lands on the search relay carries `include:spam`
+            // because the auth gate closes a tokenless COUNT too (measured
+            // 2026-08-30); any other host gets the plain filter, because it
+            // never asked for the token and may refuse a `search` field it
+            // does not implement. Decided per HOST and not per side — the
+            // "other" side of either pair can itself be the search relay,
+            // named by a 10040 hint or first in a reader's 10002.
             val scores =
                 provider?.let { (service, hint) ->
                     val cards = Filter(kinds = listOf(ContactCardEvent.KIND), authors = listOf(service))
                     // "There" is the provider's own relay. Asking a second host
                     // is the whole point of the comparison, so failing to reach
                     // it must leave a null denominator rather than borrow ours.
-                    Readiness.Counts(relays.count(searchRelay, cards), relays.count(hint, cards))
+                    Readiness.Counts(relays.count(searchRelay, dressed(searchRelay, cards)), relays.count(hint, dressed(hint, cards)))
                 }
 
             val posts =
                 writes.firstOrNull()?.let { theirRelay ->
                     val mine = Filter(kinds = listOf(1), authors = listOf(observer))
-                    Readiness.Counts(relays.count(searchRelay, mine), relays.count(theirRelay, mine))
+                    Readiness.Counts(
+                        relays.count(searchRelay, dressed(searchRelay, mine)),
+                        relays.count(theirRelay, dressed(theirRelay, mine)),
+                    )
                 }
 
             Readiness.Facts(
@@ -126,8 +136,9 @@ class ReadinessProbe(
             coroutineScope {
                 (hosts.take(3) + searchRelay)
                     .distinct()
-                    .map { host -> async { runCatching { relays.fetch(host, filter, idle = 10_000) }.getOrDefault(emptyList()) } }
-                    .awaitAll()
+                    .map { host ->
+                        async { runCatching { relays.fetch(host, dressed(host, filter), idle = 10_000) }.getOrDefault(emptyList()) }
+                    }.awaitAll()
                     .flatten()
             }
         val newest = events.maxByOrNull { it.createdAt } ?: return emptyList()
@@ -188,12 +199,27 @@ class ReadinessProbe(
             ?.firstOrNull { it.service == ProviderTypes.rank }
             ?.let { it.pubkey to it.relayUrl.url }
 
+    /**
+     * The filter a given host may be asked: the search relay's auth gate
+     * demands `include:spam` on any query naming no observer, while every
+     * other relay never asked for the token and may refuse a `search` field
+     * it does not implement. Matched with [Relays.sameRelay], not string
+     * equality — a reader's list writes the same host in more than one
+     * spelling, and the mismatched spelling used to get the tokenless filter.
+     */
+    internal fun dressed(
+        host: String,
+        filter: Filter,
+    ): Filter = if (Relays.sameRelay(host, searchRelay)) filter.copy(search = Relays.INCLUDE_SPAM) else filter
+
     private suspend fun one(
         kind: Int,
         author: String,
     ): Event? =
         relays
-            .fetch(searchRelay, Filter(kinds = listOf(kind), authors = listOf(author), limit = 1))
+            // `include:spam` because this lookup names no observer and the auth
+            // gate closes it without one. See [Relays.INCLUDE_SPAM].
+            .fetch(searchRelay, Filter(kinds = listOf(kind), authors = listOf(author), limit = 1, search = Relays.INCLUDE_SPAM))
             .maxByOrNull { it.createdAt }
 
     /**
@@ -205,6 +231,12 @@ class ReadinessProbe(
      * none at all. Both sides then come back zero, which [Readiness] correctly
      * reads as a quiet window rather than a broken lens — so link 4 passes
      * every time while testing nothing. It shipped that way once.
+     *
+     * The anonymous side carries `include:spam` because the auth gate CLOSES
+     * a bare `sort:rank` outright now (see [Relays.INCLUDE_SPAM]). The token
+     * does not change what the probe measures: measured 2026-08-30,
+     * `include:spam sort:rank` still returns the anonymous ranking — its top
+     * 100 shares 0 events with the plain-recency `include:spam` cut.
      */
     internal fun rankedProbe(
         observer: String?,
@@ -212,12 +244,18 @@ class ReadinessProbe(
     ) = Filter(
         kinds = listOf(1),
         since = since,
-        search = if (observer == null) "sort:rank" else "observer:$observer sort:rank",
+        search = if (observer == null) "${Relays.INCLUDE_SPAM} sort:rank" else "observer:$observer sort:rank",
         limit = 12,
     )
 
     companion object {
-        /** kind 0 for a batch of authors. */
-        fun profileFilter(authors: List<String>) = Filter(kinds = listOf(MetadataEvent.KIND), authors = authors)
+        /**
+         * kind 0 for a batch of authors. [search] is [Relays.INCLUDE_SPAM] on
+         * the search-relay leg of a fan-out and null everywhere else.
+         */
+        fun profileFilter(
+            authors: List<String>,
+            search: String? = null,
+        ) = Filter(kinds = listOf(MetadataEvent.KIND), authors = authors, search = search)
     }
 }

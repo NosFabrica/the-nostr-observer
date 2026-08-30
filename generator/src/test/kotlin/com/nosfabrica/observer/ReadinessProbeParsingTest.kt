@@ -2,6 +2,7 @@ package com.nosfabrica.observer
 
 import com.nosfabrica.observer.nostr.ReadinessProbe
 import com.nosfabrica.observer.nostr.Relays
+import com.vitorpamplona.quartz.nip01Core.relay.filters.Filter
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertThrows
@@ -71,10 +72,26 @@ class ReadinessProbeParsingTest {
         assertEquals("observer:${Fixtures.ALICE} sort:rank", probe.search)
 
         // The comparison is only worth anything if the two sides differ by the
-        // lens and nothing else.
+        // lens and nothing else. `include:spam` is the relay's auth-gate token,
+        // not a filter: without it a bare `sort:rank` is CLOSED outright, and
+        // with it the query is still the anonymous ranking (measured
+        // 2026-08-30, see Relays.INCLUDE_SPAM).
         val anon = this.probe.rankedProbe(null, 1_786_900_000)
-        assertEquals("sort:rank", anon.search)
+        assertEquals("include:spam sort:rank", anon.search)
         assertEquals(probe.copy(search = anon.search).toJson(), anon.toJson())
+    }
+
+    @Test
+    fun `the auth-gate token goes to the search relay and to no other host`() {
+        // Both directions matter. Tokenless to the search relay is a refused
+        // read that looks like an empty one; the token on a reader's own relay
+        // is a `search` field a plain NIP-01 store may reject outright. And
+        // the match is by relay, not by spelling — the audit found the
+        // trailing-slash form going tokenless.
+        val filter = Filter(kinds = listOf(1), authors = listOf(Fixtures.ALICE))
+        assertEquals(Relays.INCLUDE_SPAM, probe.dressed("wss://example.invalid", filter).search)
+        assertEquals(Relays.INCLUDE_SPAM, probe.dressed("wss://example.invalid/", filter).search)
+        assertNull(probe.dressed("wss://their-relay.example.com", filter).search)
     }
 
     @Test

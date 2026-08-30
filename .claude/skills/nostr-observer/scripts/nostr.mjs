@@ -126,6 +126,26 @@ export function shortNpub (hex) {
 export const MAX_REQ_BYTES = 240_000
 
 /**
+ * The token that opens the search relay to an UNRANKED query.
+ *
+ * Measured 2026-08-30: search-staging now CLOSES every REQ and COUNT whose
+ * `search` field carries neither an `observer:<hex>` token nor `include:spam`
+ * — "auth-required: this relay answers through a web of trust and has no
+ * house observer to lend you." So every plain lookup — a kind 0, a 10002, a
+ * 10063 — must say `include:spam` to be answered at all. The ranked desks
+ * already name their observer and need nothing.
+ *
+ * This skill attaches it to every unranked query it sends, unconditionally,
+ * and that is correct BECAUSE the skill talks to exactly one relay: whatever
+ * `--relay` names must be a relay of the observer family anyway — the desks
+ * send `observer:` and `sort:rank` to the same host — so there is no leg of
+ * any read that could reach a relay that would misread the token as a text
+ * search. The Kotlin generator cannot say the same (its profile and Blossom
+ * reads fan out to the reader's own relays) and dresses per host there.
+ */
+export const INCLUDE_SPAM = 'include:spam'
+
+/**
  * One socket per relay, shared by every subscription on it.
  *
  * The first version opened a fresh WebSocket per read: six for the readiness

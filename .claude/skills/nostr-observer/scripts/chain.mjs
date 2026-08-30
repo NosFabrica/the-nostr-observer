@@ -25,8 +25,9 @@
 // and "we have not looked" are different sentences with different next steps.
 
 // `toNpub` is pure bech32, so importing it here keeps this module testable
-// without a network and keeps hex off the screen.
-import { toNpub } from './nostr.mjs'
+// without a network and keeps hex off the screen. `INCLUDE_SPAM` is the token
+// the search relay's auth gate requires on any query that names no observer.
+import { toNpub, INCLUDE_SPAM } from './nostr.mjs'
 
 export const KIND_RELAY_LIST = 10002 // NIP-65
 export const KIND_TRUST_PROVIDERS = 10040 // NIP-85
@@ -90,12 +91,19 @@ export function blossomServers (event) {
  * NO TRUST FLOOR HERE, deliberately. The floor is what the desks send; this
  * probe must be able to SEE the silent degradation to anonymous ranking, and a
  * floor would hide it by returning nothing either way.
+ *
+ * The anonymous side carries `include:spam` because the relay's auth gate
+ * CLOSES a bare `sort:rank` outright now (measured 2026-08-30). The token
+ * does not change what the probe measures: `include:spam sort:rank` is still
+ * the anonymous ranking — measured the same day, its top 100 shares 0 events
+ * with the plain-recency `include:spam` cut, so `sort:rank` is still doing
+ * the sorting and the token only opens the door.
  */
 export function rankedProbe (observerHex, since) {
   return {
     kinds: [1],
     since,
-    search: observerHex ? `observer:${observerHex} sort:rank` : 'sort:rank',
+    search: observerHex ? `observer:${observerHex} sort:rank` : `${INCLUDE_SPAM} sort:rank`,
     limit: 12,
   }
 }

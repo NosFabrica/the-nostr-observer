@@ -90,6 +90,20 @@ API key. A full run reads `ANTHROPIC_API_KEY` from the environment.
 - **`search-staging` sends an AUTH challenge before answering a COUNT**, even
   though `auth_required` is false. Anything resolving on the first non-EVENT
   frame reads the challenge as the answer.
+- **The relay is CLOSED to tokenless queries (2026-08-30).** Every REQ and
+  COUNT whose `search` carries neither an `observer:<64-hex>` token nor
+  `include:spam` gets `CLOSED auth-required: this relay answers through a web
+  of trust and has no house observer to lend you…` — so a plain lookup (a
+  kind 0, a 10002, a 10063) reads as empty, which looks exactly like a reader
+  who published nothing. Every unranked query we send now says `include:spam`;
+  the ranked desks already name their observer. `include:spam sort:rank` is
+  still the anonymous ranking, not a recency cut — measured the same day, its
+  top 100 shares 0 events with plain `include:spam` at the same limit — so the
+  control run keeps its meaning. The gate is the search relay's alone:
+  `scores.brainstorm.world` and `nip85.nosfabrica.com` answered tokenless
+  queries the same day, and a reader's own relays may refuse a `search` field
+  they do not implement, so the token goes only on the search-relay leg of any
+  fan-out. `Relays.INCLUDE_SPAM` / `INCLUDE_SPAM` in `nostr.mjs` hold this.
 - **A NIP-50 search with no `since` times out** on this store; the same search
   with a 24-hour `since` answers immediately.
 - **`observer:` RANKS, it does not filter.** The candidate set for a query is
@@ -207,10 +221,21 @@ would a `CLAUDE_CODE_OAUTH_TOKEN` pasted into anything of ours.
   after editing either resource — the copies are committed, so `git diff
   --exit-code` after running it says whether they are current.
 
-- **Artifacts block remote images.** Art is hotlinked by settled decision, so in
-  the artifact view every picture degrades to its caption and only the saved
-  local file shows the art. That is why the brief's `alt`-text rule earns its
-  keep here rather than being theoretical.
+- **Artifacts block remote images, so the artifact gets its own copy.** The
+  viewer's content policy refuses every external host, so a hotlinked picture
+  never loads there however correct its URL — the first edition shipped three
+  empty boxes proving it. Since 2026-08-30 `scripts/embed.mjs` builds a
+  separate `.artifact.html` with the pictures inlined as `data:` URIs, and
+  `SKILL.md` step 7 publishes that copy while the reader keeps the hotlinked
+  file. The settled hotlinking decision is not repealed: the EDITION never
+  inlines art — the artifact copy is a delivery envelope. Two guards, because
+  fetching is new attack surface: only shortlist URLs are fetched at all (the
+  corpus is where the attacker writes, and "fetch what the page says" is an
+  outbound request on their behalf), and the bytes are admitted by magic
+  numbers rather than the server's Content-Type, raster formats only — an SVG
+  is a document. A picture that cannot be embedded stays a hotlink and
+  degrades to caption and alt, reported loudly, which is that rule earning its
+  keep rather than being theoretical.
 
 - **`resolve.mjs` exists because the brief promises it.** The brief says
   `<img src="art-3">` and "the id is replaced with the real URL afterwards", and

@@ -23,7 +23,7 @@
 //
 // Usage: node readiness.mjs <npub> [--relay wss://...] [--json out.json]
 
-import { req, one, toHex, toNpub, closeAll } from './nostr.mjs'
+import { req, one, toHex, toNpub, closeAll, INCLUDE_SPAM } from './nostr.mjs'
 import {
   assess, REMEDY, writeRelays, rankProvider, blossomServers, rankedProbe,
   KIND_RELAY_LIST, KIND_TRUST_PROVIDERS, KIND_CONTACT_CARD, KIND_BLOSSOM_SERVERS,
@@ -51,16 +51,19 @@ export async function gather (observerHex, relay, since) {
 
   // Independent of each other, so one round trip rather than two. Only the
   // card read below has to wait, because it needs the service from the 10040.
+  // Each lookup says `include:spam` because the relay's auth gate CLOSES a
+  // tokenless query — see INCLUDE_SPAM. The reader's own 10002 is exactly the
+  // kind of plain read the gate refuses.
   const [relayListEvent, scoreListEvent] = await Promise.all([
-    one(relay, { kinds: [KIND_RELAY_LIST], authors: [observerHex] }, { label: 'kind 10002' }),
-    one(relay, { kinds: [KIND_TRUST_PROVIDERS], authors: [observerHex] }, { label: 'kind 10040' }),
+    one(relay, { kinds: [KIND_RELAY_LIST], authors: [observerHex], search: INCLUDE_SPAM }, { label: 'kind 10002' }),
+    one(relay, { kinds: [KIND_TRUST_PROVIDERS], authors: [observerHex], search: INCLUDE_SPAM }, { label: 'kind 10040' }),
   ])
   const provider = rankProvider(scoreListEvent)
 
   // Only asked when there is a service to ask about. Null, not false: we did
   // not look, which is a different sentence from "the relay holds none".
   const card = provider
-    ? await one(relay, { kinds: [KIND_CONTACT_CARD], authors: [provider.service] }, { label: 'kind 30382' })
+    ? await one(relay, { kinds: [KIND_CONTACT_CARD], authors: [provider.service], search: INCLUDE_SPAM }, { label: 'kind 30382' })
     : null
 
   const [observed, anonymous] = await probes
@@ -87,7 +90,7 @@ export async function gather (observerHex, relay, since) {
  * and publish time is the expensive one.
  */
 export async function storage (observerHex, relay) {
-  const event = await one(relay, { kinds: [KIND_BLOSSOM_SERVERS], authors: [observerHex] }, { label: 'kind 10063' })
+  const event = await one(relay, { kinds: [KIND_BLOSSOM_SERVERS], authors: [observerHex], search: INCLUDE_SPAM }, { label: 'kind 10063' })
   return { seen: event != null, servers: blossomServers(event) ?? [] }
 }
 

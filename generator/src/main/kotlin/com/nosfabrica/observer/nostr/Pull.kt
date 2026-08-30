@@ -227,9 +227,16 @@ class Pull(
             // ranking, which on a measured window was 209 of 400 posts from one
             // spam account. That is why nothing gets here without a lens the
             // readiness chain has already confirmed.
+            //
+            // The control says `include:spam` because the relay's auth gate
+            // CLOSES a bare `sort:rank` outright now (see
+            // [Relays.INCLUDE_SPAM]). It is still the anonymous ranking, not a
+            // recency cut — measured 2026-08-30, `include:spam sort:rank` and
+            // plain `include:spam` at the same limit share 0 events — so the
+            // Instrument panel's comparison is unchanged.
             search =
                 if (observer == null) {
-                    "sort:rank"
+                    "${Relays.INCLUDE_SPAM} sort:rank"
                 } else {
                     "observer:$observer sort:rank filter:rank:gte:$trustFloor"
                 },
@@ -386,14 +393,23 @@ class Pull(
         hosts: List<String> = emptyList(),
     ): Map<String, Byline> {
         if (pubkeys.isEmpty()) return emptyMap()
-        val filters = pubkeys.chunked(100).map { ReadinessProbe.profileFilter(it) }
+        val chunks = pubkeys.chunked(100)
         val best = mutableMapOf<String, Byline>()
         val found =
             coroutineScope {
                 (listOf(searchRelay) + hosts.take(3))
                     .distinct()
-                    .map { host -> async { runCatching { relays.fetch(host, filters, idle = 20_000) }.getOrDefault(emptyList()) } }
-                    .awaitAll()
+                    .map { host ->
+                        // Same question, dressed per host: the search relay's
+                        // auth gate CLOSES a tokenless REQ, while a reader's
+                        // own relay may not implement `search` at all — so the
+                        // token goes to the one host that demands it and to no
+                        // other. [Relays.sameRelay], not `==`: a reader's list
+                        // can name the search relay in another spelling.
+                        val token = if (Relays.sameRelay(host, searchRelay)) Relays.INCLUDE_SPAM else null
+                        val filters = chunks.map { ReadinessProbe.profileFilter(it, token) }
+                        async { runCatching { relays.fetch(host, filters, idle = 20_000) }.getOrDefault(emptyList()) }
+                    }.awaitAll()
                     .flatten()
             }
         found.forEach { event ->
