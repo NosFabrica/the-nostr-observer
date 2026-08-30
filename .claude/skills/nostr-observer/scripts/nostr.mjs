@@ -287,6 +287,23 @@ export function shortNpub (hex) {
 export const MAX_REQ_BYTES = 240_000
 
 /**
+ * The token that opens the search relay to an UNRANKED query.
+ *
+ * Measured 2026-08-30: search-staging now CLOSES every REQ and COUNT whose
+ * `search` field carries neither an `observer:<hex>` token nor `include:spam`
+ * — "auth-required: this relay answers through a web of trust and has no
+ * house observer to lend you." So every plain lookup — a kind 0, a 10002, a
+ * 10063 — must say `include:spam` to be answered at all. The ranked desks
+ * already name their observer and need nothing.
+ *
+ * Only on the search relay. The sibling stores (scores.brainstorm.world,
+ * nip85.nosfabrica.com, measured the same day) answer tokenless queries, and
+ * a reader's own relays may refuse a `search` field they do not implement —
+ * so this is for what WE send to search-staging, never a default.
+ */
+export const INCLUDE_SPAM = 'include:spam'
+
+/**
  * One socket per relay, shared by every subscription on it.
  *
  * The first version opened a fresh WebSocket per read: six for the readiness

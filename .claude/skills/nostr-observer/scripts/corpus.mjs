@@ -13,7 +13,7 @@
 //
 // Usage: node corpus.mjs <npub> [--relay wss://…] [--out corpus.json] [--floor 20]
 
-import { req, toHex, toNpub, shortNpub, streamWriterUrl, classifiedWriterUrl, calendarWriterUrl, tagValue, tagsNamed, closeAll, MAX_REQ_BYTES } from './nostr.mjs'
+import { req, toHex, toNpub, shortNpub, streamWriterUrl, classifiedWriterUrl, calendarWriterUrl, tagValue, tagsNamed, closeAll, MAX_REQ_BYTES, INCLUDE_SPAM } from './nostr.mjs'
 import { writeFileSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
 import { createHash } from 'node:crypto'
@@ -89,6 +89,12 @@ function arg (name, fallback = null) {
  * fail — it silently becomes the anonymous ranking, which on a measured window
  * was 209 of 400 posts from one spam account. Nothing may get here without a
  * lens the readiness chain has already confirmed.
+ *
+ * The control says `include:spam` because the relay's auth gate CLOSES a bare
+ * `sort:rank` now (see INCLUDE_SPAM). It is still the anonymous ranking, not
+ * a recency cut — measured 2026-08-30, `include:spam sort:rank` and plain
+ * `include:spam` at the same limit share 0 events — so the comparison the
+ * Instrument panel makes is unchanged.
  */
 export function filterFor (kinds, since, until, limit, observerHex, floor) {
   return {
@@ -102,7 +108,7 @@ export function filterFor (kinds, since, until, limit, observerHex, floor) {
     limit,
     search: observerHex
       ? `observer:${observerHex} sort:rank filter:rank:gte:${floor}`
-      : 'sort:rank',
+      : `${INCLUDE_SPAM} sort:rank`,
   }
 }
 
@@ -407,7 +413,9 @@ async function main () {
     const perChunk = Math.max(1, Math.floor((MAX_REQ_BYTES * 0.8) / 70))
     const chunks = []
     for (let at = 0; at < authors.length; at += perChunk) chunks.push(authors.slice(at, at + perChunk))
-    const found = (await pool(chunks, 3, async (some) => (await req(relay, { kinds: [0], authors: some }, { label: 'profiles' })).events)).flat()
+    // `include:spam` because a profile fetch names no observer and the auth
+    // gate closes it without one — and a byline read should not be ranked.
+    const found = (await pool(chunks, 3, async (some) => (await req(relay, { kinds: [0], authors: some, search: INCLUDE_SPAM }, { label: 'profiles' })).events)).flat()
     for (const event of found.sort((a, b) => a.created_at - b.created_at)) {
       let meta = {}
       try { meta = JSON.parse(event.content || '{}') } catch { /* a kind 0 that is not JSON */ }

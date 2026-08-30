@@ -71,9 +71,12 @@ class ReadinessProbeParsingTest {
         assertEquals("observer:${Fixtures.ALICE} sort:rank", probe.search)
 
         // The comparison is only worth anything if the two sides differ by the
-        // lens and nothing else.
+        // lens and nothing else. `include:spam` is the relay's auth-gate token,
+        // not a filter: without it a bare `sort:rank` is CLOSED outright, and
+        // with it the query is still the anonymous ranking (measured
+        // 2026-08-30, see Relays.INCLUDE_SPAM).
         val anon = this.probe.rankedProbe(null, 1_786_900_000)
-        assertEquals("sort:rank", anon.search)
+        assertEquals("include:spam sort:rank", anon.search)
         assertEquals(probe.copy(search = anon.search).toJson(), anon.toJson())
     }
 

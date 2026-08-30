@@ -165,7 +165,7 @@ it sets, so on the published copy the sanitizer is the only protection there is.
 | Pre-flight | The lens readiness chain, gathered live and decided by the port. No lens, no edition — the chain says which link is unmet | built |
 | Pull | One websocket, one `REQ` per DESK in parallel, `since` = 24h, `search: "observer:<pk> sort:rank filter:rank:gte:20"`. Fourteen desks: 1, 20, 30311, 1068, 21+34235, 22+34236, 1063, 9802, 30023, 30402, 30818, 31922+31923, 32267, 30617 | built |
 | Identify | Batch `kind 0` for every author seen, 100 per REQ, newest wins | proven |
-| Control run | Same query, observer token removed — the "Instrument" panel. A relay query, not a model call | proven |
+| Control run | Same query, observer token swapped for `include:spam` (the relay closes tokenless queries; it is still the anonymous ranking) — the "Instrument" panel. A relay query, not a model call | proven |
 | Budget | Prune to a token target. A rich lens returns far more than a sparse one in the same 24 hours, so the cap is on *volume*, not time | built |
 | Art shortlist | Read `imeta` for url, MIME, dimensions and alt text. No fetching, no resizing | built |
 | Generate | One call. Fixed system prompt + continuity block + digest + art shortlist → a complete document | built, run against the real API |
@@ -188,6 +188,9 @@ no template to fall back on.
 - Phone photos arrive rotated; anything that renders them must respect EXIF.
 - A bare `observer:<pk>` with no search term is valid and returns a ranked recency
   feed — that is the whole product, and it works.
+- Since 2026-08-30 the relay CLOSES any query whose `search` names neither an
+  `observer:` nor `include:spam` — so every unranked read (profiles, the reader's
+  own lists, the control run) must say `include:spam` or it comes back empty.
 
 ---
 

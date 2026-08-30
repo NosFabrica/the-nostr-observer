@@ -160,6 +160,25 @@ class Relays(
         const val MAX_REQ_BYTES = 240_000
 
         /**
+         * The token that opens the search relay to an UNRANKED query.
+         *
+         * Measured 2026-08-30: `search-staging` now CLOSES every REQ and COUNT
+         * whose `search` field carries neither an `observer:<hex>` token nor
+         * `include:spam` — "auth-required: this relay answers through a web of
+         * trust and has no house observer to lend you." So every plain lookup
+         * — a kind 0, a 10002, a 10063 — must say `include:spam` to be
+         * answered at all. The ranked desks already name their observer and
+         * need nothing.
+         *
+         * Only on the search relay. The sibling stores (scores.brainstorm.world,
+         * nip85.nosfabrica.com, measured the same day) answer tokenless
+         * queries, and a reader's own relays may refuse a `search` field they
+         * do not implement — so callers attach this to the search-relay leg of
+         * a fan-out and never to the others.
+         */
+        const val INCLUDE_SPAM = "include:spam"
+
+        /**
          * Greedy split, in order. One filter per REQ at worst.
          *
          * A single filter over the budget throws rather than being sent to be
