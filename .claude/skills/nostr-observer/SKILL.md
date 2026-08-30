@@ -240,23 +240,37 @@ masthead. Presence in the corpus is evidence of nothing.
 
 ---
 
-## Step 7 — Deliver it
+## Step 7 — Build the artifact copy, then deliver
 
-Do both, in this order:
+**The artifact viewer blocks every external image host.** Its content policy
+refuses remote hosts outright, so a hotlinked picture NEVER loads there,
+however live and correct its URL — the first edition shipped three empty boxes
+proving it. Do not publish the hotlinked page as the artifact and explain the
+blank spaces afterwards; fix it first:
 
-1. **Tell the reader the local file path.** That file is the real edition, and
-   it is the one where the photographs load.
-3. **Publish the same HTML as an artifact** so they can read it immediately.
+```bash
+node <skill>/scripts/embed.mjs editions/observer-<date>-<code>.html --corpus editions/corpus.json
+```
 
-Then say plainly: *the artifact view blocks remote images, so the pictures show
-as their alt text and captions there; open the local file to see the art.*
+That writes `editions/observer-<date>-<code>.artifact.html` — a **separate copy** with
+each picture fetched once and inlined as a `data:` URI. The edition itself
+stays hotlinked and untouched; "art is hotlinked, never inlined" is about the
+paper, and the artifact copy is a delivery envelope, not the paper. Only
+shortlist URLs are fetched (never any other URL the page happens to contain),
+and the bytes are checked by magic numbers, not the server's word.
 
-That is a real limitation and not worth hiding. Artifacts run under a content
-policy that blocks every external host — the URLs are live and correct, the
-viewer simply refuses to fetch them — and this paper hotlinks art where its
-authors published it rather than re-hosting anybody's photographs. Which is why
-`alt` and `<figcaption>` are load-bearing rather than decorative: they are what
-the reader gets when the picture does not arrive.
+**Read what it reports.** A picture it could not embed — host down, over
+budget, wrong bytes — stays a hotlink and shows as its caption and alt in the
+artifact. Tell the reader which ones, plainly. That degradation is why `alt`
+and `<figcaption>` are load-bearing rather than decorative.
+
+Then deliver, in this order:
+
+1. **Tell the reader the local file path** of `editions/observer-<date>-<code>.html`.
+   That file is the real edition — validated, hotlinked, art loading from
+   where its authors published it.
+2. **Publish `editions/observer-<date>-<code>.artifact.html` as the artifact** so they
+   can read it, pictures included, immediately.
 
 ---
 
@@ -288,3 +302,8 @@ full Observer.
 9. **Never print a raw hex pubkey or event id in the page.** Names, or npubs.
 10. **The validator is not negotiable.** Clean, or it does not ship.
 11. **The paper is always light.** Newsprint. Inline `house.css` as given, including `color-scheme: light`. Do not add a `prefers-color-scheme: dark` block. A dark OS is not a reason to reprint the page in night mode.
+12. **The artifact gets the embedded copy; the reader gets the hotlinked
+    file.** The artifact viewer blocks every remote image host, so publishing
+    the edition itself as the artifact ships empty boxes. Run `embed.mjs`
+    first, publish the `.artifact.html` it writes, and report anything it
+    could not embed.

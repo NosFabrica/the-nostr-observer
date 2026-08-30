@@ -224,10 +224,21 @@ would a `CLAUDE_CODE_OAUTH_TOKEN` pasted into anything of ours.
   after editing either resource — the copies are committed, so `git diff
   --exit-code` after running it says whether they are current.
 
-- **Artifacts block remote images.** Art is hotlinked by settled decision, so in
-  the artifact view every picture degrades to its caption and only the saved
-  local file shows the art. That is why the brief's `alt`-text rule earns its
-  keep here rather than being theoretical.
+- **Artifacts block remote images, so the artifact gets its own copy.** The
+  viewer's content policy refuses every external host, so a hotlinked picture
+  never loads there however correct its URL — the first edition shipped three
+  empty boxes proving it. Since 2026-08-30 `scripts/embed.mjs` builds a
+  separate `.artifact.html` with the pictures inlined as `data:` URIs, and
+  `SKILL.md` step 7 publishes that copy while the reader keeps the hotlinked
+  file. The settled hotlinking decision is not repealed: the EDITION never
+  inlines art — the artifact copy is a delivery envelope. Two guards, because
+  fetching is new attack surface: only shortlist URLs are fetched at all (the
+  corpus is where the attacker writes, and "fetch what the page says" is an
+  outbound request on their behalf), and the bytes are admitted by magic
+  numbers rather than the server's Content-Type, raster formats only — an SVG
+  is a document. A picture that cannot be embedded stays a hotlink and
+  degrades to caption and alt, reported loudly, which is that rule earning its
+  keep rather than being theoretical.
 
 - **`resolve.mjs` exists because the brief promises it.** The brief says
   `<img src="art-3">` and "the id is replaced with the real URL afterwards", and

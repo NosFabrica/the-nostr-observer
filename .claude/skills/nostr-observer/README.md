@@ -61,7 +61,8 @@ file.
 | 3 | `corpus.mjs` — fourteen desks plus an unranked control run, over a fixed 24-hour window |
 | 4 | Writes the page against `reference/editorial.md` and `reference/house.css` |
 | 5 | `validate.mjs` — every quote verbatim, every picture from the shortlist, no link to the open web |
-| 6 | Saves the HTML and publishes it as an artifact |
+| 6 | `embed.mjs` — a separate artifact copy with the pictures inlined, since the artifact viewer blocks remote hosts |
+| 7 | Saves the HTML and publishes the embedded copy as an artifact |
 
 ## If it says NOT READY
 
@@ -83,9 +84,10 @@ Four layers, and only the first two can run in CI.
 node --test ".claude/skills/nostr-observer/test/*.test.mjs"
 ```
 
-64 tests. bech32 against the NIP-19 worked example, the readiness chain in
-every state it can reach, query construction, socket sharing, the digest
-budget, and the boundary from both sides.
+75 tests. bech32 against the NIP-19 worked example, the readiness chain in
+every state it can reach, query construction, the relay auth gate, socket
+sharing, the digest budget, the artifact embed step, and the boundary from
+both sides.
 
 **2. The relay client against a relay that misbehaves on purpose.**
 
@@ -140,9 +142,11 @@ publish to your Blossom servers as an nsite, carry the masthead forward from
 yesterday, or run on a schedule. Those are the full Observer.
 
 Also: the artifact viewer blocks remote images, and this paper hotlinks art
-where its authors published it rather than re-hosting anyone's photographs. In
-the artifact, pictures read as their captions; open the saved HTML file to see
-the art.
+where its authors published it rather than re-hosting anyone's photographs.
+The artifact therefore gets its own copy, built by `embed.mjs`, with each
+shortlist picture inlined as a `data:` URI; the saved HTML file stays
+hotlinked. A picture the embed step cannot fetch shows in the artifact as its
+caption and alt, and the run says which.
 
 ## Editing it
 
