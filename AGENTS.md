@@ -209,10 +209,27 @@ would a `CLAUDE_CODE_OAUTH_TOKEN` pasted into anything of ours.
   successful injection. Its haystack is the ranked desks only, matching
   `Validator.kt`'s `corpus.all()`; the control run is not quotable.
 
-- **Permalinks are bare hex only**, stricter than `Validator.PERMALINK`. The
-  editorial brief says hex and the checker accepts hex, so the two halves cannot
-  drift apart the way they did when the regex allowed `nevent1…` in a branch that
-  captured nothing.
+- **Permalinks are jumble.social `nevent1` URLs**, decoded rather than captured.
+  The writer cites `https://jumble.social/notes/<64-hex>`; `resolve.mjs` encodes
+  the nevent; `validate.mjs` decodes it and checks the id against the corpus.
+  The Kotlin regex once allowed `nevent1…` in a branch that captured nothing, so
+  every such link compared against the empty string and a page citing its sources
+  the normal way failed its own check. Decode, or do not accept the link. The
+  full Observer still uses njump.me; this is the skill's host.
+
+- **Three desks get a real destination, and nothing else does.** Broadcasting
+  links to zap.stream, Classifieds to Shopstr, Diary & Calendar to njump — each
+  one an `naddr` the boundary derives, never a URL the writer composed. The
+  shape is the art-id shape: the digest hands the writer a writer-form URL, the
+  resolver re-encodes it to the host's canonical address, and the validator
+  decodes it back and checks the id against the corpus. A fabricated watch or
+  listing link is therefore structurally impossible rather than merely
+  detectable, which is why these three are not an exception to "no links to the
+  open web" so much as an application of the same rule. Only events carrying a
+  `d` tag qualify: without one there is no address to build, and printing a link
+  the sanitizer will unwrap is worse than printing none. Calendar goes to njump
+  rather than jumble because jumble has no calendar view, and because an
+  `nevent` would freeze one revision of a replaceable event.
 
 - **`reference/` is generated.** `tools/sync-skill.sh` copies `system-prompt.md`
   and `house.css` in and prepends a banner correcting the three statements in the
@@ -243,12 +260,14 @@ would a `CLAUDE_CODE_OAUTH_TOKEN` pasted into anything of ours.
   writer the opposite and validated URLs only, so a page written to the brief
   would have had every picture rejected — the same two-halves-disagreeing bug as
   the `nevent1` branch that captured nothing. `resolve.mjs` is that afterwards:
-  ids to URLs, unknown id loses its whole figure, links to the open web unwrapped
-  to plain text. It PRINTS every change that is not a plain resolution, because a
-  dropped figure or an unwrapped link is the visible edge of an injection attempt
-  and a sanitizer that tidies up in silence hides the one event worth seeing.
+  ids to URLs, unknown id loses its whole figure, hex permalinks encoded to
+  jumble.social nevent URLs, stream / listing / calendar links encoded to their
+  host's naddr, and every other link to the open web unwrapped to plain text. It
+  PRINTS every change that is not a plain resolution, because a dropped figure
+  or an unwrapped link is the visible edge of an injection attempt and a
+  sanitizer that tidies up in silence hides the one event worth seeing.
 
-- **Tests: `node --test ".claude/skills/nostr-observer/test/*.test.mjs"`,** wired
+- **Tests: `node --test ".claude/skills/*/test/*.test.mjs"`,** wired
   into `build.yml` alongside a `git diff --exit-code` on the generated
   `reference/`. `test/fakerelay.mjs` is a dependency-free websocket server that
   reproduces the AUTH-before-answer challenge, a mid-stream NOTICE, a silent
@@ -258,6 +277,98 @@ would a `CLAUDE_CODE_OAUTH_TOKEN` pasted into anything of ours.
   from the page itself and asserts nothing is flagged: the adversarial tests ask
   whether the boundary stops bad pages, and that one asks whether it damages good
   ones, which is the likelier way to ship something broken.
+
+### The public shelf (`.claude/skills/observer-pages/`)
+
+A second skill, and a second folder, because printing and publishing are
+different decisions and only one of them is the reader's to make twice.
+
+- **`editions/` is private, `dist/` is public.** Every run of the print skill
+  writes its paper, `corpus.json`, `digest.md` and `readiness.json` into
+  `editions/`. Both are gitignored. The corpus is the reader's whole ranked
+  window — who they follow, what those people said — and it has no business on
+  a static host. Keeping the run's output and the published shelf in one folder
+  meant the only thing standing between the corpus and the open web was the
+  deploy command's argument, which is not a boundary.
+
+- **`site.mjs check` is that boundary, and it runs before Vercel sees the
+  folder.** Anything in `dist/` that is not an edition or site furniture is a
+  non-zero exit. There is no `--force` worth using.
+
+- **Named editions only.** The skill refuses to publish a paper the reader did
+  not name. `editions/` is an archive, not a queue; two papers on one day is
+  normal, and choosing between them is the entire point of the skill.
+
+- **CLI only, and it asks for help rather than routing around a failure.** One
+  `npx vercel deploy` from the agent shell. If that fails — proxy, DNS, token,
+  an approval block — the skill stops and hands the reader the exact command.
+  No MCP deploy, no second attempt through another tool, no alternate host: a
+  deploy path that reroutes itself is a deploy path nobody can audit.
+
+- **No Git-connected Vercel project.** A git link would deploy the source tree,
+  which contains neither the editions nor any intention of being a website.
+
+
+### Audit, 2026-09-21
+
+The desk-link work ported from the fork, read the way the 2026-08-22 audit read
+the boundary. Two halves disagreeing, twice, and one cost nobody had measured.
+
+- **`resolve.mjs` was quadratic, and most of the work was for links it had
+  already decided not to touch.** Each of the six target helpers opened with a
+  full pass over the corpus — `Object.values(corpus.desks).flat()`, then a
+  filter — and only then tested its own regex, so asking "is this a zap.stream
+  address?" about an ordinary paragraph link cost a scan of every desk.
+  `resolve` asks all six about every anchor. Measured on a busy window (4,800
+  ranked events, 528 anchors, a 102 KB page): **585 ms, about 440 ms of it
+  scans for URLs that never matched**. The regex now runs first, and the three
+  lists are indexed once per corpus and keyed on the object — with a
+  `kind:pubkey:d` map, because a linear `find` over every stream is the same
+  mistake one level down. **585 ms → 27 ms**, and linear rather than quadratic;
+  `check()` on a page of open-web links, 209 ms → 18 ms. `resolve` also built
+  its own second set of corpus maps, which is both the same work twice and a
+  chance for the two to disagree about what counts as linkable; it uses the
+  shared index now.
+
+- **The unwrap step lowercased the whole document, once per anchor.** Finding
+  `</a>` was `out.toLowerCase().indexOf('</a>', anchor.end)` — 54 MB of copies
+  nobody reads twice, on that same 102 KB page. A sticky case-insensitive
+  search costs nothing and also accepts `</a >`, which the literal missed.
+
+- **`validate.mjs` accepted a frozen calendar citation that `Validator.kt`
+  refuses.** A jumble nevent naming a 31922/31923 listing passed the skill's
+  boundary: the event is in the corpus and the citation is well formed, but an
+  nevent freezes ONE revision of an event whose whole nature is to be replaced,
+  so the reader clicks through to a meetup whose time has since moved. The
+  Kotlin has had `id !in calendarIds` since the desk landed. `resolve.mjs`
+  rewrites these correctly, so nothing shipped — but that is exactly the
+  argument that let the `nevent1`-capturing-nothing bug live, and a guard whose
+  only job is to catch a regression in the step before it has to be present to
+  do it.
+
+- **And the same rule failed the other way round in the Kotlin.** The brief
+  tells the writer to cite sources with njump permalinks, and njump's canonical
+  form is an nevent. Point one at a calendar listing — the natural thing to
+  write — and `Sanitizer` kept it (no njump-hex match, so it fell through to
+  the permalink keep) while `Validator` refused it. The edition was **thrown
+  away rather than repaired**: a boundary that rejects good pages prints
+  nothing that morning, which is the failure the golden edition exists to
+  catch. The sanitizer now encodes a cited calendar id to its address, as
+  `resolve.mjs` always has.
+
+- **The shelf's link-preview tags were stripped by line, so stamping was not
+  idempotent.** `stripSocialMeta` anchored to `^…$`, which only matches a tag
+  that owns its line. A paper whose writer put them inline kept the stale set,
+  `add` inserted a fresh one, and the page went to press carrying two `og:url`
+  values — one of them the `observer.invalid` placeholder every freshly printed
+  edition is born with, which is a dead hostname in the preview of a shared
+  paper. Dropping the anchors and keeping `[^>]*` would have been the
+  2026-08-22 bug again (`content="Signal > Noise"` cuts its own tag in half and
+  corrupts the document), so `site.mjs` got the scanner treatment `html.mjs`
+  already gives the boundary. Copied rather than imported: the shelf is
+  documented as standing on its own, and a skill that breaks when its neighbour
+  is not installed is not standing on anything.
+
 
 ### Audit, 2026-08-22
 

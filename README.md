@@ -67,8 +67,27 @@ it everywhere instead of only here, copy it into your own skills directory:
 cp -r .claude/skills/nostr-observer ~/.claude/skills/
 ```
 
-It prints today's paper once; it does not publish to your media servers, keep an
-archive, or arrive every morning.
+Each run leaves its paper in `editions/`, on your machine and gitignored,
+alongside the corpus it was written from. It does not publish to your media
+servers and it does not arrive every morning.
+
+If you want one of those papers on the open web, a second skill does only that:
+
+```
+publish today's paper
+```
+
+[`.claude/skills/observer-pages`](.claude/skills/observer-pages) copies the
+editions you *name* into `dist/` and deploys that folder to Vercel. It never
+uploads `editions/` — the corpus is your whole ranked window and it stays off
+the web — and it refuses to deploy a paper you did not ask for.
+
+That one does need an account: a free Vercel Hobby account and `npx vercel
+login` once per machine. You pick the project name and it becomes the address.
+Nothing there needs an agent either — `site.mjs` is an ordinary CLI and the
+whole path is a handful of commands. Both routes, and what gets published
+versus what stays on your disk, are written up in
+[the skill's README](.claude/skills/observer-pages/README.md).
 
 The design is written up in [`docs/PLAN.md`](docs/PLAN.md).
 

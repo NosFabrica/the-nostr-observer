@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- Newsprint tile: a nameplate rule over an Observer O. Geometric so it
+       still reads at 16px, where a serif letter would collapse. -->
+  <rect width="32" height="32" rx="4" fill="#FAF8F3"/>
+  <rect x="6" y="5" width="20" height="3.5" fill="#16121B"/>
+  <circle cx="16" cy="20" r="7.5" fill="none" stroke="#16121B" stroke-width="2.5"/>
+  <circle cx="16" cy="20" r="3.25" fill="#57277F"/>
+</svg>

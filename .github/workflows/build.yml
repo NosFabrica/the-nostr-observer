@@ -39,8 +39,8 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Test the Claude Code skill
-        run: node --test ".claude/skills/nostr-observer/test/*.test.mjs"
+      - name: Test the Claude Code skills
+        run: node --test ".claude/skills/*/test/*.test.mjs"
 
       # `reference/` is generated. If someone edits system-prompt.md or
       # house.css and does not re-run the sync, the skill ships yesterday's

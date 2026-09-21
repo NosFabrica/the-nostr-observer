@@ -1,7 +1,11 @@
 package com.nosfabrica.observer.safe
 
 import com.nosfabrica.observer.corpus.Art
+import com.nosfabrica.observer.nostr.Calendar
+import com.nosfabrica.observer.nostr.Classifieds
 import com.nosfabrica.observer.nostr.Corpus
+import com.nosfabrica.observer.nostr.Streams
+import com.vitorpamplona.quartz.nip01Core.core.Event
 import com.vitorpamplona.quartz.nip19Bech32.Nip19Parser
 import com.vitorpamplona.quartz.nip19Bech32.entities.NEvent
 import com.vitorpamplona.quartz.nip19Bech32.entities.NNote
@@ -46,12 +50,26 @@ class Validator(
      * passed cleanly — a phishing link, under the reader's masthead, signed by
      * the reader. Presence in the corpus is evidence of nothing.
      *
-     * So the paper does not link to the open web at all. It links to Nostr
-     * events, the way a printed paper prints an address without making it
-     * clickable. [Sanitizer] unwraps the rest to plain text; this is the second
-     * line, in case that ever regresses.
+     * So the paper does not link to the open web at all, except permalinks back
+     * to Nostr events we read, verified zap.stream watch links for live streams,
+     * verified Shopstr listing links for classifieds, and verified njump
+     * calendar links for Diary & Calendar listings in the digest.
+     * [Sanitizer] unwraps the rest to plain text; this is the second line, in
+     * case that ever regresses.
      */
     private val corpusEventIds: Set<String> = corpus.all().map { it.id }.toSet()
+
+    /** Live streams we read — the only streams a watch link may name. */
+    private val liveStreams: List<Event> = Streams.live(corpus)
+
+    /** Classifieds we read — the only listings a Shopstr link may name. */
+    private val listings: List<Event> = Classifieds.listed(corpus)
+
+    /** Calendar listings we read — the only events an njump calendar link may name. */
+    private val calendars: List<Event> = Calendar.listed(corpus)
+
+    /** Event ids of calendar listings — bare njump hex for these is not enough. */
+    private val calendarIds: Set<String> = calendars.map { it.id.lowercase() }.toSet()
 
     enum class Kind { QUOTE, IMAGE, LINK }
 
@@ -138,12 +156,25 @@ class Validator(
         for (a in doc.select("a[href]")) {
             val href = a.attr("href")
             if (!href.startsWith("http", ignoreCase = true)) continue
+            val streamId = Streams.streamLinkTarget(href, liveStreams)
+            if (streamId != null && liveStreams.any { it.id.equals(streamId, ignoreCase = true) }) continue
+            val listingId = Classifieds.listingLinkTarget(href, listings)
+            if (listingId != null && listings.any { it.id.equals(listingId, ignoreCase = true) }) continue
+            // Canonical naddr only. Writer-form hex shares the host with ordinary
+            // citations; accepting it here would ship a frozen revision of a
+            // replaceable listing. Sanitizer encodes; this refuses bare hex for
+            // calendar ids so a regression fails closed.
+            val calendarId = Calendar.calendarLinkTarget(href, calendars)
+            if (calendarId != null && href.contains("naddr1", ignoreCase = true)) continue
             val id = permalinkTarget(href)
-            if (id == null || id !in corpusEventIds) {
-                violations.add(
-                    Violation(Kind.LINK, "only permalinks back to a source event may be links", href.take(120)),
-                )
-            }
+            if (id != null && id in corpusEventIds && id !in calendarIds) continue
+            violations.add(
+                Violation(
+                    Kind.LINK,
+                    "only source citations, verified zap.stream watch links, verified Shopstr listing links, and verified njump calendar links may be links",
+                    href.take(120),
+                ),
+            )
         }
 
         return Report(violations, checked)

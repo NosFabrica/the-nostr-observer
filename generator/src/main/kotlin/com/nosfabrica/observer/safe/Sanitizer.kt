@@ -1,6 +1,10 @@
 package com.nosfabrica.observer.safe
 
 import com.nosfabrica.observer.corpus.Art
+import com.nosfabrica.observer.nostr.Calendar
+import com.nosfabrica.observer.nostr.Classifieds
+import com.nosfabrica.observer.nostr.Streams
+import com.vitorpamplona.quartz.nip01Core.core.Event
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
@@ -40,6 +44,29 @@ class Sanitizer(
      * this throws away one link.
      */
     private val corpusEventIds: Set<String> = emptySet(),
+    /**
+     * Live streams this edition read, keyed by event id.
+     *
+     * A watch link in writer form is kept and encoded to zap.stream's naddr;
+     * anything else on zap.stream is unwrapped like any other open-web URL.
+     */
+    private val liveStreams: Map<String, Event> = emptyMap(),
+    /**
+     * Classifieds this edition read, keyed by event id.
+     *
+     * A listing link in writer form is kept and encoded to Shopstr's naddr;
+     * anything else on shopstr.store is unwrapped like any other open-web URL.
+     */
+    private val classifieds: Map<String, Event> = emptyMap(),
+    /**
+     * Calendar listings this edition read, keyed by event id.
+     *
+     * A calendar link in writer form (`njump.me/<64-hex>`) is kept and encoded
+     * to an njump naddr — before the ordinary permalink keep, because writer
+     * form shares that host with source citations. Anything else on njump that
+     * is not a verified citation or calendar address is unwrapped.
+     */
+    private val calendars: Map<String, Event> = emptyMap(),
     /**
      * The house stylesheet, which SHIPS WITH THE PAGE.
      *
@@ -113,6 +140,7 @@ class Sanitizer(
 
         val cleanedBody = Cleaner(safelist()).clean(doc).body()
         cleanInlineStyles(cleanedBody, removed)
+        openCitationsInNewTab(cleanedBody)
 
         return Result(rebuild(title, house, css, cleanedBody.html()), removed)
     }
@@ -154,24 +182,75 @@ class Sanitizer(
     }
 
     /**
-     * The paper prints addresses; it does not make them clickable.
+     * The paper prints addresses; it does not make them clickable — except
+     * permalinks back to a source event, verified zap.stream watch links for
+     * live streams, verified Shopstr listing links for classifieds, and
+     * verified njump calendar links for Diary & Calendar listings.
+     *
+     * Calendar writer form shares `njump.me/<64-hex>` with ordinary citations,
+     * so it is checked before the permalink keep — otherwise a replaceable
+     * listing ships as bare hex and freezes one revision.
      *
      * A URL in the corpus is not evidence that the URL is safe — the corpus is
-     * where the attacker writes. Anything that is not a permalink back to an
-     * event we actually read is unwrapped to its own text: the reader still sees
-     * what was said, and nothing under their masthead is one tap from a drainer.
+     * where the attacker writes. Anything that is not one of those exceptions
+     * is unwrapped to its own text: the reader still sees what was said, and
+     * nothing under their masthead is one tap from a drainer.
      */
     private fun unwrapExternalLinks(
         doc: Document,
         removed: MutableList<String>,
     ) {
+        val streams = liveStreams.values.toList()
+        val listings = classifieds.values.toList()
+        val calendarListings = calendars.values.toList()
         for (a in doc.select("a[href]").toList()) {
             val href = a.attr("href")
             if (!href.startsWith("http", ignoreCase = true)) continue
+            val streamId = Streams.streamLinkTarget(href, streams)
+            val stream = streamId?.let { liveStreams[it] }
+            if (stream != null) {
+                val canonical = Streams.canonicalUrl(stream)
+                if (href != canonical) a.attr("href", canonical)
+                continue
+            }
+            val listingId = Classifieds.listingLinkTarget(href, listings)
+            val listing = listingId?.let { classifieds[it] }
+            if (listing != null) {
+                val canonical = Classifieds.canonicalUrl(listing)
+                if (href != canonical) a.attr("href", canonical)
+                continue
+            }
+            // A calendar listing cited the ordinary way — njump's canonical
+            // nevent — is encoded to its address rather than kept as written.
+            // Without this the sanitizer kept the frozen link and `Validator`
+            // refused it, so an edition that cited a meetup exactly as the
+            // brief asks was thrown away instead of repaired. resolve.mjs has
+            // always done this; this is the half that had not caught up.
+            val calendarId =
+                Calendar.calendarLinkTarget(href, calendarListings)
+                    ?: Validator.permalinkTarget(href)?.takeIf { it in calendars }
+            val calendar = calendarId?.let { calendars[it] }
+            if (calendar != null) {
+                val canonical = Calendar.canonicalUrl(calendar)
+                if (href != canonical) a.attr("href", canonical)
+                continue
+            }
             val cited = Validator.permalinkTarget(href)
             if (cited != null && (corpusEventIds.isEmpty() || cited in corpusEventIds)) continue
             removed.add("link to ${href.take(60)} (unwrapped to text)")
             a.unwrap()
+        }
+    }
+
+    /**
+     * A citation is a source, not a page that should replace the edition.
+     * Whatever survived [unwrapExternalLinks] is a permalink; send it to a
+     * new tab and cut `window.opener`.
+     */
+    private fun openCitationsInNewTab(body: Element) {
+        for (a in body.select("a[href]")) {
+            a.attr("target", "_blank")
+            a.attr("rel", "noopener noreferrer")
         }
     }
 

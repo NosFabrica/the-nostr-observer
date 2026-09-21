@@ -1,5 +1,9 @@
 package com.nosfabrica.observer
 
+import com.nosfabrica.observer.nostr.Calendar
+import com.nosfabrica.observer.nostr.Classifieds
+import com.nosfabrica.observer.nostr.Desk
+import com.nosfabrica.observer.nostr.Streams
 import com.nosfabrica.observer.safe.Validator
 import com.vitorpamplona.quartz.nip01Core.relay.normalizer.NormalizedRelayUrl
 import com.vitorpamplona.quartz.nip19Bech32.entities.NEvent
@@ -104,6 +108,103 @@ class ValidatorTest {
 
         val real = check("""<a href="https://njump.me/${"e1".padStart(64, '0')}">source</a>""")
         assertFalse(real.ok, "and that id has to be one of ours")
+    }
+
+    @Test
+    fun `accepts a verified stream watch link after encoding`() {
+        val stream = Fixtures.liveStream()
+        val validator = Validator(Fixtures.corpus(listOf(stream), Desk.LIVE), Fixtures.art())
+        val canonical = Streams.canonicalUrl(stream)
+        val r = validator.validate("""<html><body><a href="$canonical">NoGood Radio</a></body></html>""")
+        assertTrue(r.ok, r.summary())
+    }
+
+    @Test
+    fun `accepts a verified shopstr listing link after encoding`() {
+        val listing = Fixtures.classified()
+        val validator = Validator(Fixtures.corpus(listOf(listing), Desk.CLASSIFIEDS), Fixtures.art())
+        val canonical = Classifieds.canonicalUrl(listing)
+        val r = validator.validate("""<html><body><a href="$canonical">4 Bars Rough Cut Tallow</a></body></html>""")
+        assertTrue(r.ok, r.summary())
+    }
+
+    @Test
+    fun `accepts a verified njump calendar link after encoding`() {
+        val listing = Fixtures.calendarEntry()
+        val validator = Validator(Fixtures.corpus(listOf(listing), Desk.CALENDAR), Fixtures.art())
+        val canonical = Calendar.canonicalUrl(listing)
+        val r = validator.validate("""<html><body><a href="$canonical">Bitcoin Meetup in Porto</a></body></html>""")
+        assertTrue(r.ok, r.summary())
+    }
+
+    @Test
+    fun `rejects bare hex for a calendar listing we read`() {
+        // Writer form shares the host with ordinary citations. Sanitizer must
+        // encode it; if that regresses, this refuses rather than freezing a
+        // replaceable event as an nevent-shaped permalink.
+        val listing = Fixtures.calendarEntry()
+        val validator = Validator(Fixtures.corpus(listOf(listing), Desk.CALENDAR), Fixtures.art())
+        val writer = Calendar.writerUrl(listing.id)
+        val r = validator.validate("""<html><body><a href="$writer">meetup</a></body></html>""")
+        assertFalse(r.ok)
+        assertTrue(r.violations.single().kind == Validator.Kind.LINK)
+    }
+
+    @Test
+    fun `rejects a zap stream url copied from a post body`() {
+        val invented =
+            Streams.canonicalUrl(
+                Fixtures.event(
+                    "f".repeat(64),
+                    "dd44".repeat(16),
+                    "",
+                    kind = 30311,
+                    tags = listOf(listOf("d", "fake-stream")),
+                ),
+            )
+        val stream = Fixtures.liveStream()
+        val validator = Validator(Fixtures.corpus(listOf(stream), Desk.LIVE), Fixtures.art())
+        val r = validator.validate("""<html><body><a href="$invented">fake</a></body></html>""")
+        assertFalse(r.ok)
+        assertTrue(r.violations.single().kind == Validator.Kind.LINK)
+    }
+
+    @Test
+    fun `rejects a shopstr url copied from a post body`() {
+        val invented =
+            Classifieds.canonicalUrl(
+                Fixtures.event(
+                    "f".repeat(64),
+                    "ee55".repeat(16),
+                    "",
+                    kind = 30402,
+                    tags = listOf(listOf("d", "fake-listing")),
+                ),
+            )
+        val listing = Fixtures.classified()
+        val validator = Validator(Fixtures.corpus(listOf(listing), Desk.CLASSIFIEDS), Fixtures.art())
+        val r = validator.validate("""<html><body><a href="$invented">fake</a></body></html>""")
+        assertFalse(r.ok)
+        assertTrue(r.violations.single().kind == Validator.Kind.LINK)
+    }
+
+    @Test
+    fun `rejects an njump calendar url copied from a post body`() {
+        val invented =
+            Calendar.canonicalUrl(
+                Fixtures.event(
+                    "f".repeat(64),
+                    "ff66".repeat(16),
+                    "",
+                    kind = 31923,
+                    tags = listOf(listOf("d", "fake-meetup")),
+                ),
+            )
+        val listing = Fixtures.calendarEntry()
+        val validator = Validator(Fixtures.corpus(listOf(listing), Desk.CALENDAR), Fixtures.art())
+        val r = validator.validate("""<html><body><a href="$invented">fake</a></body></html>""")
+        assertFalse(r.ok)
+        assertTrue(r.violations.single().kind == Validator.Kind.LINK)
     }
 
     @Test

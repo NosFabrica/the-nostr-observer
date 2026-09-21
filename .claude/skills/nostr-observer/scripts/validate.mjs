@@ -23,6 +23,7 @@
 import { readFileSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
 import { tags, attributes as attrsOf, textIn } from './html.mjs'
+import { toNevent, fromNevent, fromNaddr, toZapStreamUrl, LIVE_KIND, toShopstrUrl, CLASSIFIED_KIND, toNjumpCalendarUrl, CALENDAR_KINDS, tagValue } from './nostr.mjs'
 
 function arg (name, fallback = null) {
   const at = process.argv.indexOf(name)
@@ -110,17 +111,209 @@ export function isQuoted (raw, haystack) {
 }
 
 /**
- * The one external shape a link may take: a permalink to an event we read.
+ * The one external shape a link may take, after resolve.mjs has run:
+ * `https://jumble.social/notes/<nevent1…>` naming an event we read.
  *
- * BARE HEX ONLY, which is stricter than the Kotlin (it also decodes nevent1
- * and note1). Narrower on purpose: the Kotlin's regex once allowed nevent1 in
- * a branch that captured nothing, so every such link compared against the
- * empty string, and an edition citing its sources the normal way failed its
- * own check and was never offered for publication. Two halves of one rule
- * disagreeing. Here the editorial brief says hex and this accepts hex, so they
- * cannot drift apart.
+ * The writer cites `https://jumble.social/notes/<64-hex>` (or, still, a
+ * leftover njump.me hex URL). resolve.mjs encodes the nevent. This checker
+ * DECODES rather than capturing a regex group: the Kotlin regex once allowed
+ * `nevent1…` in a branch that captured nothing, so every such link compared
+ * against the empty string and a page citing its sources the normal way
+ * failed its own check. Decode, or do not accept the link.
  */
-export const PERMALINK = /^https:\/\/njump\.me\/([0-9a-f]{64})(?:[/?#].*)?$/i
+export const PERMALINK = /^https:\/\/jumble\.social\/notes\/(nevent1[0-9a-z]+)(?:[/?#].*)?$/i
+
+export function toPermalink (eventId) {
+  return `https://jumble.social/notes/${toNevent(eventId)}`
+}
+
+/** Event id hex if `href` is a jumble.social nevent permalink; otherwise null. */
+export function permalinkTarget (href) {
+  const match = PERMALINK.exec(href)
+  if (!match) return null
+  try {
+    return fromNevent(match[1])
+  } catch {
+    return null
+  }
+}
+
+export const STREAM_WRITER = /^https:\/\/zap\.stream\/stream\/([0-9a-f]{64})(?:[/?#].*)?$/i
+export const STREAM_NADDR = /^https:\/\/zap\.stream\/(naddr1[0-9a-z]+)(?:[/?#].*)?$/i
+
+export const LISTING_WRITER = /^https:\/\/shopstr\.store\/listing\/([0-9a-f]{64})(?:[/?#].*)?$/i
+export const LISTING_NADDR = /^https:\/\/shopstr\.store\/listing\/(naddr1[0-9a-z]+)(?:[/?#].*)?$/i
+
+export const CALENDAR_WRITER = /^https:\/\/njump\.me\/([0-9a-f]{64})(?:[/?#].*)?$/i
+export const CALENDAR_NADDR = /^https:\/\/njump\.me\/(naddr1[0-9a-z]+)(?:[/?#].*)?$/i
+
+/**
+ * The corpus, indexed once per run instead of once per link.
+ *
+ * Each of the three lists below used to be rebuilt on every call — a `.flat()`
+ * over every desk, then a filter over every event — and `resolve.mjs` asks all
+ * six target helpers about every anchor on the page. Measured on a busy window
+ * (4,800 ranked events, 528 anchors) that was 585 ms in resolve, of which about
+ * 440 ms was these scans running for URLs that do not even match the helper's
+ * own regex. Nothing reads the corpus until it has been parsed from disk and
+ * nothing writes to it afterwards, so it is indexed once and keyed on the
+ * object itself; a caller that mutates a corpus mid-run gets a stale index, and
+ * no caller does.
+ *
+ * `byAddress` exists because the naddr lookup is the one that runs per matching
+ * link, and a linear `find` over every stream is the same mistake one level
+ * down.
+ */
+const INDEX = new WeakMap()
+
+const lower = (value) => String(value || '').toLowerCase()
+const addressKey = (kind, pubkey, identifier) => `${kind}:${lower(pubkey)}:${identifier}`
+
+function indexOf (corpus) {
+  const found = INDEX.get(corpus)
+  if (found) return found
+  const events = Object.values(corpus.desks).flat()
+  const of = (predicate) => {
+    const list = events.filter(predicate)
+    return {
+      list,
+      byId: new Map(list.map((e) => [lower(e.id), e])),
+      byAddress: new Map(list.map((e) => [addressKey(e.kind, e.pubkey, tagValue(e, 'd')), e])),
+    }
+  }
+  const built = {
+    streams: of((e) => e.kind === LIVE_KIND && tagValue(e, 'd')),
+    listings: of((e) => e.kind === CLASSIFIED_KIND && tagValue(e, 'd')),
+    calendars: of((e) => CALENDAR_KINDS.has(e.kind) && tagValue(e, 'd')),
+  }
+  INDEX.set(corpus, built)
+  return built
+}
+
+/** The indexed corpus, for resolve.mjs — so it does not build its own copy. */
+export function corpusIndex (corpus) {
+  return indexOf(corpus)
+}
+
+/** Live-stream events from the corpus — the only streams a watch link may name. */
+export function liveStreams (corpus) {
+  return indexOf(corpus).streams.list
+}
+
+/** Classified events from the corpus — the only listings a Shopstr link may name. */
+export function classifiedListings (corpus) {
+  return indexOf(corpus).listings.list
+}
+
+/** Calendar events from the corpus — the only listings an njump calendar link may name. */
+export function calendarListings (corpus) {
+  return indexOf(corpus).calendars.list
+}
+
+/**
+ * Event id if `href` is a verified zap.stream watch link for a live stream we
+ * read; otherwise null.
+ *
+ * Two shapes after resolve: canonical naddr, or the writer form
+ * `zap.stream/stream/<64-hex>` which resolve encodes. Either way the naddr
+ * must decode to the same pubkey + d-tag as a kind 30311 in the corpus — not
+ * merely appear in somebody's post.
+ */
+export function streamLinkTarget (href, corpus) {
+  // The regex first: a URL that is not a zap.stream address is the common case
+  // on any page, and it used to cost a full pass over the corpus to find out.
+  const naddr = STREAM_NADDR.exec(href)
+  if (!naddr) return null
+  try {
+    const { kind, pubkey, identifier } = fromNaddr(naddr[1])
+    if (kind !== LIVE_KIND) return null
+    const event = indexOf(corpus).streams.byAddress.get(addressKey(kind, pubkey, identifier))
+    return event?.id || null
+  } catch {
+    return null
+  }
+}
+
+/** Writer form, for resolve.mjs only. */
+export function streamWriterTarget (href, corpus) {
+  const writer = STREAM_WRITER.exec(href)
+  if (!writer) return null
+  const id = writer[1].toLowerCase()
+  return indexOf(corpus).streams.byId.has(id) ? id : null
+}
+
+export function toStreamLink (event) {
+  return toZapStreamUrl(event)
+}
+
+/**
+ * Event id if `href` is a verified Shopstr listing link for a classified we
+ * read; otherwise null.
+ *
+ * Two shapes after resolve: canonical naddr, or the writer form
+ * `shopstr.store/listing/<64-hex>` which resolve encodes. Either way the
+ * naddr must decode to the same pubkey + d-tag as a kind 30402 in the corpus.
+ */
+export function listingLinkTarget (href, corpus) {
+  const naddr = LISTING_NADDR.exec(href)
+  if (!naddr) return null
+  try {
+    const { kind, pubkey, identifier } = fromNaddr(naddr[1])
+    if (kind !== CLASSIFIED_KIND) return null
+    const event = indexOf(corpus).listings.byAddress.get(addressKey(kind, pubkey, identifier))
+    return event?.id || null
+  } catch {
+    return null
+  }
+}
+
+/** Writer form, for resolve.mjs only. */
+export function listingWriterTarget (href, corpus) {
+  const writer = LISTING_WRITER.exec(href)
+  if (!writer) return null
+  const id = writer[1].toLowerCase()
+  return indexOf(corpus).listings.byId.has(id) ? id : null
+}
+
+export function toListingLink (event) {
+  return toShopstrUrl(event)
+}
+
+/**
+ * Event id if `href` is a verified njump calendar link for a listing we read;
+ * otherwise null.
+ *
+ * Two shapes after resolve: canonical naddr, or the writer form
+ * `njump.me/<64-hex>` which resolve encodes. Either way the naddr must decode
+ * to the same kind + pubkey + d-tag as a 31922/31923 in the corpus. An nevent
+ * would freeze one revision of a replaceable event; the naddr is the listing.
+ */
+export function calendarLinkTarget (href, corpus) {
+  const naddr = CALENDAR_NADDR.exec(href)
+  if (!naddr) return null
+  try {
+    const { kind, pubkey, identifier } = fromNaddr(naddr[1])
+    if (!CALENDAR_KINDS.has(kind)) return null
+    // The kind is part of the key, so 31922 and 31923 cannot answer for each
+    // other even when a pubkey reuses a d-tag across both.
+    const event = indexOf(corpus).calendars.byAddress.get(addressKey(kind, pubkey, identifier))
+    return event?.id || null
+  } catch {
+    return null
+  }
+}
+
+/** Writer form, for resolve.mjs only. */
+export function calendarWriterTarget (href, corpus) {
+  const writer = CALENDAR_WRITER.exec(href)
+  if (!writer) return null
+  const id = writer[1].toLowerCase()
+  return indexOf(corpus).calendars.byId.has(id) ? id : null
+}
+
+export function toCalendarLink (event) {
+  return toNjumpCalendarUrl(event)
+}
 
 // Things there is no sanitizer to strip, so they are refused instead.
 //
@@ -193,6 +386,7 @@ export function check (html, corpus) {
   const haystack = events.map((e) => normalize(e.content || ''))
   const eventIds = new Set(events.map((e) => e.id))
   const allowedImages = new Set((corpus.art || []).map((a) => a.url))
+  const calendarIds = indexOf(corpus).calendars.byId
 
   const violations = []
   const flag = (kind, detail, excerpt) => violations.push({ kind, detail, excerpt })
@@ -214,17 +408,29 @@ export function check (html, corpus) {
 
   for (const href of attributes(html, 'a', 'href')) {
     if (!/^https?:/i.test(href)) continue
-    const id = PERMALINK.exec(href)?.[1]?.toLowerCase()
-    if (!id || !eventIds.has(id)) {
-      // Presence in the corpus is evidence of NOTHING. An earlier version of
-      // this rule allowlisted every URL that appeared in the corpus, on the
-      // theory that a link nobody posted must have been invented. The corpus
-      // is written by the attacker too: posting "click https://evil.example/x"
-      // put that URL on the allowlist, and an injected instruction to link
-      // every story to it then passed cleanly — a phishing link under the
-      // reader's masthead. So the paper does not link to the open web at all.
-      flag('LINK', 'only permalinks back to a source event may be links', href.slice(0, 120))
-    }
+    const id = permalinkTarget(href)
+    // A jumble nevent naming a CALENDAR listing is refused, though the event is
+    // in the corpus and the citation is well formed. An nevent freezes ONE
+    // revision of an event whose whole nature is to be replaced, so the reader
+    // clicks through to a meetup whose time has since moved. `resolve.mjs`
+    // rewrites these to njump naddrs; refusing them here is what makes a
+    // regression in that step fail closed. `Validator.kt` has had this guard
+    // since the calendar desk landed and this half did not, which is the
+    // two-halves-disagreeing bug the permalink regex already taught us once.
+    if (id && eventIds.has(id) && !calendarIds.has(id)) continue
+    if (streamLinkTarget(href, corpus)) continue
+    if (listingLinkTarget(href, corpus)) continue
+    if (calendarLinkTarget(href, corpus)) continue
+    // Presence in the corpus is evidence of NOTHING. An earlier version of
+    // this rule allowlisted every URL that appeared in the corpus, on the
+    // theory that a link nobody posted must have been invented. The corpus
+    // is written by the attacker too: posting "click https://evil.example/x"
+    // put that URL on the allowlist, and an injected instruction to link
+    // every story to it then passed cleanly — a phishing link under the
+    // reader's masthead. So the paper does not link to the open web at all,
+    // except verified zap.stream / Shopstr / njump-calendar links for events
+    // in the corpus.
+    flag('LINK', 'only source citations, verified zap.stream watch links, Shopstr listing links, and njump calendar links may be links', href.slice(0, 120))
   }
 
   return { violations, quotes, events: events.length, images: allowedImages.size }

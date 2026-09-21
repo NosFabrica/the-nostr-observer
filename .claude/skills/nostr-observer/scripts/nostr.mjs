@@ -70,12 +70,32 @@ function convertBits (data, from, to, pad) {
   return out
 }
 
-/** `npub1…` (or bare 64-hex) to lowercase hex. Throws with a readable sentence. */
+/** `npub1…`, `nprofile1…` (or bare 64-hex) to lowercase hex. Throws with a readable sentence. */
 export function toHex (input) {
   const value = String(input || '').trim()
   if (/^[0-9a-f]{64}$/i.test(value)) return value.toLowerCase()
+  if (value.toLowerCase().startsWith('nprofile1')) {
+    const { hrp, bytes } = decodeBech32(value)
+    if (hrp !== 'nprofile') throw new Error(`Not an nprofile: ${value.slice(0, 24)}`)
+    let i = 0
+    let pubkey = null
+    while (i + 2 <= bytes.length) {
+      const type = bytes[i]
+      const len = bytes[i + 1]
+      i += 2
+      if (i + len > bytes.length) break
+      const payload = bytes.slice(i, i + len)
+      i += len
+      if (type === 0) {
+        if (payload.length !== 32) throw new Error('That nprofile names a pubkey of the wrong length.')
+        pubkey = Buffer.from(payload).toString('hex')
+      }
+    }
+    if (!pubkey) throw new Error('That nprofile does not name a pubkey.')
+    return pubkey
+  }
   if (!value.startsWith('npub1')) {
-    throw new Error(`Not an npub: ${value.slice(0, 24)}. Expected something starting with npub1.`)
+    throw new Error(`Not an npub: ${value.slice(0, 24)}. Expected something starting with npub1 or nprofile1.`)
   }
   const lower = value.toLowerCase()
   const split = lower.lastIndexOf('1')
@@ -95,15 +115,176 @@ export function toHex (input) {
   return Buffer.from(bytes).toString('hex')
 }
 
-/** Hex to `npub1…`. */
-export function toNpub (hex) {
-  const bytes = Array.from(Buffer.from(hex, 'hex'))
-  const data = convertBits(bytes, 8, 5, true)
-  const hrp = 'npub'
+function encodeBech32 (hrp, bytes) {
+  const data = convertBits(Array.from(bytes), 8, 5, true)
+  if (!data) throw new Error('bech32 encode failed')
   const checksum = polymod(hrpExpand(hrp).concat(data).concat([0, 0, 0, 0, 0, 0])) ^ 1
   const tail = []
   for (let i = 0; i < 6; i++) tail.push((checksum >> (5 * (5 - i))) & 31)
   return hrp + '1' + data.concat(tail).map((d) => CHARSET[d]).join('')
+}
+
+function decodeBech32 (value) {
+  const lower = String(value || '').trim().toLowerCase()
+  const split = lower.lastIndexOf('1')
+  if (split < 1) throw new Error(`Not bech32: ${String(value).slice(0, 24)}`)
+  const hrp = lower.slice(0, split)
+  const chars = lower.slice(split + 1)
+  const data = []
+  for (const ch of chars) {
+    const index = CHARSET.indexOf(ch)
+    if (index === -1) throw new Error(`Not bech32: ${String(value).slice(0, 24)} has a character bech32 does not use.`)
+    data.push(index)
+  }
+  if (polymod(hrpExpand(hrp).concat(data)) !== 1) {
+    throw new Error(`That ${hrp} does not checksum.`)
+  }
+  const bytes = convertBits(data.slice(0, -6), 5, 8, false)
+  if (!bytes) throw new Error(`That ${hrp} does not decode.`)
+  return { hrp, bytes }
+}
+
+/** Hex to `npub1…`. */
+export function toNpub (hex) {
+  return encodeBech32('npub', Buffer.from(hex, 'hex'))
+}
+
+/**
+ * Event id hex to `nevent1…` (NIP-19, id only).
+ *
+ * jumble.social's note URLs take an nevent, not bare hex. The writer still
+ * cites hex; resolve.mjs is what encodes. Relays and author are omitted on
+ * purpose: a permalink that names only the event cannot smuggle a relay
+ * the corpus never spoke to.
+ */
+export function toNevent (hex) {
+  const id = String(hex || '').toLowerCase()
+  if (!/^[0-9a-f]{64}$/.test(id)) throw new Error(`Not an event id: ${String(hex).slice(0, 16)}`)
+  return encodeBech32('nevent', [0, 32, ...Buffer.from(id, 'hex')])
+}
+
+export const LIVE_KIND = 30311
+
+/**
+ * Kind 30311 address to `naddr1…` (NIP-19 TLV: 0=identifier, 2=author, 3=kind).
+ *
+ * The first version of this encoding put kind in type 0 and the d-tag in type 2,
+ * which produced bech32 that looked valid and failed on every gateway. NIP-19
+ * is explicit; follow it.
+ */
+export function toNaddr ({ kind, pubkey, identifier }) {
+  const id = String(identifier || '')
+  const pk = String(pubkey || '').toLowerCase()
+  if (!/^[0-9a-f]{64}$/.test(pk)) throw new Error(`Not a pubkey: ${pk.slice(0, 16)}`)
+  const idBytes = Buffer.from(id, 'utf8')
+  const bytes = [
+    0, idBytes.length, ...idBytes,
+    2, 32, ...Buffer.from(pk, 'hex'),
+    3, 4, (kind >>> 24) & 255, (kind >>> 16) & 255, (kind >>> 8) & 255, kind & 255,
+  ]
+  return encodeBech32('naddr', bytes)
+}
+
+/** `naddr1…` to `{ kind, pubkey, identifier }`. Throws on bad input. */
+export function fromNaddr (input) {
+  const value = String(input || '').trim()
+  const { hrp, bytes } = decodeBech32(value)
+  if (hrp !== 'naddr') throw new Error(`Not an naddr: ${value.slice(0, 24)}`)
+  let i = 0
+  let identifier = null
+  let pubkey = null
+  let kind = null
+  while (i + 2 <= bytes.length) {
+    const type = bytes[i]
+    const len = bytes[i + 1]
+    i += 2
+    if (i + len > bytes.length) break
+    const payload = bytes.slice(i, i + len)
+    i += len
+    if (type === 0) identifier = Buffer.from(payload).toString('utf8')
+    if (type === 2 && len === 32) pubkey = Buffer.from(payload).toString('hex')
+    if (type === 3 && len === 4) {
+      kind = ((payload[0] << 24) | (payload[1] << 16) | (payload[2] << 8) | payload[3]) >>> 0
+    }
+  }
+  if (identifier == null || !pubkey || kind == null) throw new Error('That naddr is missing fields.')
+  return { kind, pubkey, identifier }
+}
+
+/** Canonical zap.stream watch page for a live event. */
+export function toZapStreamUrl (event) {
+  const d = tagValue(event, 'd')
+  if (!d || event.kind !== LIVE_KIND) throw new Error('Not a live stream address')
+  return `https://zap.stream/${toNaddr({ kind: LIVE_KIND, pubkey: event.pubkey, identifier: d })}`
+}
+
+/** Writer form: event id hex. resolve.mjs encodes the naddr afterwards. */
+export function streamWriterUrl (eventId) {
+  const id = String(eventId || '').toLowerCase()
+  if (!/^[0-9a-f]{64}$/.test(id)) throw new Error(`Not an event id: ${String(eventId).slice(0, 16)}`)
+  return `https://zap.stream/stream/${id}`
+}
+
+export const CLASSIFIED_KIND = 30402
+
+/** Canonical Shopstr listing page for a classified. */
+export function toShopstrUrl (event) {
+  const d = tagValue(event, 'd')
+  if (!d || event.kind !== CLASSIFIED_KIND) throw new Error('Not a classified address')
+  return `https://shopstr.store/listing/${toNaddr({ kind: CLASSIFIED_KIND, pubkey: event.pubkey, identifier: d })}`
+}
+
+/** Writer form: event id hex. resolve.mjs encodes the naddr afterwards. */
+export function classifiedWriterUrl (eventId) {
+  const id = String(eventId || '').toLowerCase()
+  if (!/^[0-9a-f]{64}$/.test(id)) throw new Error(`Not an event id: ${String(eventId).slice(0, 16)}`)
+  return `https://shopstr.store/listing/${id}`
+}
+
+/** NIP-52 calendar — 31922 all-day, 31923 timed. Both are parameterized replaceable. */
+export const CALENDAR_KINDS = new Set([31922, 31923])
+
+/**
+ * Canonical njump page for a calendar listing.
+ *
+ * jumble.social has no calendar view, and an nevent freezes one revision of a
+ * replaceable event. njump with an naddr is the address that stays on the
+ * listing as the organiser updates it.
+ */
+export function toNjumpCalendarUrl (event) {
+  const d = tagValue(event, 'd')
+  if (!d || !CALENDAR_KINDS.has(event.kind)) throw new Error('Not a calendar address')
+  return `https://njump.me/${toNaddr({ kind: event.kind, pubkey: event.pubkey, identifier: d })}`
+}
+
+/** Writer form: event id hex. resolve.mjs encodes the naddr afterwards. */
+export function calendarWriterUrl (eventId) {
+  const id = String(eventId || '').toLowerCase()
+  if (!/^[0-9a-f]{64}$/.test(id)) throw new Error(`Not an event id: ${String(eventId).slice(0, 16)}`)
+  return `https://njump.me/${id}`
+}
+
+/** `nevent1…` to lowercase event-id hex. Throws if it is not an nevent that names an id. */
+export function fromNevent (input) {
+  const value = String(input || '').trim()
+  const { hrp, bytes } = decodeBech32(value)
+  if (hrp !== 'nevent') throw new Error(`Not an nevent: ${value.slice(0, 24)}`)
+  let i = 0
+  let id = null
+  while (i + 2 <= bytes.length) {
+    const type = bytes[i]
+    const len = bytes[i + 1]
+    i += 2
+    if (i + len > bytes.length) break
+    const payload = bytes.slice(i, i + len)
+    i += len
+    if (type === 0) {
+      if (payload.length !== 32) throw new Error('That nevent names an id of the wrong length.')
+      id = Buffer.from(payload).toString('hex')
+    }
+  }
+  if (!id) throw new Error('That nevent does not name an event.')
+  return id
 }
 
 /** What a person is called when they have published no name. Never hex. */

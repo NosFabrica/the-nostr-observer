@@ -1,8 +1,11 @@
 package com.nosfabrica.observer.corpus
 
+import com.nosfabrica.observer.nostr.Calendar
+import com.nosfabrica.observer.nostr.Classifieds
 import com.nosfabrica.observer.nostr.Corpus
 import com.nosfabrica.observer.nostr.Desk
 import com.nosfabrica.observer.nostr.Names
+import com.nosfabrica.observer.nostr.Streams
 import com.nosfabrica.observer.nostr.client
 import com.nosfabrica.observer.nostr.hashtags
 import com.nosfabrica.observer.nostr.value
@@ -220,6 +223,12 @@ class Digest(
             sb.append("ON AIR SINCE: ").append(stamp.format(Instant.ofEpochSecond(it))).append("Z\n")
         }
         event.value("current_participants")?.let { sb.append("WATCHING: ").append(it).append("\n") }
+        // Streams.live / Sanitizer / Validator only allowlist events with a `d`
+        // tag; printing a watch URL without one invites a link the sanitizer
+        // unwraps before publish.
+        if (!event.value("d").isNullOrBlank()) {
+            sb.append("watch: ").append(Streams.writerUrl(event.id)).append("\n")
+        }
     }
 
     /**
@@ -270,11 +279,18 @@ class Digest(
             // Silence here is what lets the posting time stand in for the
             // event time, so the absence is stated rather than left blank.
             sb.append("WHEN: not stated — this listing has no date, do not give it one\n")
-            return
+        } else {
+            sb.append("WHEN: ").append(starts)
+            event.value("end")?.let { moment(it, zone) }?.let { sb.append(" until ").append(it) }
+            sb.append("\n")
         }
-        sb.append("WHEN: ").append(starts)
-        event.value("end")?.let { moment(it, zone) }?.let { sb.append(" until ").append(it) }
-        sb.append("\n")
+        // Calendar.listed / Sanitizer / Validator only allowlist events with a
+        // `d` tag; printing a calendar URL without one invites a link the
+        // sanitizer unwraps before publish. Writer form is njump hex; Step 5
+        // encodes the naddr so a replaceable listing is not frozen as an nevent.
+        if (!event.value("d").isNullOrBlank()) {
+            sb.append("calendar: ").append(Calendar.writerUrl(event.id)).append("\n")
+        }
     }
 
     /**
@@ -329,6 +345,12 @@ class Digest(
         // advertises a sold item sends readers after something that is gone.
         event.value("status")?.takeIf { it.isNotBlank() }?.let { sb.append("STATUS: ").append(it.take(20)).append("\n") }
         event.value("condition")?.takeIf { it.isNotBlank() }?.let { sb.append("CONDITION: ").append(it.take(20)).append("\n") }
+        // Classifieds.listed / Sanitizer / Validator only allowlist events with
+        // a `d` tag; printing a listing URL without one invites a link the
+        // sanitizer unwraps before publish.
+        if (!event.value("d").isNullOrBlank()) {
+            sb.append("listing: ").append(Classifieds.writerUrl(event.id)).append("\n")
+        }
     }
 
     /**

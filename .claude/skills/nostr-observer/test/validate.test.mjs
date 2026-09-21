@@ -10,17 +10,38 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync, existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { check, quotedText, attributes, normalize, isQuoted, PERMALINK } from '../scripts/validate.mjs'
+import { check, quotedText, attributes, normalize, isQuoted, PERMALINK, toPermalink, permalinkTarget, streamLinkTarget, toStreamLink, listingLinkTarget, toListingLink, calendarLinkTarget, toCalendarLink } from '../scripts/validate.mjs'
 import { resolve } from '../scripts/resolve.mjs'
 
 const EVENT_ID = 'a'.repeat(64)
 const OTHER_ID = 'b'.repeat(64)
+
+const STREAM_ID = 'e'.repeat(64)
+const STREAM_PK = 'cf45a6ba1363ad7ed213a078e710d24115ae721c9b47bd1ebf4458eaefb4c2a5'
+const STREAM_D = '537a365c-f1ec-44ac-af10-22d14a7319fb'
+
+const LISTING_ID = '11'.repeat(32)
+const LISTING_PK = 'aa11'.repeat(16)
+const LISTING_D = 'tallow-bars'
+
+const CALENDAR_ID = '22'.repeat(32)
+const CALENDAR_PK = 'bb22'.repeat(16)
+const CALENDAR_D = 'porto-meetup'
 
 const corpus = {
   desks: {
     notes: [
       { id: EVENT_ID, pubkey: 'aa', content: "The relay answered in three seconds flat — and then it didn't answer at all." },
       { id: OTHER_ID, pubkey: 'bb', content: 'Click https://evil.example.com/drain for free sats' },
+    ],
+    live: [
+      { id: STREAM_ID, kind: 30311, pubkey: STREAM_PK, tags: [['d', STREAM_D], ['title', 'NoGood Radio'], ['status', 'live']], content: '' },
+    ],
+    classifieds: [
+      { id: LISTING_ID, kind: 30402, pubkey: LISTING_PK, tags: [['d', LISTING_D], ['title', '4 Bars Rough Cut Tallow'], ['price', '35', 'USD']], content: '' },
+    ],
+    calendar: [
+      { id: CALENDAR_ID, kind: 31923, pubkey: CALENDAR_PK, tags: [['d', CALENDAR_D], ['title', 'Bitcoin Meetup in Porto']], content: '' },
     ],
   },
   control: [{ id: 'c'.repeat(64), pubkey: 'cc', content: 'Only the anonymous read ever saw this sentence.' }],
@@ -75,17 +96,25 @@ test('PRESENCE IN THE CORPUS IS EVIDENCE OF NOTHING', () => {
 })
 
 test('a permalink to an event we actually read is the one allowed link', () => {
-  assert.deepEqual(kinds(`<a href="https://njump.me/${EVENT_ID}">source</a>`), [])
-  assert.deepEqual(kinds(`<a href="https://njump.me/${'f'.repeat(64)}">source</a>`), ['LINK'],
+  const href = toPermalink(EVENT_ID)
+  assert.deepEqual(kinds(`<a href="${href}">source</a>`), [])
+  assert.deepEqual(kinds(`<a href="${toPermalink('f'.repeat(64))}">source</a>`), ['LINK'],
     'a well-formed permalink to an event not in the corpus is still refused')
+  assert.deepEqual(kinds(`<a href="https://njump.me/${EVENT_ID}">source</a>`), ['LINK'],
+    'njump.me is no longer the permalink host; resolve rewrites it')
+  assert.deepEqual(kinds(`<a href="https://jumble.social/notes/${EVENT_ID}">source</a>`), ['LINK'],
+    'bare hex in the jumble path is the writer form; resolve encodes it')
 })
 
-test('the permalink rule and the editorial brief agree on hex', () => {
+test('the permalink is a jumble.social nevent, decoded rather than captured', () => {
   // The Kotlin regex once allowed `nevent1…` in a branch that captured
   // nothing, so every such link compared against the empty string and a page
-  // citing its sources normally failed its own check.
-  assert.equal(PERMALINK.exec(`https://njump.me/${EVENT_ID}`)?.[1], EVENT_ID)
-  assert.equal(PERMALINK.exec('https://njump.me/nevent1qqq'), null)
+  // citing its sources normally failed its own check. Decode, or refuse.
+  const href = toPermalink(EVENT_ID)
+  assert.equal(permalinkTarget(href), EVENT_ID)
+  assert.match(href, /^https:\/\/jumble\.social\/notes\/nevent1/)
+  assert.equal(permalinkTarget('https://jumble.social/notes/nevent1qqq'), null)
+  assert.equal(PERMALINK.exec(`https://njump.me/${EVENT_ID}`), null)
 })
 
 test('markup with no sanitizer to strip it is REFUSED', () => {
@@ -115,10 +144,93 @@ test('resolve unwraps a link to the open web but keeps its text, and SAYS SO', (
   const { html, changes } = resolve('<p>see <a href="https://evil.example.com/drain">free sats</a> today</p>', corpus)
   assert.equal(html, '<p>see free sats today</p>')
   assert.deepEqual(changes, [{ kind: 'unwrapped', detail: 'https://evil.example.com/drain' }])
-  // A permalink survives.
-  const kept = resolve(`<a href="https://njump.me/${EVENT_ID}">source</a>`, corpus)
-  assert.match(kept.html, /<a /)
-  assert.deepEqual(kept.changes, [])
+})
+
+test('resolve encodes a cited event id as a jumble.social nevent permalink', () => {
+  const writer = `https://jumble.social/notes/${EVENT_ID}`
+  const { html, changes } = resolve(`<a href="${writer}">source</a>`, corpus)
+  const canonical = toPermalink(EVENT_ID)
+  assert.match(html, new RegExp(`href="${canonical}"`))
+  assert.match(html, /target="_blank"/)
+  assert.match(html, /rel="[^"]*noopener/)
+  assert.deepEqual(changes.map((c) => c.kind), ['permalink'])
+  // A leftover njump.me hex URL is upgraded the same way, so an old page
+  // still ships rather than having every citation unwrapped.
+  const legacy = resolve(`<a href="https://njump.me/${EVENT_ID}">source</a>`, corpus)
+  assert.match(legacy.html, new RegExp(`href="${canonical}"`))
+  assert.match(legacy.html, /target="_blank"/)
+})
+
+test('a permalink already in canonical form still opens in a new tab', () => {
+  const canonical = toPermalink(EVENT_ID)
+  const { html, changes } = resolve(`<a href="${canonical}">source</a>`, corpus)
+  assert.match(html, /target="_blank"/)
+  assert.match(html, /rel="[^"]*noopener/)
+  assert.deepEqual(changes.map((c) => c.kind), [])
+})
+
+test('a verified zap.stream watch link is allowed after resolve', () => {
+  const writer = `https://zap.stream/stream/${STREAM_ID}`
+  const canonical = toStreamLink(corpus.desks.live[0])
+  const { html, changes } = resolve(`<a href="${writer}">NoGood Radio</a>`, corpus)
+  assert.match(html, new RegExp(`href="${canonical.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`))
+  assert.match(html, /target="_blank"/)
+  assert.deepEqual(changes.map((c) => c.kind), ['stream'])
+  assert.deepEqual(check(html, corpus).violations, [])
+  assert.equal(streamLinkTarget(canonical, corpus), STREAM_ID)
+  assert.equal(streamLinkTarget('https://zap.stream/stream/' + 'f'.repeat(64), corpus), null)
+  assert.deepEqual(kinds(`<a href="${writer}">NoGood Radio</a>`), ['LINK'],
+    'writer form must be encoded before validate')
+})
+
+test('a zap.stream URL copied from a post body is still refused', () => {
+  const invented = toStreamLink({ kind: 30311, pubkey: 'd'.repeat(64), tags: [['d', 'fake-stream']] })
+  assert.deepEqual(kinds(`<a href="${invented}">listen</a>`), ['LINK'])
+})
+
+test('a verified Shopstr listing link is allowed after resolve', () => {
+  const writer = `https://shopstr.store/listing/${LISTING_ID}`
+  const canonical = toListingLink(corpus.desks.classifieds[0])
+  const { html, changes } = resolve(`<a href="${writer}">4 Bars Rough Cut Tallow</a>`, corpus)
+  assert.match(html, new RegExp(`href="${canonical.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`))
+  assert.match(html, /target="_blank"/)
+  assert.deepEqual(changes.map((c) => c.kind), ['listing'])
+  assert.deepEqual(check(html, corpus).violations, [])
+  assert.equal(listingLinkTarget(canonical, corpus), LISTING_ID)
+  assert.equal(listingLinkTarget('https://shopstr.store/listing/' + 'a'.repeat(64), corpus), null)
+  assert.deepEqual(kinds(`<a href="${writer}">4 Bars Rough Cut Tallow</a>`), ['LINK'],
+    'writer form must be encoded before validate')
+})
+
+test('a shopstr URL copied from a post body is still refused', () => {
+  const invented = toListingLink({ kind: 30402, pubkey: 'd'.repeat(64), tags: [['d', 'fake-listing']] })
+  assert.deepEqual(kinds(`<a href="${invented}">buy</a>`), ['LINK'])
+})
+
+test('a verified njump calendar link is allowed after resolve', () => {
+  const writer = `https://njump.me/${CALENDAR_ID}`
+  const canonical = toCalendarLink(corpus.desks.calendar[0])
+  const { html, changes } = resolve(`<a href="${writer}">Porto, Portugal</a>`, corpus)
+  assert.match(html, new RegExp(`href="${canonical.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`))
+  assert.match(html, /target="_blank"/)
+  assert.deepEqual(changes.map((c) => c.kind), ['calendar'])
+  assert.deepEqual(check(html, corpus).violations, [])
+  assert.equal(calendarLinkTarget(canonical, corpus), CALENDAR_ID)
+  assert.equal(calendarLinkTarget('https://njump.me/' + 'a'.repeat(64), corpus), null)
+  assert.deepEqual(kinds(`<a href="${writer}">Porto, Portugal</a>`), ['LINK'],
+    'writer form must be encoded before validate')
+})
+
+test('a jumble citation of a calendar event is rewritten to an njump naddr', () => {
+  const { html, changes } = resolve(`<a href="https://jumble.social/notes/${CALENDAR_ID}">meetup</a>`, corpus)
+  const canonical = toCalendarLink(corpus.desks.calendar[0])
+  assert.match(html, new RegExp(`href="${canonical.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`))
+  assert.deepEqual(changes.map((c) => c.kind), ['calendar'])
+})
+
+test('an njump calendar URL copied from a post body is still refused', () => {
+  const invented = toCalendarLink({ kind: 31923, pubkey: 'd'.repeat(64), tags: [['d', 'fake-meetup']] })
+  assert.deepEqual(kinds(`<a href="${invented}">meetup</a>`), ['LINK'])
 })
 
 test('resolve then validate leaves nothing for validate to complain about', () => {
@@ -160,9 +272,9 @@ test('THE GOLDEN EDITION survives the boundary intact', { skip: !existsSync(GOLD
   }
 
   const { html, changes } = resolve(page, golden)
-  assert.equal(changes.filter((c) => c.kind !== 'resolved').length, 0,
+  assert.equal(changes.filter((c) => c.kind !== 'resolved' && c.kind !== 'permalink').length, 0,
     'a good page should need nothing dropped or unwrapped')
-  assert.equal(changes.length, ids.length)
+  assert.equal(changes.filter((c) => c.kind === 'resolved').length, ids.length)
 
   const report = check(html, golden)
   assert.ok(report.quotes.length > 0, 'fixture should quote people')
@@ -183,4 +295,60 @@ test('a real page head is not an attack', async () => {
   assert.deepEqual(kinds('<meta http-equiv="refresh" content="0;url=https://evil.example">'), ['MARKUP'])
   assert.deepEqual(kinds('<base href="https://evil.example/">'), ['MARKUP'],
     '<base> rewrites every relative URL on the page and is refused outright')
+})
+
+// --- Audit, 2026-09-21 ------------------------------------------------------
+
+test('a jumble nevent naming a CALENDAR listing is refused, not cited', () => {
+  // An nevent freezes one revision of an event whose whole nature is to be
+  // replaced, so the reader clicks through to a meetup whose time has moved.
+  // resolve.mjs rewrites these to njump naddrs; this is the half that makes a
+  // regression there fail closed, and it is what Validator.kt already did.
+  const frozen = toPermalink(CALENDAR_ID)
+  assert.deepEqual(kinds(`<a href="${frozen}">the meetup</a>`), ['LINK'])
+  // An ordinary note is still citable the normal way.
+  assert.deepEqual(kinds(`<a href="${toPermalink(EVENT_ID)}">source</a>`), [])
+})
+
+test('resolve turns that frozen citation into the njump address', () => {
+  const page = `<a href="${toPermalink(CALENDAR_ID)}">the meetup</a>`
+  const { html, changes } = resolve(page, corpus)
+  assert.deepEqual(changes.map((c) => c.kind), ['calendar'])
+  assert.match(html, /njump\.me\/naddr1/)
+  assert.deepEqual(check(html, corpus).violations, [])
+})
+
+test('a link helper does not read the corpus to answer about a url it cannot parse', () => {
+  // The scan used to run BEFORE the regex, so every anchor on the page cost
+  // six passes over every desk. Measured at 4,800 events and 528 anchors that
+  // was 585 ms in resolve, ~440 ms of it for urls that never matched.
+  let reads = 0
+  const counted = { get desks () { reads++; return corpus.desks }, art: corpus.art }
+  for (const href of ['https://example.test/x', 'mailto:a@b.c', 'https://njump.me/not-an-naddr']) {
+    streamLinkTarget(href, counted)
+    listingLinkTarget(href, counted)
+    calendarLinkTarget(href, counted)
+  }
+  assert.equal(reads, 0)
+})
+
+test('the corpus is indexed once, however many links ask about it', () => {
+  let reads = 0
+  const counted = { get desks () { reads++; return corpus.desks }, art: corpus.art }
+  const stream = toStreamLink(corpus.desks.live[0])
+  for (let i = 0; i < 50; i++) assert.ok(streamLinkTarget(stream, counted))
+  assert.equal(reads, 1)
+})
+
+test('unwrapping an open-web link does not depend on the case of its closing tag', () => {
+  // The old search lowercased the WHOLE document once per anchor — 54 MB of
+  // copies on a 102 KB page with 528 of them. The sticky search that replaced
+  // it also accepts `</a >`, which the literal missed.
+  for (const close of ['</a>', '</A>', '</a >']) {
+    const page = `<p>before <a href="https://evil.example/x">text${close} after</p>`
+    const { html, changes } = resolve(page, corpus)
+    assert.deepEqual(changes.map((c) => c.kind), ['unwrapped'])
+    assert.match(html, /before text after/)
+    assert.doesNotMatch(html, /<a\b/i)
+  }
 })

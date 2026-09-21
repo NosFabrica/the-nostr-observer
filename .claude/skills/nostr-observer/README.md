@@ -45,7 +45,7 @@ and ask for it:
 
 It will ask which npub to read for, check that your lens actually resolves, and
 stop with a specific remedy if it does not. If it prints a paper, you get two
-things: an `observer-<date>-<code>.html` file in that directory, and an
+things: an `observer-<date>-<code>.html` file in `editions/` of that directory, and an
 artifact link.
 
 Everything runs locally. You are not signing in to anything of ours, and no
@@ -84,10 +84,11 @@ Four layers, and only the first two can run in CI.
 node --test ".claude/skills/nostr-observer/test/*.test.mjs"
 ```
 
-75 tests. bech32 against the NIP-19 worked example, the readiness chain in
+89 tests. bech32 against the NIP-19 worked example, the readiness chain in
 every state it can reach, query construction, the relay auth gate, socket
-sharing, the digest budget, the artifact embed step, and the boundary from
-both sides.
+sharing, the digest budget, the artifact embed step, the verified
+zap.stream / Shopstr / njump link encodings, and the boundary from both
+sides.
 
 **2. The relay client against a relay that misbehaves on purpose.**
 
@@ -111,8 +112,9 @@ you installed the skill on its own, without the repository.)
 **4. Live, against the relay — needs a reader with a working lens.**
 
 ```bash
+mkdir -p editions
 node scripts/readiness.mjs <npub>              # exit 0 means ready
-node scripts/corpus.mjs <npub> --out corpus.json > digest.md
+node scripts/corpus.mjs <npub> --out editions/corpus.json > editions/digest.md
 ```
 
 This is the layer CI cannot have, because the workflow's rule is that nothing
@@ -135,9 +137,10 @@ assertion for it.
 
 ## What it does not do
 
-Publish to your Blossom servers as an nsite, keep an archive, carry the
-masthead forward from yesterday, or run on a schedule. Those are the full
-Observer. This prints today's paper once.
+Put a paper on the public web — that is the sibling skill `observer-pages`.
+This prints today's paper into `editions/` and stops. It also does not
+publish to your Blossom servers as an nsite, carry the masthead forward from
+yesterday, or run on a schedule. Those are the full Observer.
 
 Also: the artifact viewer blocks remote images, and this paper hotlinks art
 where its authors published it rather than re-hosting anyone's photographs.

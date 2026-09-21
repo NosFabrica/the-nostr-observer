@@ -222,6 +222,9 @@ a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .col { padding: 20px; border-left: 1px solid var(--rule); }
 .col:first-child { padding-left: 0; border-left: 0; }
 .col:last-child { padding-right: 0; }
+/* Column children need air between them. Without this a stack of stories in one
+ * column runs together and reads as a single item with several headlines. */
+.col > * + * { margin-top: 18px; }
 .span-3 { grid-column: span 3; }
 .span-4 { grid-column: span 4; }
 .span-5 { grid-column: span 5; }

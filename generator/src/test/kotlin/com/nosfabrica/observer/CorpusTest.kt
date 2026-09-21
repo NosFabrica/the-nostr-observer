@@ -615,15 +615,89 @@ class ListingTest {
     }
 
     @Test
+    fun `a calendar entry carries a calendar url`() {
+        val meetup =
+            Fixtures.event(
+                Fixtures.CALENDAR_ID,
+                Fixtures.ALICE,
+                "Come along",
+                kind = 31923,
+                tags =
+                    listOf(
+                        listOf("d", Fixtures.CALENDAR_D),
+                        listOf("title", "Jersey City Bitcoin"),
+                        listOf("start", "1792105200"),
+                        listOf("start_tzid", "America/New_York"),
+                    ),
+            )
+        val text = render(Desk.CALENDAR, meetup)
+        assertTrue(text.contains("calendar: https://njump.me/${Fixtures.CALENDAR_ID}"), text)
+    }
+
+    @Test
+    fun `a calendar entry without a d tag has no calendar url`() {
+        val bare =
+            Fixtures.event(
+                Fixtures.CALENDAR_ID,
+                Fixtures.ALICE,
+                "Come along",
+                kind = 31923,
+                tags =
+                    listOf(
+                        listOf("title", "Jersey City Bitcoin"),
+                        listOf("start", "1792105200"),
+                        listOf("start_tzid", "America/New_York"),
+                    ),
+            )
+        val text = render(Desk.CALENDAR, bare)
+        assertFalse(text.contains("calendar:"), text)
+    }
+
+    @Test
+    fun `a live stream carries a watch url`() {
+        val stream =
+            Fixtures.event(
+                Fixtures.STREAM_ID,
+                Fixtures.ALICE,
+                "",
+                kind = 30311,
+                tags =
+                    listOf(
+                        listOf("d", Fixtures.STREAM_D),
+                        listOf("title", "NoGood Radio"),
+                        listOf("status", "live"),
+                        listOf("starts", "1786900000"),
+                    ),
+            )
+        val text = render(Desk.LIVE, stream)
+        assertTrue(text.contains("watch: https://zap.stream/stream/${Fixtures.STREAM_ID}"), text)
+    }
+
+    @Test
+    fun `a live stream without a d tag has no watch url`() {
+        val bare =
+            Fixtures.event(
+                Fixtures.STREAM_ID,
+                Fixtures.ALICE,
+                "",
+                kind = 30311,
+                tags = listOf(listOf("title", "NoGood Radio"), listOf("status", "live")),
+            )
+        val text = render(Desk.LIVE, bare)
+        assertFalse(text.contains("watch:"), text)
+    }
+
+    @Test
     fun `a classified carries its price`() {
         val listing =
             Fixtures.event(
-                "s1",
+                Fixtures.LISTING_ID,
                 Fixtures.ALICE,
                 "Two modules, boxed.",
                 kind = 30402,
                 tags =
                     listOf(
+                        listOf("d", Fixtures.LISTING_D),
                         listOf("title", "Super rare Micron memory modules"),
                         listOf("price", "210000", "SATS"),
                         listOf("status", "active"),
@@ -634,6 +708,25 @@ class ListingTest {
         assertTrue(text.contains("PRICE: 210000 SATS"), text)
         assertTrue(text.contains("STATUS: active"), text)
         assertTrue(text.contains("CONDITION: used"), text)
+        assertTrue(text.contains("listing: https://shopstr.store/listing/${Fixtures.LISTING_ID}"), text)
+    }
+
+    @Test
+    fun `a classified without a d tag has no listing url`() {
+        val bare =
+            Fixtures.event(
+                Fixtures.LISTING_ID,
+                Fixtures.ALICE,
+                "Two modules, boxed.",
+                kind = 30402,
+                tags =
+                    listOf(
+                        listOf("title", "Super rare Micron memory modules"),
+                        listOf("price", "210000", "SATS"),
+                    ),
+            )
+        val text = render(Desk.CLASSIFIEDS, bare)
+        assertFalse(text.contains("listing:"), text)
     }
 
     @Test
