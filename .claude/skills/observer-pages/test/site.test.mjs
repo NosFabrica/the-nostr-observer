@@ -10,6 +10,7 @@ import {
   firstImageOf,
   socialMetaBlock,
   withSocialMeta,
+  stripSocialMeta,
   formatDate,
   matchSelectors,
   papersIn,
@@ -234,4 +235,42 @@ test('writeSite on an empty dist is a valid empty shelf', () => {
   const { dist } = stage()
   writeSite(dist)
   assert.ok(readFileSync(join(dist, 'index.html'), 'utf8').includes('The shelf is empty'))
+})
+
+// --- Audit, 2026-09-21 ------------------------------------------------------
+
+test('stamping is idempotent even when the paper wrote its meta tags inline', () => {
+  // The strip anchored to line boundaries, so a writer that emitted its tags
+  // on one line kept the stale ones and the page went to press with two
+  // og:url values — one of them the observer.invalid placeholder every freshly
+  // printed edition is born with.
+  const inline = '<!doctype html><html><head><title>T</title>'
+    + '<meta property="og:title" content="STALE">'
+    + '<meta property="og:url" content="https://observer.invalid/observer-2026-08-28-5FE9EE.html">'
+    + '</head><body><h2 class="lead-head">A Headline</h2></body></html>'
+  const out = withSocialMeta(inline, {
+    file: 'observer-2026-08-28-5FE9EE.html', date: '2026-08-28', code: '5FE9EE', headline: 'A Headline',
+  })
+  assert.equal([...out.matchAll(/property="og:url"/g)].length, 1)
+  assert.equal([...out.matchAll(/property="og:title"/g)].length, 1)
+  assert.ok(!out.includes('observer.invalid'))
+  assert.ok(!out.includes('STALE'))
+})
+
+test('a headline containing > does not cut its own tag in half', () => {
+  // `<meta[^>]*>` ends at the first `>` wherever it is. The 2026-08-22 audit
+  // recorded this for the boundary; the shelf inherited the same shape.
+  const html = '<!doctype html><html><head><title>T</title>\n'
+    + '  <meta property="og:title" content="Signal > Noise, Say Relays">\n'
+    + '  <meta name="keeper" content="untouched">\n'
+    + '</head><body></body></html>'
+  const out = stripSocialMeta(html)
+  assert.equal([...out.matchAll(/property="og:/g)].length, 0)
+  assert.ok(out.includes('<meta name="keeper" content="untouched">'))
+  assert.ok(out.includes('</head>'))
+})
+
+test('stripping a tag that owned a line takes the line, not its neighbour', () => {
+  const html = '<head>\n  <meta name="description" content="x">\n  <meta charset="utf-8">\n</head>'
+  assert.equal(stripSocialMeta(html), '<head>\n  <meta charset="utf-8">\n</head>')
 })

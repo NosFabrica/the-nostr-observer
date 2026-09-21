@@ -147,19 +147,67 @@ export const LISTING_NADDR = /^https:\/\/shopstr\.store\/listing\/(naddr1[0-9a-z
 export const CALENDAR_WRITER = /^https:\/\/njump\.me\/([0-9a-f]{64})(?:[/?#].*)?$/i
 export const CALENDAR_NADDR = /^https:\/\/njump\.me\/(naddr1[0-9a-z]+)(?:[/?#].*)?$/i
 
+/**
+ * The corpus, indexed once per run instead of once per link.
+ *
+ * Each of the three lists below used to be rebuilt on every call — a `.flat()`
+ * over every desk, then a filter over every event — and `resolve.mjs` asks all
+ * six target helpers about every anchor on the page. Measured on a busy window
+ * (4,800 ranked events, 528 anchors) that was 585 ms in resolve, of which about
+ * 440 ms was these scans running for URLs that do not even match the helper's
+ * own regex. Nothing reads the corpus until it has been parsed from disk and
+ * nothing writes to it afterwards, so it is indexed once and keyed on the
+ * object itself; a caller that mutates a corpus mid-run gets a stale index, and
+ * no caller does.
+ *
+ * `byAddress` exists because the naddr lookup is the one that runs per matching
+ * link, and a linear `find` over every stream is the same mistake one level
+ * down.
+ */
+const INDEX = new WeakMap()
+
+const lower = (value) => String(value || '').toLowerCase()
+const addressKey = (kind, pubkey, identifier) => `${kind}:${lower(pubkey)}:${identifier}`
+
+function indexOf (corpus) {
+  const found = INDEX.get(corpus)
+  if (found) return found
+  const events = Object.values(corpus.desks).flat()
+  const of = (predicate) => {
+    const list = events.filter(predicate)
+    return {
+      list,
+      byId: new Map(list.map((e) => [lower(e.id), e])),
+      byAddress: new Map(list.map((e) => [addressKey(e.kind, e.pubkey, tagValue(e, 'd')), e])),
+    }
+  }
+  const built = {
+    streams: of((e) => e.kind === LIVE_KIND && tagValue(e, 'd')),
+    listings: of((e) => e.kind === CLASSIFIED_KIND && tagValue(e, 'd')),
+    calendars: of((e) => CALENDAR_KINDS.has(e.kind) && tagValue(e, 'd')),
+  }
+  INDEX.set(corpus, built)
+  return built
+}
+
+/** The indexed corpus, for resolve.mjs — so it does not build its own copy. */
+export function corpusIndex (corpus) {
+  return indexOf(corpus)
+}
+
 /** Live-stream events from the corpus — the only streams a watch link may name. */
 export function liveStreams (corpus) {
-  return Object.values(corpus.desks).flat().filter((e) => e.kind === LIVE_KIND && tagValue(e, 'd'))
+  return indexOf(corpus).streams.list
 }
 
 /** Classified events from the corpus — the only listings a Shopstr link may name. */
 export function classifiedListings (corpus) {
-  return Object.values(corpus.desks).flat().filter((e) => e.kind === CLASSIFIED_KIND && tagValue(e, 'd'))
+  return indexOf(corpus).listings.list
 }
 
 /** Calendar events from the corpus — the only listings an njump calendar link may name. */
 export function calendarListings (corpus) {
-  return Object.values(corpus.desks).flat().filter((e) => CALENDAR_KINDS.has(e.kind) && tagValue(e, 'd'))
+  return indexOf(corpus).calendars.list
 }
 
 /**
@@ -172,15 +220,14 @@ export function calendarListings (corpus) {
  * merely appear in somebody's post.
  */
 export function streamLinkTarget (href, corpus) {
-  const streams = liveStreams(corpus)
+  // The regex first: a URL that is not a zap.stream address is the common case
+  // on any page, and it used to cost a full pass over the corpus to find out.
   const naddr = STREAM_NADDR.exec(href)
   if (!naddr) return null
   try {
     const { kind, pubkey, identifier } = fromNaddr(naddr[1])
     if (kind !== LIVE_KIND) return null
-    const event = streams.find((e) =>
-      e.pubkey.toLowerCase() === pubkey.toLowerCase() && tagValue(e, 'd') === identifier,
-    )
+    const event = indexOf(corpus).streams.byAddress.get(addressKey(kind, pubkey, identifier))
     return event?.id || null
   } catch {
     return null
@@ -189,12 +236,10 @@ export function streamLinkTarget (href, corpus) {
 
 /** Writer form, for resolve.mjs only. */
 export function streamWriterTarget (href, corpus) {
-  const streams = liveStreams(corpus)
-  const byId = new Map(streams.map((e) => [e.id, e]))
   const writer = STREAM_WRITER.exec(href)
   if (!writer) return null
   const id = writer[1].toLowerCase()
-  return byId.has(id) ? id : null
+  return indexOf(corpus).streams.byId.has(id) ? id : null
 }
 
 export function toStreamLink (event) {
@@ -210,15 +255,12 @@ export function toStreamLink (event) {
  * naddr must decode to the same pubkey + d-tag as a kind 30402 in the corpus.
  */
 export function listingLinkTarget (href, corpus) {
-  const listings = classifiedListings(corpus)
   const naddr = LISTING_NADDR.exec(href)
   if (!naddr) return null
   try {
     const { kind, pubkey, identifier } = fromNaddr(naddr[1])
     if (kind !== CLASSIFIED_KIND) return null
-    const event = listings.find((e) =>
-      e.pubkey.toLowerCase() === pubkey.toLowerCase() && tagValue(e, 'd') === identifier,
-    )
+    const event = indexOf(corpus).listings.byAddress.get(addressKey(kind, pubkey, identifier))
     return event?.id || null
   } catch {
     return null
@@ -227,12 +269,10 @@ export function listingLinkTarget (href, corpus) {
 
 /** Writer form, for resolve.mjs only. */
 export function listingWriterTarget (href, corpus) {
-  const listings = classifiedListings(corpus)
-  const byId = new Map(listings.map((e) => [e.id, e]))
   const writer = LISTING_WRITER.exec(href)
   if (!writer) return null
   const id = writer[1].toLowerCase()
-  return byId.has(id) ? id : null
+  return indexOf(corpus).listings.byId.has(id) ? id : null
 }
 
 export function toListingLink (event) {
@@ -249,17 +289,14 @@ export function toListingLink (event) {
  * would freeze one revision of a replaceable event; the naddr is the listing.
  */
 export function calendarLinkTarget (href, corpus) {
-  const listings = calendarListings(corpus)
   const naddr = CALENDAR_NADDR.exec(href)
   if (!naddr) return null
   try {
     const { kind, pubkey, identifier } = fromNaddr(naddr[1])
     if (!CALENDAR_KINDS.has(kind)) return null
-    const event = listings.find((e) =>
-      e.kind === kind &&
-      e.pubkey.toLowerCase() === pubkey.toLowerCase() &&
-      tagValue(e, 'd') === identifier,
-    )
+    // The kind is part of the key, so 31922 and 31923 cannot answer for each
+    // other even when a pubkey reuses a d-tag across both.
+    const event = indexOf(corpus).calendars.byAddress.get(addressKey(kind, pubkey, identifier))
     return event?.id || null
   } catch {
     return null
@@ -268,12 +305,10 @@ export function calendarLinkTarget (href, corpus) {
 
 /** Writer form, for resolve.mjs only. */
 export function calendarWriterTarget (href, corpus) {
-  const listings = calendarListings(corpus)
-  const byId = new Map(listings.map((e) => [e.id, e]))
   const writer = CALENDAR_WRITER.exec(href)
   if (!writer) return null
   const id = writer[1].toLowerCase()
-  return byId.has(id) ? id : null
+  return indexOf(corpus).calendars.byId.has(id) ? id : null
 }
 
 export function toCalendarLink (event) {
@@ -351,6 +386,7 @@ export function check (html, corpus) {
   const haystack = events.map((e) => normalize(e.content || ''))
   const eventIds = new Set(events.map((e) => e.id))
   const allowedImages = new Set((corpus.art || []).map((a) => a.url))
+  const calendarIds = indexOf(corpus).calendars.byId
 
   const violations = []
   const flag = (kind, detail, excerpt) => violations.push({ kind, detail, excerpt })
@@ -373,7 +409,15 @@ export function check (html, corpus) {
   for (const href of attributes(html, 'a', 'href')) {
     if (!/^https?:/i.test(href)) continue
     const id = permalinkTarget(href)
-    if (id && eventIds.has(id)) continue
+    // A jumble nevent naming a CALENDAR listing is refused, though the event is
+    // in the corpus and the citation is well formed. An nevent freezes ONE
+    // revision of an event whose whole nature is to be replaced, so the reader
+    // clicks through to a meetup whose time has since moved. `resolve.mjs`
+    // rewrites these to njump naddrs; refusing them here is what makes a
+    // regression in that step fail closed. `Validator.kt` has had this guard
+    // since the calendar desk landed and this half did not, which is the
+    // two-halves-disagreeing bug the permalink regex already taught us once.
+    if (id && eventIds.has(id) && !calendarIds.has(id)) continue
     if (streamLinkTarget(href, corpus)) continue
     if (listingLinkTarget(href, corpus)) continue
     if (calendarLinkTarget(href, corpus)) continue

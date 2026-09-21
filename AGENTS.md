@@ -309,6 +309,67 @@ different decisions and only one of them is the reader's to make twice.
   which contains neither the editions nor any intention of being a website.
 
 
+### Audit, 2026-09-21
+
+The desk-link work ported from the fork, read the way the 2026-08-22 audit read
+the boundary. Two halves disagreeing, twice, and one cost nobody had measured.
+
+- **`resolve.mjs` was quadratic, and most of the work was for links it had
+  already decided not to touch.** Each of the six target helpers opened with a
+  full pass over the corpus — `Object.values(corpus.desks).flat()`, then a
+  filter — and only then tested its own regex, so asking "is this a zap.stream
+  address?" about an ordinary paragraph link cost a scan of every desk.
+  `resolve` asks all six about every anchor. Measured on a busy window (4,800
+  ranked events, 528 anchors, a 102 KB page): **585 ms, about 440 ms of it
+  scans for URLs that never matched**. The regex now runs first, and the three
+  lists are indexed once per corpus and keyed on the object — with a
+  `kind:pubkey:d` map, because a linear `find` over every stream is the same
+  mistake one level down. **585 ms → 27 ms**, and linear rather than quadratic;
+  `check()` on a page of open-web links, 209 ms → 18 ms. `resolve` also built
+  its own second set of corpus maps, which is both the same work twice and a
+  chance for the two to disagree about what counts as linkable; it uses the
+  shared index now.
+
+- **The unwrap step lowercased the whole document, once per anchor.** Finding
+  `</a>` was `out.toLowerCase().indexOf('</a>', anchor.end)` — 54 MB of copies
+  nobody reads twice, on that same 102 KB page. A sticky case-insensitive
+  search costs nothing and also accepts `</a >`, which the literal missed.
+
+- **`validate.mjs` accepted a frozen calendar citation that `Validator.kt`
+  refuses.** A jumble nevent naming a 31922/31923 listing passed the skill's
+  boundary: the event is in the corpus and the citation is well formed, but an
+  nevent freezes ONE revision of an event whose whole nature is to be replaced,
+  so the reader clicks through to a meetup whose time has since moved. The
+  Kotlin has had `id !in calendarIds` since the desk landed. `resolve.mjs`
+  rewrites these correctly, so nothing shipped — but that is exactly the
+  argument that let the `nevent1`-capturing-nothing bug live, and a guard whose
+  only job is to catch a regression in the step before it has to be present to
+  do it.
+
+- **And the same rule failed the other way round in the Kotlin.** The brief
+  tells the writer to cite sources with njump permalinks, and njump's canonical
+  form is an nevent. Point one at a calendar listing — the natural thing to
+  write — and `Sanitizer` kept it (no njump-hex match, so it fell through to
+  the permalink keep) while `Validator` refused it. The edition was **thrown
+  away rather than repaired**: a boundary that rejects good pages prints
+  nothing that morning, which is the failure the golden edition exists to
+  catch. The sanitizer now encodes a cited calendar id to its address, as
+  `resolve.mjs` always has.
+
+- **The shelf's link-preview tags were stripped by line, so stamping was not
+  idempotent.** `stripSocialMeta` anchored to `^…$`, which only matches a tag
+  that owns its line. A paper whose writer put them inline kept the stale set,
+  `add` inserted a fresh one, and the page went to press carrying two `og:url`
+  values — one of them the `observer.invalid` placeholder every freshly printed
+  edition is born with, which is a dead hostname in the preview of a shared
+  paper. Dropping the anchors and keeping `[^>]*` would have been the
+  2026-08-22 bug again (`content="Signal > Noise"` cuts its own tag in half and
+  corrupts the document), so `site.mjs` got the scanner treatment `html.mjs`
+  already gives the boundary. Copied rather than imported: the shelf is
+  documented as standing on its own, and a skill that breaks when its neighbour
+  is not installed is not standing on anything.
+
+
 ### Audit, 2026-08-22
 
 Five bugs, three of them one root cause, plus the two costs nobody had measured.

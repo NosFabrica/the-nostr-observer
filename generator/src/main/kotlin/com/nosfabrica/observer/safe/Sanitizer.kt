@@ -220,7 +220,15 @@ class Sanitizer(
                 if (href != canonical) a.attr("href", canonical)
                 continue
             }
-            val calendarId = Calendar.calendarLinkTarget(href, calendarListings)
+            // A calendar listing cited the ordinary way — njump's canonical
+            // nevent — is encoded to its address rather than kept as written.
+            // Without this the sanitizer kept the frozen link and `Validator`
+            // refused it, so an edition that cited a meetup exactly as the
+            // brief asks was thrown away instead of repaired. resolve.mjs has
+            // always done this; this is the half that had not caught up.
+            val calendarId =
+                Calendar.calendarLinkTarget(href, calendarListings)
+                    ?: Validator.permalinkTarget(href)?.takeIf { it in calendars }
             val calendar = calendarId?.let { calendars[it] }
             if (calendar != null) {
                 val canonical = Calendar.canonicalUrl(calendar)
