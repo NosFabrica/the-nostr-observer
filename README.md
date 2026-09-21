@@ -82,6 +82,13 @@ editions you *name* into `dist/` and deploys that folder to Vercel. It never
 uploads `editions/` — the corpus is your whole ranked window and it stays off
 the web — and it refuses to deploy a paper you did not ask for.
 
+That one does need an account: a free Vercel Hobby account and `npx vercel
+login` once per machine. You pick the project name and it becomes the address.
+Nothing there needs an agent either — `site.mjs` is an ordinary CLI and the
+whole path is a handful of commands. Both routes, and what gets published
+versus what stays on your disk, are written up in
+[the skill's README](.claude/skills/observer-pages/README.md).
+
 The design is written up in [`docs/PLAN.md`](docs/PLAN.md).
 
 ---
