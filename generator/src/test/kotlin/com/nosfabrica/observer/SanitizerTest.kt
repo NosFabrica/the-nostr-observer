@@ -1,5 +1,8 @@
 package com.nosfabrica.observer
 
+import com.nosfabrica.observer.nostr.Calendar
+import com.nosfabrica.observer.nostr.Classifieds
+import com.nosfabrica.observer.nostr.Streams
 import com.nosfabrica.observer.safe.Sanitizer
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -59,6 +62,108 @@ class SanitizerTest {
         val id = "a".repeat(64)
         val r = clean("""<a href="https://njump.me/$id">source</a>""")
         assertTrue(r.html.contains("njump.me/$id"), "verification links are the one exception")
+    }
+
+    @Test
+    fun `permalinks open in a new tab`() {
+        val id = "a".repeat(64)
+        val r = clean("""<a href="https://njump.me/$id">source</a>""")
+        assertTrue(r.html.contains("target=\"_blank\""), "the paper stays put")
+        assertTrue(r.html.contains("noopener"), "the new tab must not get window.opener")
+    }
+
+    @Test
+    fun `keeps a verified stream watch link and encodes it`() {
+        val stream = Fixtures.liveStream()
+        val sanitizer =
+            Sanitizer(
+                Fixtures.art(),
+                emptySet(),
+                mapOf(stream.id.lowercase() to stream),
+            )
+        val writer = Streams.writerUrl(stream.id)
+        val r =
+            sanitizer.sanitize(
+                """<!doctype html><html><head><title>T</title></head><body>
+               <a href="$writer">NoGood Radio</a></body></html>""",
+            )
+        assertTrue(r.html.contains("zap.stream/naddr1"), "writer form is encoded to naddr")
+        assertTrue(r.html.contains("NoGood Radio"), "the title stays linked")
+        assertTrue(r.clean, r.removed.toString())
+    }
+
+    @Test
+    fun `keeps a verified shopstr listing link and encodes it`() {
+        val listing = Fixtures.classified()
+        val sanitizer =
+            Sanitizer(
+                Fixtures.art(),
+                emptySet(),
+                emptyMap(),
+                mapOf(listing.id.lowercase() to listing),
+            )
+        val writer = Classifieds.writerUrl(listing.id)
+        val r =
+            sanitizer.sanitize(
+                """<!doctype html><html><head><title>T</title></head><body>
+               <a href="$writer">4 Bars Rough Cut Tallow</a></body></html>""",
+            )
+        assertTrue(r.html.contains("shopstr.store/listing/naddr1"), "writer form is encoded to naddr")
+        assertTrue(r.html.contains("4 Bars Rough Cut Tallow"), "the title stays linked")
+        assertTrue(r.clean, r.removed.toString())
+    }
+
+    @Test
+    fun `keeps a verified njump calendar link and encodes it`() {
+        val listing = Fixtures.calendarEntry()
+        val sanitizer =
+            Sanitizer(
+                Fixtures.art(),
+                emptySet(),
+                emptyMap(),
+                emptyMap(),
+                mapOf(listing.id.lowercase() to listing),
+            )
+        val writer = Calendar.writerUrl(listing.id)
+        val r =
+            sanitizer.sanitize(
+                """<!doctype html><html><head><title>T</title></head><body>
+               <a href="$writer">Bitcoin Meetup in Porto</a></body></html>""",
+            )
+        assertTrue(r.html.contains("njump.me/naddr1"), "writer form is encoded to naddr")
+        assertFalse(r.html.contains("njump.me/${listing.id}"), "bare hex must not survive")
+        assertTrue(r.html.contains("Bitcoin Meetup in Porto"), "the title stays linked")
+        assertTrue(r.clean, r.removed.toString())
+    }
+
+    @Test
+    fun `unwraps a zap stream url that names no stream we read`() {
+        val writer = Streams.writerUrl("f".repeat(64))
+        val r = clean("""<p><a href="$writer">fake stream</a></p>""")
+        assertFalse(r.html.contains("<a "), "no anchor survived")
+        assertTrue(r.html.contains("fake stream"))
+    }
+
+    @Test
+    fun `unwraps a shopstr url that names no listing we read`() {
+        val writer = Classifieds.writerUrl("f".repeat(64))
+        val r = clean("""<p><a href="$writer">fake listing</a></p>""")
+        assertFalse(r.html.contains("<a "), "no anchor survived")
+        assertTrue(r.html.contains("fake listing"))
+    }
+
+    @Test
+    fun `unwraps an njump calendar url that names no listing we read`() {
+        // Empty corpusEventIds would keep any njump hex as a citation; a real
+        // run always passes the corpus, so membership is what drops fakes.
+        val writer = Calendar.writerUrl("f".repeat(64))
+        val r =
+            Sanitizer(Fixtures.art(), setOf("a".repeat(64))).sanitize(
+                """<!doctype html><html><head><title>T</title></head><body>
+               <p><a href="$writer">fake meetup</a></p></body></html>""",
+            )
+        assertFalse(r.html.contains("<a "), "no anchor survived")
+        assertTrue(r.html.contains("fake meetup"))
     }
 
     @Test
@@ -183,7 +288,7 @@ class HouseStyleTest {
         // ever been put in, so it tested nothing. This one feeds a house sheet
         // that DOES call home and asserts it is stripped.
         val hostile = "@import url(https://evil.example.com/x.css);\n.sheet { background: url(https://evil.example.com/beacon.png) }"
-        val result = Sanitizer(Fixtures.art(), emptySet(), hostile).sanitize("<html><body><p>x</p></body></html>")
+        val result = Sanitizer(Fixtures.art(), emptySet(), houseCss = hostile).sanitize("<html><body><p>x</p></body></html>")
         assertFalse(result.html.contains("evil.example.com"), "the house sheet reaches every reader of a published edition")
         assertTrue(result.removed.any { it.contains("@import") }, result.removed.toString())
     }

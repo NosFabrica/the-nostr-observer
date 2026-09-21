@@ -13,7 +13,7 @@
 //
 // Usage: node corpus.mjs <npub> [--relay wss://…] [--out corpus.json] [--floor 20]
 
-import { req, toHex, toNpub, shortNpub, tagValue, tagsNamed, closeAll, MAX_REQ_BYTES, INCLUDE_SPAM } from './nostr.mjs'
+import { req, toHex, toNpub, shortNpub, streamWriterUrl, classifiedWriterUrl, calendarWriterUrl, tagValue, tagsNamed, closeAll, MAX_REQ_BYTES, INCLUDE_SPAM } from './nostr.mjs'
 import { writeFileSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
 import { createHash } from 'node:crypto'
@@ -331,6 +331,15 @@ export function digest (corpus, budget = DEFAULT_DIGEST_BUDGET) {
       const author = corpus.profiles[event.pubkey]?.name || shortNpub(event.pubkey)
       p(`- [${event.id}] kind ${event.kind} · ${author} · ${when(event.created_at)}`)
       if (title) p(`  title: ${title}`)
+      if (desk.key === 'live' && tagValue(event, 'd')) {
+        p(`  watch: ${streamWriterUrl(event.id)}`)
+      }
+      if (desk.key === 'classifieds' && tagValue(event, 'd')) {
+        p(`  listing: ${classifiedWriterUrl(event.id)}`)
+      }
+      if (desk.key === 'calendar' && tagValue(event, 'd')) {
+        p(`  calendar: ${calendarWriterUrl(event.id)}`)
+      }
       const text = body(event, EXCERPT[desk.key] ?? DEFAULT_EXCERPT)
       if (text) p(`  ${text}`)
     }
