@@ -49,7 +49,7 @@ data class Config(
      * The default is only right for local work. A deployment must set this.
      */
     val publicUrl: String = env("OBSERVER_PUBLIC_URL") ?: "http://localhost:${env("PORT")?.toIntOrNull() ?: 8080}",
-    val searchRelay: String = env("OBSERVER_RELAY") ?: "wss://search-staging.brainstorm.world",
+    val searchRelay: String = env("OBSERVER_RELAY") ?: "wss://search.brainstorm.world",
     val effort: String = env("OBSERVER_EFFORT") ?: "high",
     /**
      * Whether a cookie may travel over plain HTTP.

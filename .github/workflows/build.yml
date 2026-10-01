@@ -33,7 +33,7 @@ jobs:
       # The Claude Code skill is Node, not Kotlin, so gradle never sees it. Its
       # tests use a fake relay that reproduces the hazards in AGENTS.md — the
       # AUTH challenge sent before an answer, the subscription that says
-      # nothing — rather than dialling search-staging, so this step holds to
+      # nothing — rather than dialling search.brainstorm.world, so this step holds to
       # the same no-network rule as the one below.
       - uses: actions/setup-node@v5
         with:

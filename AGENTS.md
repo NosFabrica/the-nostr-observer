@@ -771,7 +771,7 @@ on one, and when you do, write the new date next to it.
 
 ### The relay is shared
 
-`search-staging.brainstorm.world` is a real relay other people read. Read from it;
+`search.brainstorm.world` is a real relay other people read. Read from it;
 do not publish test events to it and do not hammer it. This service needs its own
 Vespa deployment before it serves anyone.
 

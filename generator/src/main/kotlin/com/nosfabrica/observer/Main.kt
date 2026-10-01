@@ -8,7 +8,7 @@ import java.io.File
 import java.time.Instant
 import kotlin.system.exitProcess
 
-private const val DEFAULT_RELAY = "wss://search-staging.brainstorm.world"
+private const val DEFAULT_RELAY = "wss://search.brainstorm.world"
 
 /** Flags that take no value. Everything else consumes the next argument. */
 private val BOOLEAN_FLAGS = setOf("--dry-run", "--check")

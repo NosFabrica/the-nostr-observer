@@ -31,7 +31,7 @@ import {
 import { writeFileSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
 
-export const DEFAULT_RELAY = 'wss://search-staging.brainstorm.world'
+export const DEFAULT_RELAY = 'wss://search.brainstorm.world'
 export const WINDOW_SECONDS = 24 * 60 * 60
 
 function arg (name, fallback = null) {
