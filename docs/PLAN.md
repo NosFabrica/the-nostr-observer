@@ -297,7 +297,7 @@ attribution to match that event's pubkey. Figures too.
 - An author opt-out removes someone from *future* editions. It cannot reach
   published ones — those are on other people's servers under other people's keys,
   which is the deal Nostr makes and should be stated plainly.
-- **Do not run this against `search-staging`.** It is shared and live, and the
+- **Do not run this against `search.brainstorm.world`.** It is shared and live, and the
   relay repo's guidance is explicit that it should be read, not written to and
   not hammered. This service needs its own Vespa deployment.
 

@@ -18,7 +18,7 @@ import { writeFileSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
 import { createHash } from 'node:crypto'
 
-const DEFAULT_RELAY = 'wss://search-staging.brainstorm.world'
+const DEFAULT_RELAY = 'wss://search.brainstorm.world'
 const WINDOW_SECONDS = 24 * 60 * 60
 
 /**
