@@ -158,12 +158,10 @@ object Fixtures {
             Art(
                 id = "art-1",
                 url = ART_URL,
-                mime = "image/jpeg",
                 width = 1440,
                 height = 1920,
                 alt = "chilli plants",
                 eventId = "e2",
-                pubkey = ALICE,
                 byline = "Alice",
                 caption = "Zimbabwe Black and habaneros, doing really well.",
             ),

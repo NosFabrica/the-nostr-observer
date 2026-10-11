@@ -217,7 +217,6 @@ class ReadinessTest {
     fun `no relay list is the permanent failure and everything below it waits`() {
         val v = Readiness.assess(Readiness.Facts(writeRelays = emptyList(), relayListSeen = false))
         assertEquals("no-relay-list", v.state)
-        assertEquals(Readiness.Tone.BLOCKED, v.tone)
         // The whole point of the port: one broken link, not four.
         assertEquals(1, v.chain.count { it.status == Readiness.Status.BROKEN })
         assertEquals(3, v.chain.count { it.status == Readiness.Status.WAITING })

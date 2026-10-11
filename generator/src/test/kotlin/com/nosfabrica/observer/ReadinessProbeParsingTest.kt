@@ -5,8 +5,6 @@ import com.nosfabrica.observer.nostr.Relays
 import com.vitorpamplona.quartz.nip01Core.relay.filters.Filter
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
-import org.junit.jupiter.api.Assertions.assertThrows
-import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 /**

@@ -17,12 +17,10 @@ import com.vitorpamplona.quartz.nip01Core.core.Event
 data class Art(
     val id: String,
     val url: String,
-    val mime: String?,
     val width: Int?,
     val height: Int?,
     val alt: String?,
     val eventId: String,
-    val pubkey: String,
     val byline: String,
     val caption: String,
 ) {
@@ -41,9 +39,9 @@ data class Art(
  *  - `imeta` carries VIDEO as often as stills. Filter on the declared MIME, not
  *    the URL suffix; plenty of `.mov` arrives with no extension at all and plenty
  *    of `.jpg` in a URL is a redirect to something else.
- *  - `alt` is worth keeping even though nothing displays it today. Hotlinked art
- *    rots on somebody else's server, and alt text is the difference between a
- *    missing image degrading to a caption and degrading to a gap.
+ *  - `alt` is worth keeping: the sanitizer writes it into `<img alt>`. Hotlinked
+ *    art rots on somebody else's server, and alt text is the difference between
+ *    a missing image degrading to a caption and degrading to a gap.
  */
 object ArtDesk {
     /** Kinds whose `imeta` describes a video, so an `image` beside it is a poster frame. */
@@ -90,7 +88,6 @@ object ArtDesk {
     /** One `imeta` tag, read once, so the two passes above agree about it. */
     private data class Candidate(
         val url: String,
-        val mime: String?,
         val width: Int?,
         val height: Int?,
         val alt: String?,
@@ -133,7 +130,7 @@ object ArtDesk {
             // A poster's dimensions are the video's, and they describe the
             // frame, so they still say whether it stands up or lies down.
             val (w, h) = parseDim(kv["dim"])
-            Candidate(url, mime, w, h, kv["alt"], event)
+            Candidate(url, w, h, kv["alt"], event)
         }
 
     /** A declared video mime, which is what makes an `image` field a poster rather than decoration. */
@@ -187,12 +184,10 @@ object ArtDesk {
         return Art(
             id = "art-$n",
             url = candidate.url,
-            mime = candidate.mime,
             width = candidate.width,
             height = candidate.height,
             alt = candidate.alt?.takeIf { it.isNotBlank() },
             eventId = event.id,
-            pubkey = event.pubKey,
             byline = corpus.byline(event.pubKey),
             caption = body.ifBlank { candidate.alt.orEmpty() },
         )

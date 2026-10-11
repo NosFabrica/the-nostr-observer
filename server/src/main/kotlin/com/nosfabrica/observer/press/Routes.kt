@@ -5,7 +5,6 @@ import com.nosfabrica.observer.nostr.Names
 import com.nosfabrica.observer.nostr.Readiness
 import com.nosfabrica.observer.press.auth.Sessions
 import com.nosfabrica.observer.press.auth.SignIn
-import com.nosfabrica.observer.press.publish.Announce
 import com.nosfabrica.observer.press.publish.Countersign
 import com.nosfabrica.observer.press.publish.Templates
 import com.vitorpamplona.quartz.nip01Core.core.Event
@@ -26,7 +25,6 @@ import io.ktor.server.request.uri
 import io.ktor.server.response.header
 import io.ktor.server.response.respond
 import io.ktor.server.response.respondBytes
-import io.ktor.server.response.respondText
 import io.ktor.server.routing.RoutingContext
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
@@ -38,8 +36,6 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import java.time.Instant
-import java.time.ZoneOffset
-import java.time.format.DateTimeFormatter
 
 private const val COOKIE = "observer_session"
 private val json = Json { ignoreUnknownKeys = true }
@@ -704,8 +700,6 @@ fun Application.routes(app: App) {
     }
 }
 
-private val DAY = DateTimeFormatter.ofPattern("yyyy-MM-dd")
-
 private fun sessionCookie(
     app: App,
     token: String,
@@ -723,10 +717,6 @@ private fun sessionCookie(
 /** The cookie, resolved to a reader, or null. Every route that writes anything calls this first. */
 private fun RoutingContext.signedIn(app: App): Sessions.Entry? = app.sessions.of(call.request.cookies[COOKIE])
 
-// The draft named in the path, but only if this reader owns it.
-//
-// The pubkey is passed down into the store rather than compared here: a check
-// the caller performs is a check some future route forgets to perform.
 // The view's own leash.
 //
 // `default-src 'none'` with images allowed anywhere is exactly the shape of the

@@ -244,9 +244,10 @@ would a `CLAUDE_CODE_OAUTH_TOKEN` pasted into anything of ours.
   `nevent` would freeze one revision of a replaceable event.
 
 - **`reference/` is generated.** `tools/sync-skill.sh` copies `system-prompt.md`
-  and `house.css` in and prepends a banner correcting the three statements in the
+  and `house.css` in and prepends a banner correcting the four statements in the
   brief that are true only of the Messages API harness (a sanitizer runs after
-  you; the corpus is a `<corpus>` block; return HTML and nothing else). Run it
+  you; the corpus is a `<corpus>` block; return HTML and nothing else; the
+  digest's times are the reader's local clock — here they are UTC). Run it
   after editing either resource — the copies are committed, so `git diff
   --exit-code` after running it says whether they are current.
 
@@ -625,10 +626,10 @@ findings, and the interesting one is not the images.
   sweeps them now, which also took a per-poll `DELETE` off the read path.
 - **One `Writer` per edition leaked an HTTP client** (connection pool and
   threads) for the life of the process. It is one per `Press` now.
-- **The archive is not ours alone.** The manifest is rebuilt from the reader's
-  own kind 35128 merged with our index, so losing our database — or moving them
-  to another deployment — no longer silently deletes every earlier edition on
-  the next publish.
+- **The archive is not ours alone.** The fix at the time merged the reader's own
+  kind 35128 with our index before each publish. Since each edition became its
+  own site (see the publish path above) there is nothing to merge: a publish
+  replaces nothing, and the archive is read from the reader's relays alone.
 
 ## Highlights are somebody else's words (2026-08-18)
 

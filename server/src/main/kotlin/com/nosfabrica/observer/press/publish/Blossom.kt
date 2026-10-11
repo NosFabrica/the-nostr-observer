@@ -47,8 +47,6 @@ class Blossom(
          * itself was perfectly fine.
          */
         val url: String? = null,
-        /** What the server says it stored. Compared against what we sent. */
-        val sha256: String? = null,
     )
 
     /**
@@ -155,7 +153,6 @@ class Blossom(
                     ok = true,
                     detail = "HTTP ${response.code}",
                     url = stored?.url,
-                    sha256 = stored?.sha256,
                 )
             }
         }.getOrElse { Upload(server, false, it.message ?: it::class.simpleName ?: "failed") }

@@ -272,9 +272,10 @@ class Pull(
         // ONE REQ PER DESK, all at once, plus the control run.
         //
         // The obvious shape is one REQ carrying all nine filters, and that is
-        // what this did. It costs nothing in wall-clock -- these are ten
-        // subscriptions on one socket against a relay advertising a limit of
-        // fifty -- and it buys back the thing the quartz migration lost.
+        // what this did. It costs nothing in wall-clock -- one subscription per
+        // desk plus the control run, on one socket, against a relay advertising
+        // a limit of fifty -- and it buys back the thing the quartz migration
+        // lost.
         //
         // quartz's `fetchAll` returns the filters MERGED, so a batched call has
         // to recover each desk by kind. That works until two filters share a

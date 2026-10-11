@@ -31,8 +31,6 @@ import kotlin.math.roundToInt
 object Readiness {
     enum class Status { OK, PARTIAL, BROKEN, WAITING, ASIDE }
 
-    enum class Tone { OK, PARTIAL, WORKING, BLOCKED }
-
     data class Link(
         val key: String,
         val status: Status,
@@ -41,7 +39,6 @@ object Readiness {
 
     data class Verdict(
         val state: String,
-        val tone: Tone,
         val percent: Double?,
         val chain: List<Link>,
     ) {
@@ -102,14 +99,14 @@ object Readiness {
 
     fun storage(f: Storage): Verdict {
         val chain = mutableListOf<Link>()
-        val seen = f.serverListSeen ?: return Verdict("checking", Tone.WORKING, null, chain.toList())
+        val seen = f.serverListSeen ?: return Verdict("checking", null, chain.toList())
 
         if (f.servers.isEmpty()) {
             // Same distinction the relay list draws: never published a list, or
             // published one naming nothing we can use. Different sentences.
             chain.add(Link("blossomServers", Status.BROKEN, if (seen) "list names no usable server" else "absent"))
             chain.add(Link("uploadConsent", Status.WAITING))
-            return Verdict("no-blossom-server", Tone.BLOCKED, null, chain.toList())
+            return Verdict("no-blossom-server", null, chain.toList())
         }
         chain.add(Link("blossomServers", Status.OK, "${f.servers.size} server(s)"))
 
@@ -120,12 +117,12 @@ object Readiness {
         return when (f.publishedBefore) {
             true -> {
                 chain.add(Link("uploadConsent", Status.OK, "has published before"))
-                Verdict("can-publish", Tone.OK, null, chain.toList())
+                Verdict("can-publish", null, chain.toList())
             }
 
             else -> {
                 chain.add(Link("uploadConsent", Status.WAITING, "asked at publish"))
-                Verdict("can-publish", Tone.OK, null, chain.toList())
+                Verdict("can-publish", null, chain.toList())
             }
         }
     }
@@ -176,7 +173,7 @@ object Readiness {
     fun assess(f: Facts): Verdict {
         val chain = mutableListOf<Link>()
 
-        fun checking() = Verdict("checking", Tone.WORKING, null, chain.toList())
+        fun checking() = Verdict("checking", null, chain.toList())
 
         fun waitingBelow(vararg keys: String) = keys.forEach { chain.add(Link(it, Status.WAITING)) }
 
@@ -190,7 +187,7 @@ object Readiness {
             chain.add(Link("relayList", Status.BROKEN, "declared=${writes.size}"))
             waitingBelow("scoreList", "scores", "ranked")
             val state = if (f.relayListSeen) "no-usable-relays" else "no-relay-list"
-            return Verdict(state, Tone.BLOCKED, null, chain.toList())
+            return Verdict(state, null, chain.toList())
         }
         chain.add(Link("relayList", Status.OK, "${writes.size} write relays"))
 
@@ -199,7 +196,7 @@ object Readiness {
         if (!seen) {
             chain.add(Link("scoreList", Status.BROKEN, "absent"))
             waitingBelow("scores", "ranked")
-            return Verdict("no-score-list", Tone.BLOCKED, null, chain.toList())
+            return Verdict("no-score-list", null, chain.toList())
         }
         if (f.rankService.isNullOrBlank()) {
             // A 10040 declaring only `30382:followers` can ORDER a list but cannot
@@ -207,7 +204,7 @@ object Readiness {
             // nothing. All three are a broken link rather than a missing one.
             chain.add(Link("scoreList", Status.BROKEN, "no rank dimension"))
             waitingBelow("scores", "ranked")
-            return Verdict("no-rank-service", Tone.BLOCKED, null, chain.toList())
+            return Verdict("no-rank-service", null, chain.toList())
         }
         chain.add(Link("scoreList", Status.OK, "${Names.short(f.rankService)} @ ${f.rankRelay ?: "no hint"}"))
 
@@ -221,7 +218,7 @@ object Readiness {
             // and not partial, whatever the upstream says.
             chain.add(Link("scores", Status.BROKEN, "0 here"))
             waitingBelow("ranked")
-            return Verdict("no-scores-yet", Tone.BLOCKED, 0.0, chain.toList())
+            return Verdict("no-scores-yet", 0.0, chain.toList())
         }
         val short = shortOfEnough(pct)
         chain.add(Link("scores", if (short) Status.PARTIAL else Status.OK, "${scores.here} here"))
@@ -231,26 +228,26 @@ object Readiness {
         val authed = f.probeAuthed ?: return checking()
         if (anon > 0 && authed == 0L) {
             chain.add(Link("ranked", Status.BROKEN, "authed=0 anon=$anon"))
-            return Verdict("projection-pending", Tone.BLOCKED, pct, chain.toList())
+            return Verdict("projection-pending", pct, chain.toList())
         }
         chain.add(Link("ranked", if (short) Status.PARTIAL else Status.OK, "authed=$authed"))
 
-        if (short) return Verdict("importing", Tone.PARTIAL, pct, chain.toList())
+        if (short) return Verdict("importing", pct, chain.toList())
         // Importing with no denominator: we hold cards and cannot say what
         // fraction that is. Still worth saying — "3,197 here" answers "is
         // anything happening" — but it is not a bar.
         if (pct == null && !counted(scores.there)) {
-            return Verdict("importing", Tone.PARTIAL, null, chain.toList())
+            return Verdict("importing", null, chain.toList())
         }
 
         // --- your own posts: downstream, and NOT in the chain ---------------
-        val posts = f.posts ?: return Verdict("ready", Tone.OK, null, chain.toList())
+        val posts = f.posts ?: return Verdict("ready", null, chain.toList())
         val postPct = fraction(posts.here, posts.there)
         chain.add(Link("posts", Status.ASIDE, "${posts.here} here"))
         if (postPct != null && postPct < 1.0) {
-            return Verdict("posts-behind", Tone.WORKING, postPct, chain.toList())
+            return Verdict("posts-behind", postPct, chain.toList())
         }
-        return Verdict("ready", Tone.OK, null, chain.toList())
+        return Verdict("ready", null, chain.toList())
     }
 
     /**

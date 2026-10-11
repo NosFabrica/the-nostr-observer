@@ -24,7 +24,6 @@ configurations.all {
 dependencies {
     implementation(libs.quartz)
     implementation(libs.kotlinx.coroutines.core)
-    implementation(libs.kotlinx.serialization.json)
     implementation(libs.okhttp)
     implementation(libs.jsoup)
     implementation(libs.playwright)
