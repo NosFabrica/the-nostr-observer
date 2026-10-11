@@ -2,6 +2,8 @@ package com.nosfabrica.observer.write
 
 import com.anthropic.client.AnthropicClient
 import com.anthropic.client.okhttp.AnthropicOkHttpClient
+import com.anthropic.errors.AnthropicException
+import com.anthropic.models.ErrorObject
 import com.anthropic.models.messages.MessageCreateParams
 import com.anthropic.models.messages.OutputConfig
 import com.anthropic.models.messages.RefusalStopDetails
@@ -12,12 +14,12 @@ import com.anthropic.models.messages.batches.MessageBatch
 import com.nosfabrica.observer.corpus.Art
 import com.nosfabrica.observer.corpus.Digest
 import com.nosfabrica.observer.nostr.Corpus
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import java.time.Instant
 import java.time.ZoneId
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
+import java.util.concurrent.ConcurrentHashMap
 
 /** What the paper is called today, and what it was called yesterday. */
 data class Continuity(
@@ -54,6 +56,21 @@ internal val PRICES: Map<String, Pair<Double, Double>> =
         "claude-opus-5" to (5.0 to 25.0),
         "claude-haiku-5-5" to (0.10 to 0.50),
     )
+
+/**
+ * An effort level by name, for the CLI flag and the server's environment alike.
+ *
+ * One parser so the two cannot drift: anything unrecognised, including no name
+ * at all, is the default.
+ */
+fun effortNamed(name: String?): OutputConfig.Effort =
+    when (name?.lowercase()) {
+        "low" -> OutputConfig.Effort.LOW
+        "high" -> OutputConfig.Effort.HIGH
+        "xhigh" -> OutputConfig.Effort.XHIGH
+        "max" -> OutputConfig.Effort.MAX
+        else -> OutputConfig.Effort.MEDIUM
+    }
 
 /**
  * One call, one front page.
@@ -212,34 +229,50 @@ class Writer(
                 ).build()
 
         val batches = client.messages().batches()
-        var batch = batches.create(request)
-        onQueued(batch.id())
+        val id = batches.create(request).id()
+        inFlight += id
         try {
-            while (batch.processingStatus() != MessageBatch.ProcessingStatus.ENDED) {
+            onQueued(id)
+            // A wait this long will see the API hiccup, and a poll that throws
+            // after the SDK's own retries is no reason to abandon a page that is
+            // still being written. Only a run of failures is.
+            var misses = 0
+            var status = MessageBatch.ProcessingStatus.IN_PROGRESS
+            while (status != MessageBatch.ProcessingStatus.ENDED) {
                 delay(pollMillis)
-                batch = batches.retrieve(batch.id())
+                status =
+                    try {
+                        batches.retrieve(id).processingStatus().also { misses = 0 }
+                    } catch (hiccup: AnthropicException) {
+                        if (++misses >= MAX_MISSES) throw hiccup
+                        status
+                    }
             }
-        } catch (cancelled: CancellationException) {
-            runCatching { batches.cancel(batch.id()) }
-            throw cancelled
+        } catch (gaveUp: Throwable) {
+            // Anything that ends the wait early -- a shutdown, a run of failed
+            // polls -- leaves nobody to receive the page, so stop paying for it.
+            runCatching { batches.cancel(id) }
+            throw gaveUp
+        } finally {
+            inFlight -= id
         }
 
         val result =
             batches
-                .resultsStreaming(batch.id())
+                .resultsStreaming(id)
                 .use { stream -> stream.stream().toList() }
                 .firstOrNull { it.customId() == EDITION_ID }
                 ?.result()
-                ?: throw Unwritten("Batch ${batch.id()} ended with no result for the edition.")
+                ?: throw Unwritten("Batch $id ended with no result for the edition.")
 
         val message =
             result.succeeded().orElse(null)?.message()
                 ?: throw Unwritten(
                     when {
-                        result.isErrored() -> "The model API rejected the edition: ${result.asErrored().error().error()}"
+                        result.isErrored() -> "The model API rejected the edition: ${reason(result.asErrored().error().error())}"
                         result.isExpired() -> "The batch expired before the edition was written. Print again."
                         result.isCanceled() -> "The batch was cancelled before the edition was written."
-                        else -> "Batch ${batch.id()} ended without a page."
+                        else -> "Batch $id ended without a page."
                     },
                 )
         refuseUnfinished(message.stopReason().orElse(null), message.stopDetails().orElse(null))
@@ -250,6 +283,36 @@ class Writer(
                 .joinToString("")
         return Draft(strip(text), message.usage().inputTokens(), message.usage().outputTokens(), model, batched = true)
     }
+
+    /**
+     * Cancel every batch still being waited on.
+     *
+     * For the way out of a process. A cancelled coroutine cancels its own
+     * batch, but a shutdown hook does not wait for coroutines to unwind, and a
+     * CLI interrupted with Ctrl-C never cancels its coroutine at all -- so the
+     * batch would run to completion and be billed with nothing left to read it.
+     */
+    fun cancelInFlight() {
+        if (inFlight.isEmpty()) return
+        val batches = client.messages().batches()
+        inFlight.forEach { runCatching { batches.cancel(it) } }
+    }
+
+    private val inFlight: MutableSet<String> = ConcurrentHashMap.newKeySet()
+
+    /** The API's own sentence, not the SDK union's `toString`. */
+    private fun reason(error: ErrorObject): String =
+        listOf(
+            error.invalidRequestError().map { it.message() },
+            error.authenticationError().map { it.message() },
+            error.billingError().map { it.message() },
+            error.permissionError().map { it.message() },
+            error.notFoundError().map { it.message() },
+            error.rateLimitError().map { it.message() },
+            error.timeoutError().map { it.message() },
+            error.apiError().map { it.message() },
+            error.overloadedError().map { it.message() },
+        ).firstNotNullOfOrNull { it.orElse(null) } ?: "no reason given"
 
     /**
      * A refusal arrives as a successful response with no page in it, so it is
@@ -270,6 +333,9 @@ class Writer(
 
     private companion object {
         const val MAX_TOKENS = 64_000L
+
+        /** Consecutive failed polls before giving up: five minutes at the default interval. */
+        const val MAX_MISSES = 20
 
         /** The only request in its batch; the id just has to match on the way back. */
         const val EDITION_ID = "edition"

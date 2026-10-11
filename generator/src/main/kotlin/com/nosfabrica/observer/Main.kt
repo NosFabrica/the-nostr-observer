@@ -2,6 +2,9 @@ package com.nosfabrica.observer
 
 import com.nosfabrica.observer.nostr.Readiness
 import com.nosfabrica.observer.nostr.Relays
+import com.nosfabrica.observer.write.DEFAULT_MODEL
+import com.nosfabrica.observer.write.PRICES
+import com.nosfabrica.observer.write.effortNamed
 import com.vitorpamplona.quartz.nip19Bech32.decodePublicKeyAsHexOrNull
 import kotlinx.coroutines.runBlocking
 import java.io.File
@@ -23,7 +26,7 @@ private val USAGE =
       --out <file>     where to write the edition (default edition.html)
       --until <epoch>  end of the 24h window (default: now)
       --effort <lvl>   low | medium | high | xhigh | max (default medium)
-      --model <id>     the model that writes the page (default ${com.nosfabrica.observer.write.DEFAULT_MODEL})
+      --model <id>     the model that writes the page (default $DEFAULT_MODEL)
       --no-batch       stream the page now at full price, instead of the half-price
                        Message Batches API (minutes, and up to a day)
       --timezone <id>  the reader's zone, e.g. America/New_York (default: this machine's)
@@ -100,6 +103,14 @@ fun main(args: Array<String>) =
                     exitProcess(2)
                 }
 
+        // Checked before anything is built: a typo in a flag is a usage error,
+        // and deserves a sentence rather than a stack trace from a constructor.
+        val model = flags["--model"] ?: DEFAULT_MODEL
+        if (model !in PRICES) {
+            System.err.println("Unknown model: $model (known: ${PRICES.keys.joinToString()})")
+            exitProcess(2)
+        }
+
         Relays().use { relays ->
             // A Chromium process outlives the run otherwise -- the proof
             // render starts one lazily and nothing else would stop it.
@@ -107,8 +118,8 @@ fun main(args: Array<String>) =
                 Press(
                     relays,
                     relayUrl,
-                    effort(flags["--effort"]),
-                    model = flags["--model"] ?: com.nosfabrica.observer.write.DEFAULT_MODEL,
+                    effortNamed(flags["--effort"]),
+                    model = model,
                     batch = !flags.containsKey("--no-batch"),
                 ).also { p ->
                     Runtime.getRuntime().addShutdownHook(Thread { p.close() })
@@ -249,15 +260,6 @@ private fun report(verdict: Readiness.Verdict) {
         println()
     }
 }
-
-private fun effort(name: String?) =
-    when (name?.lowercase()) {
-        "low" -> com.anthropic.models.messages.OutputConfig.Effort.LOW
-        "xhigh" -> com.anthropic.models.messages.OutputConfig.Effort.XHIGH
-        "max" -> com.anthropic.models.messages.OutputConfig.Effort.MAX
-        "high" -> com.anthropic.models.messages.OutputConfig.Effort.HIGH
-        else -> com.anthropic.models.messages.OutputConfig.Effort.MEDIUM
-    }
 
 private fun symbol(status: Readiness.Status) =
     when (status) {

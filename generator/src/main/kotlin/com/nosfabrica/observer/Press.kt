@@ -18,7 +18,6 @@ import com.nosfabrica.observer.safe.Sanitizer
 import com.nosfabrica.observer.safe.Validator
 import com.nosfabrica.observer.write.Continuity
 import com.nosfabrica.observer.write.DEFAULT_MODEL
-import com.nosfabrica.observer.write.PRICES
 import com.nosfabrica.observer.write.Writer
 import java.io.Closeable
 import java.time.ZoneId
@@ -44,13 +43,6 @@ class Press(
     /** Through the Message Batches API, at half price and a longer wait. See [Writer]. */
     private val batch: Boolean = true,
 ) : Closeable {
-    init {
-        // Asked now rather than at the first edition, because the writer is
-        // built lazily and a misspelt model id should stop a server at boot,
-        // not the first reader who presses print.
-        require(model in PRICES) { "No list price for $model. Add it to PRICES so a run can say what it cost." }
-    }
-
     /**
      * One writer, not one per edition.
      *
@@ -58,8 +50,11 @@ class Press(
      * owns a connection pool and thread pools. Building one per edition leaks
      * both for the life of the process, which a CLI run never notices and a
      * server does.
+     *
+     * Built eagerly -- its client is the lazy part -- so that a misspelt model
+     * stops a server at boot rather than the first reader who presses print.
      */
-    private val writer by lazy { Writer(model, effort, batch) }
+    private val writer = Writer(model, effort, batch)
 
     /**
      * One browser, not one per edition.
@@ -72,6 +67,9 @@ class Press(
     private val proofer by lazy { Proof() }
 
     override fun close() {
+        // First, and before anything slow: a batch nobody will read is still
+        // billed if it is left to finish.
+        runCatching { writer.cancelInFlight() }
         runCatching { proofer.close() }
     }
 
@@ -197,6 +195,14 @@ class Press(
         val art: List<Art>,
         val digest: Digest.Rendered,
         val usage: Writer.Draft,
+        /**
+         * What every generation behind this page cost, not just the last one.
+         *
+         * [usage] is the draft that was kept. When the proof ladder writes the
+         * page twice, both were paid for, and a cost that names only the second
+         * under-reports exactly the editions that went wrong.
+         */
+        val costUsd: Double = usage.costUsd(),
         val removed: List<String>,
         val report: Validator.Report,
         /**
@@ -374,6 +380,7 @@ class Press(
         onStep(Step.Writing)
         var draft = writer.write(corpus, digest, art, continuity, zone) { onStep(Step.Queued(it)) }
         onStep(Step.Written(draft.html.length, draft.inputTokens, draft.outputTokens, draft.costUsd()))
+        var spent = draft.costUsd()
         var sanitized = sanitizer.sanitize(draft.html)
         onStep(Step.Cleaned(sanitized.removed))
         var proof = proofer.check(sanitized.html)
@@ -383,6 +390,7 @@ class Press(
             onStep(Step.Writing)
             draft = writer.write(corpus, digest, art, continuity, zone) { onStep(Step.Queued(it)) }
             onStep(Step.Written(draft.html.length, draft.inputTokens, draft.outputTokens, draft.costUsd()))
+            spent += draft.costUsd()
             sanitized = sanitizer.sanitize(draft.html)
             onStep(Step.Cleaned(sanitized.removed))
             proof = proofer.check(sanitized.html)
@@ -413,6 +421,7 @@ class Press(
             art = art,
             digest = digest,
             usage = draft,
+            costUsd = spent,
             removed = sanitized.removed,
             report = report,
             proof = proof,

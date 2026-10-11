@@ -34,6 +34,9 @@ class BatchWriterTest {
     /** What the one request in the batch comes back as. */
     private var result: String = succeeded("end_turn", null)
 
+    /** How many polls fail with a 500 before the API answers again. */
+    private var failingPolls = 0
+
     init {
         server.createContext("/") { exchange ->
             val path = exchange.requestURI.path
@@ -49,9 +52,10 @@ class BatchWriterTest {
                     // Ended on the second look, so the loop has to actually poll.
                     else -> batch(if (polls.incrementAndGet() >= 2) "ended" else "in_progress")
                 }
-            val bytes = body.toByteArray()
+            val failing = exchange.requestMethod == "GET" && path == "/v1/messages/batches/msgbatch_test" && failingPolls-- > 0
+            val bytes = (if (failing) """{"type":"error","error":{"type":"api_error","message":"down"}}""" else body).toByteArray()
             exchange.responseHeaders.add("Content-Type", if (path.endsWith("/results")) "application/x-jsonl" else "application/json")
-            exchange.sendResponseHeaders(200, bytes.size.toLong())
+            exchange.sendResponseHeaders(if (failing) 500 else 200, bytes.size.toLong())
             exchange.responseBody.use { it.write(bytes) }
         }
         server.start()
@@ -145,6 +149,30 @@ class BatchWriterTest {
         result = """{"custom_id":"edition","result":{"type":"expired"}}"""
         val e = assertThrows(Writer.Unwritten::class.java) { write() }
         assertTrue(e.message.contains("expired"), e.message)
+    }
+
+    @Test
+    fun `a few failed polls do not abandon a page still being written`() {
+        failingPolls = 3
+        val (draft, _) = write()
+        assertTrue(draft.html.contains("Front"))
+        assertTrue(requests.none { it.contains("/cancel") }, "a hiccup cancelled the batch")
+    }
+
+    @Test
+    fun `a run of failed polls gives up, and cancels the batch it was paying for`() {
+        failingPolls = Int.MAX_VALUE
+        assertThrows(com.anthropic.errors.AnthropicException::class.java) { write() }
+        assertTrue(requests.any { it.startsWith("POST /v1/messages/batches/msgbatch_test/cancel") }, "the batch was left running")
+    }
+
+    @Test
+    fun `an errored result reads as the API's own sentence`() {
+        result =
+            """{"custom_id":"edition","result":{"type":"errored","error":{"type":"error",""" +
+            """"error":{"type":"invalid_request_error","message":"prompt is too long"}}}}"""
+        val e = assertThrows(Writer.Unwritten::class.java) { write() }
+        assertEquals("The model API rejected the edition: prompt is too long", e.message)
     }
 
     @Test

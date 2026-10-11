@@ -1,6 +1,5 @@
 package com.nosfabrica.observer.press
 
-import com.anthropic.models.messages.OutputConfig
 import com.nosfabrica.observer.Press
 import com.nosfabrica.observer.nostr.Relays
 import com.nosfabrica.observer.press.auth.Bunkers
@@ -11,6 +10,7 @@ import com.nosfabrica.observer.press.publish.Blossom
 import com.nosfabrica.observer.press.store.Continuities
 import com.nosfabrica.observer.press.store.Db
 import com.nosfabrica.observer.write.DEFAULT_MODEL
+import com.nosfabrica.observer.write.effortNamed
 import com.vitorpamplona.quartz.nip01Core.core.Event
 import com.vitorpamplona.quartz.nip01Core.signers.EventTemplate
 import io.ktor.server.engine.embeddedServer
@@ -111,7 +111,7 @@ class App(
     val removals = ConcurrentHashMap<String, Removal>()
     val continuities = Continuities(db)
     val blossom = Blossom()
-    val press = Press(relays, config.searchRelay, effort(config.effort), config.model, config.batch)
+    val press = Press(relays, config.searchRelay, effortNamed(config.effort), config.model, config.batch)
     val announce = Announce(relays, press)
     val editions = Editions(press, runs, announce, continuities, scope)
 
@@ -150,15 +150,6 @@ class App(
     }
 
     private val log = LoggerFactory.getLogger(App::class.java)
-
-    private fun effort(name: String) =
-        when (name.lowercase()) {
-            "low" -> OutputConfig.Effort.LOW
-            "xhigh" -> OutputConfig.Effort.XHIGH
-            "max" -> OutputConfig.Effort.MAX
-            "high" -> OutputConfig.Effort.HIGH
-            else -> OutputConfig.Effort.MEDIUM
-        }
 }
 
 fun main() {

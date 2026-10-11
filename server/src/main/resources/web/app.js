@@ -224,14 +224,26 @@ function arrive(who) {
 
 // A page we are still holding, after a reload.
 //
-// Only the one case: a run that failed with the edition still in hand. A
-// reader who reloads after their servers refused the upload would otherwise
-// see a clean desk, with the page they paid for sitting on the server for
-// another half hour and no way to ask for it.
+// A run still being written, or written and waiting for a signature, is picked
+// up where it is. A batched edition can take a long time to come back, and a
+// reader who closed the tab meanwhile would otherwise find a clean desk -- and
+// pressing Print on it starts, and pays for, a second edition.
+//
+// And a run that failed with the edition still in hand. A reader who reloads
+// after their servers refused the upload would otherwise see a clean desk,
+// with the page they paid for sitting on the server and no way to ask for it.
 async function resume() {
   const res = await fetch("/api/editions/current");
   if (!res.ok) return;
   const current = await res.json();
+  if (current.state === "RUNNING" || current.state === "SIGNING") {
+    $("generate").disabled = true;
+    state.draft = current.id;
+    state.misses = 0;
+    state.poll = setInterval(pollDraft, 2000);
+    pollDraft();
+    return;
+  }
   if (current.state !== "FAILED" || !current.held || !current.report) return;
   const report = JSON.parse(current.report);
   if (!report.uploads) return;
