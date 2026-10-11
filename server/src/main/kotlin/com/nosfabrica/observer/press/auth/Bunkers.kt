@@ -163,11 +163,12 @@ class Bunkers(
         /**
          * Exactly what this app does, named up front.
          *
-         * kind 27235 is the sign-in signature, 24242 authorizes one upload, and
-         * 35128 is the site manifest. Asking for `sign_event` unqualified would
-         * be asking for permission to post as the reader, which this service
-         * never does.
+         * kind 24242 authorizes one upload, 35128 is the site manifest, and 5
+         * takes an edition down again. Not 27235: a bunker sign-in is proved by
+         * the connection itself, and NIP-98 is only ever signed in the browser.
+         * Asking for `sign_event` unqualified would be asking for permission to
+         * post as the reader, which this service never does.
          */
-        const val PERMISSIONS = "sign_event:27235,sign_event:24242,sign_event:35128"
+        const val PERMISSIONS = "sign_event:24242,sign_event:35128,sign_event:5"
     }
 }
