@@ -17,6 +17,8 @@ import com.nosfabrica.observer.safe.Proof
 import com.nosfabrica.observer.safe.Sanitizer
 import com.nosfabrica.observer.safe.Validator
 import com.nosfabrica.observer.write.Continuity
+import com.nosfabrica.observer.write.DEFAULT_MODEL
+import com.nosfabrica.observer.write.PRICES
 import com.nosfabrica.observer.write.Writer
 import java.io.Closeable
 import java.time.ZoneId
@@ -37,8 +39,18 @@ const val WINDOW_SECONDS = 24L * 60 * 60
 class Press(
     private val relays: Relays,
     private val searchRelay: String,
-    private val effort: OutputConfig.Effort = OutputConfig.Effort.HIGH,
+    private val effort: OutputConfig.Effort = OutputConfig.Effort.MEDIUM,
+    private val model: String = DEFAULT_MODEL,
+    /** Through the Message Batches API, at half price and a longer wait. See [Writer]. */
+    private val batch: Boolean = true,
 ) : Closeable {
+    init {
+        // Asked now rather than at the first edition, because the writer is
+        // built lazily and a misspelt model id should stop a server at boot,
+        // not the first reader who presses print.
+        require(model in PRICES) { "No list price for $model. Add it to PRICES so a run can say what it cost." }
+    }
+
     /**
      * One writer, not one per edition.
      *
@@ -47,7 +59,7 @@ class Press(
      * both for the life of the process, which a CLI run never notices and a
      * server does.
      */
-    private val writer by lazy { Writer(effort = effort) }
+    private val writer by lazy { Writer(model, effort, batch) }
 
     /**
      * One browser, not one per edition.
@@ -99,6 +111,18 @@ class Press(
         ) : Step
 
         data object Writing : Step
+
+        /**
+         * Handed to the Message Batches API and waiting its turn.
+         *
+         * Its own step because it changes what "slow" means: a streamed page is
+         * a few minutes, a batched one is usually a few minutes and is allowed a
+         * day, and a reader looking at the same "writing" line for twenty minutes
+         * deserves to know which kind of wait it is.
+         */
+        data class Queued(
+            val batchId: String,
+        ) : Step
 
         data class Written(
             val chars: Int,
@@ -345,10 +369,10 @@ class Press(
         // The ladder is the plan's: render it, regenerate ONCE if it does not
         // read, and if the second one does not either, drop the author's
         // stylesheet for the house layout. Each rung is cheaper to be wrong
-        // about than the one below: a second generation costs a dollar, the
+        // about than the one below: a second generation costs a second edition, the
         // fallback costs the day's typography, and the reader gets a page.
         onStep(Step.Writing)
-        var draft = writer.write(corpus, digest, art, continuity, zone)
+        var draft = writer.write(corpus, digest, art, continuity, zone) { onStep(Step.Queued(it)) }
         onStep(Step.Written(draft.html.length, draft.inputTokens, draft.outputTokens, draft.costUsd()))
         var sanitized = sanitizer.sanitize(draft.html)
         onStep(Step.Cleaned(sanitized.removed))
@@ -357,7 +381,7 @@ class Press(
 
         if (!proof.ok) {
             onStep(Step.Writing)
-            draft = writer.write(corpus, digest, art, continuity, zone)
+            draft = writer.write(corpus, digest, art, continuity, zone) { onStep(Step.Queued(it)) }
             onStep(Step.Written(draft.html.length, draft.inputTokens, draft.outputTokens, draft.costUsd()))
             sanitized = sanitizer.sanitize(draft.html)
             onStep(Step.Cleaned(sanitized.removed))

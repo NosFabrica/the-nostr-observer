@@ -196,10 +196,13 @@ no template to fall back on.
 
 ## 5. The generation contract
 
-Default to `claude-opus-5` with adaptive thinking. The task is genuinely
-editorial — judging which of 400 posts is a story, finding the thread between
-four unrelated notes, deciding what shape the page should be. Tune with
-`output_config.effort` rather than reaching for a cheaper model.
+Default to `claude-sonnet-5-5` at `medium` effort with adaptive thinking,
+through the Message Batches API. This reverses the first call, which was
+`claude-opus-5` and "tune effort rather than reaching for a cheaper model": the
+task is editorial, but at $1–2 an edition the cost was the product's problem,
+and the sanitizer, validator and proof render already catch every mechanical
+failure, leaving prose quality as something a reader can judge by eye. Changed
+2026-10-11; `--model` / `OBSERVER_MODEL` puts Opus back without a code change.
 
 ### Layout free, design opt-in
 
@@ -233,13 +236,16 @@ than random churn.
 
 | Scenario | Input | Output | Per edition |
 |---|---:|---:|---:|
-| House style kept — the ordinary day | 70K | 12K | $0.65 |
-| Model restyles the page | 70K | 25K | $0.98 |
-| Either, via Batch API | — | — | −50% |
+| House style kept — the ordinary day | 70K | ~20K | ~$0.17 |
+| Model restyles the page | 70K | ~33K | ~$0.24 |
 
-Opus 5 at $5/$25 per MTok. Input extrapolated from the prototype's 773-event,
-540 KB digest for a 24-hour window, held near-constant by the budget stage. Batch
-is asynchronous scheduling, not caching. **No prompt caching** — decided, revisit
+Sonnet 5.5 via the Batch API: $2/$10 per MTok, halved. Output is the page (12K
+or 25K) plus an ESTIMATED ~8K of thinking at `medium` -- not yet measured. The
+first version of this table left thinking out entirely, and it was most of what
+made Opus 5 at `high` cost $1–2 rather than the $0.65–0.98 predicted here.
+Input extrapolated from the prototype's 773-event, 540 KB digest for a 24-hour
+window, held near-constant by the budget stage. Batch is asynchronous
+scheduling, not caching. **No prompt caching** — decided, revisit
 when volume justifies it.
 
 ---
@@ -399,7 +405,7 @@ never reaches the client.
 | Language | Kotlin 2.4.0 / JVM | Gradle with a version catalog, spotless + ktlint, git hooks — mirror the relay's setup |
 | Nostr | Quartz | Event models, signature verification, relay client, filters, NIP-19, NIP-42 AUTH, NIP-46 remote signing. Pin on JitPack and `force()` it in every module — JitPack versions are commit hashes and Gradle resolves conflicts *lexicographically*. It is KMP with Android in its graph, so `settings.gradle.kts` needs `google()` |
 | HTTP + sockets | Ktor 3.5.1 | Netty engine for the app; ktor-client for Blossom `PUT`. Outbound relay sockets via Quartz's `BasicOkHttpWebSocket`, as the router already does |
-| Model | anthropic-java 2.34.0 | `AnthropicOkHttpClient.fromEnv()`; `.model("claude-opus-5")`; `.thinking(ThinkingConfigAdaptive)`; effort nests inside `OutputConfig`. **Use `createStreaming`** — a whole front page is a long generation and a blocking call will hit the HTTP timeout. Rides on okhttp, already in the graph |
+| Model | anthropic-java 2.34.0 | `AnthropicOkHttpClient.fromEnv()`; `.model("claude-sonnet-5-5")`; `.thinking(ThinkingConfigAdaptive)`; effort nests inside `OutputConfig`. Editions go through `messages().batches()` — create, poll `retrieve` until `ENDED`, read `resultsStreaming`. The unbatched path must **use `createStreaming`** — a whole front page is a long generation and a blocking call will hit the HTTP timeout. Rides on okhttp, already in the graph |
 | Sanitizer | jsoup | `Cleaner` + a custom `Safelist`. Two things it will not do: it does not parse CSS, so `@import` and `url()` need their own pass; and `<style>` plus the `style` attribute must be added to the safelist deliberately |
 | Storage | SQLite (JDBC) | Continuity records, a published-edition index, expiring drafts. Numbered SQL migrations, as the relay does |
 | Proof render | Playwright for Java | The one heavyweight dependency, and the only way to catch a layout that overflows or goes unreadable in dark mode. Defer past the first spike if it slows the container down |

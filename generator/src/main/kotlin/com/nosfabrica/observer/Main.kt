@@ -11,7 +11,7 @@ import kotlin.system.exitProcess
 private const val DEFAULT_RELAY = "wss://search.brainstorm.world"
 
 /** Flags that take no value. Everything else consumes the next argument. */
-private val BOOLEAN_FLAGS = setOf("--dry-run", "--check")
+private val BOOLEAN_FLAGS = setOf("--dry-run", "--check", "--no-batch")
 
 private val USAGE =
     """
@@ -22,7 +22,10 @@ private val USAGE =
       --relay <url>    relay to read from (default $DEFAULT_RELAY)
       --out <file>     where to write the edition (default edition.html)
       --until <epoch>  end of the 24h window (default: now)
-      --effort <lvl>   low | medium | high | xhigh | max (default high)
+      --effort <lvl>   low | medium | high | xhigh | max (default medium)
+      --model <id>     the model that writes the page (default ${com.nosfabrica.observer.write.DEFAULT_MODEL})
+      --no-batch       stream the page now at full price, instead of the half-price
+                       Message Batches API (minutes, and up to a day)
       --timezone <id>  the reader's zone, e.g. America/New_York (default: this machine's)
       --dry-run        pull, prune and shortlist, but do not call the model
       --check          report the readiness chain and stop
@@ -101,7 +104,13 @@ fun main(args: Array<String>) =
             // A Chromium process outlives the run otherwise -- the proof
             // render starts one lazily and nothing else would stop it.
             val press =
-                Press(relays, relayUrl, effort(flags["--effort"])).also { p ->
+                Press(
+                    relays,
+                    relayUrl,
+                    effort(flags["--effort"]),
+                    model = flags["--model"] ?: com.nosfabrica.observer.write.DEFAULT_MODEL,
+                    batch = !flags.containsKey("--no-batch"),
+                ).also { p ->
                     Runtime.getRuntime().addShutdownHook(Thread { p.close() })
                 }
 
@@ -146,6 +155,9 @@ fun main(args: Array<String>) =
                 // useful half; the trace belongs in a log nobody has yet.
                 System.err.println("\nThe model API refused: ${api.message?.lines()?.firstOrNull() ?: "no reason given"}")
                 exitProcess(5)
+            } catch (unwritten: com.nosfabrica.observer.write.Writer.Unwritten) {
+                System.err.println("\n${unwritten.message}")
+                exitProcess(5)
             } catch (refused: Press.Refused) {
                 // NO_LENS is already on screen: `report` printed the whole chain
                 // and the sentence explaining the first unmet link. Repeating the
@@ -183,6 +195,10 @@ private fun show(progress: Press.Step) {
 
         Press.Step.Writing -> {
             step("Writing the page...")
+        }
+
+        is Press.Step.Queued -> {
+            step("Queued as batch ${progress.batchId} - usually minutes, at most a day")
         }
 
         is Press.Step.Written -> {
@@ -237,10 +253,10 @@ private fun report(verdict: Readiness.Verdict) {
 private fun effort(name: String?) =
     when (name?.lowercase()) {
         "low" -> com.anthropic.models.messages.OutputConfig.Effort.LOW
-        "medium" -> com.anthropic.models.messages.OutputConfig.Effort.MEDIUM
         "xhigh" -> com.anthropic.models.messages.OutputConfig.Effort.XHIGH
         "max" -> com.anthropic.models.messages.OutputConfig.Effort.MAX
-        else -> com.anthropic.models.messages.OutputConfig.Effort.HIGH
+        "high" -> com.anthropic.models.messages.OutputConfig.Effort.HIGH
+        else -> com.anthropic.models.messages.OutputConfig.Effort.MEDIUM
     }
 
 private fun symbol(status: Readiness.Status) =

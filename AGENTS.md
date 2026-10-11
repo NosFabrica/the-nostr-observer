@@ -30,14 +30,26 @@ reading — the commenting conventions, the JitPack pinning trap, and the
     ./gradlew :server:installDist
     OBSERVER_INSECURE_COOKIES=true PORT=8099 server/build/install/server/bin/server
 
-`OBSERVER_DB`, `OBSERVER_RELAY`, `OBSERVER_EFFORT`, `PORT`, `HOST` and
-`OBSERVER_INSECURE_COOKIES` configure the server. The last one lets the session
+`OBSERVER_DB`, `OBSERVER_RELAY`, `OBSERVER_EFFORT`, `OBSERVER_MODEL`,
+`OBSERVER_BATCH`, `PORT`, `HOST` and `OBSERVER_INSECURE_COOKIES` configure the
+server. The last one lets the session
 cookie travel over plain HTTP and is for local work only — a deployment that
 sets it is asserting that TLS terminates somewhere in front of it.
 
 `--check` reports the readiness chain and stops. `--dry-run` does everything
 except call the model and writes the digest instead of a page. Neither needs an
 API key. A full run reads `ANTHROPIC_API_KEY` from the environment.
+
+Editions are written by `claude-sonnet-5-5` at `medium` effort through the
+Message Batches API (2026-10-11). Batching halves every token and costs a wait:
+usually minutes, allowed up to a day. `--no-batch` / `OBSERVER_BATCH=false`
+streams at full price for prompt work; `--model` / `OBSERVER_MODEL` takes any
+model listed in `PRICES` in `write/Generator.kt` -- an unlisted one is refused at
+startup, so a run can always say what it cost. Opus 5 at `high` was costing
+roughly $1–2 an edition, most of it thinking and HTML at $25 per million output
+tokens; Sonnet batched lists at $1/$5. The batch path is tested against a fake
+of the API (`BatchWriterTest`); like the streamed path, it has not yet met the
+real one.
 
 ## Settled — do not relitigate without a reason
 

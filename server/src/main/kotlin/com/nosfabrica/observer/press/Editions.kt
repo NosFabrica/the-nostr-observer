@@ -287,6 +287,10 @@ class Editions(
                 pair("Writing your front page", "this is the slow part")
             }
 
+            is Press.Step.Queued -> {
+                pair("Waiting its turn at the press", "half price, and usually a few minutes; sometimes longer")
+            }
+
             is Press.Step.Written -> {
                 pair("Wrote ${step.chars} characters", "$${"%.2f".format(step.costUsd)}")
             }

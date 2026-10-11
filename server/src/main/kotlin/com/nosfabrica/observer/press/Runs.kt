@@ -57,6 +57,21 @@ class Runs(
         val startedAt: Long = Instant.now().epochSecond,
     ) {
         @Volatile var state: State = State.RUNNING
+            set(value) {
+                field = value
+                settledAt = Instant.now().epochSecond
+            }
+
+        /**
+         * When it last changed state, which is what the sweep counts from.
+         *
+         * Not [startedAt]. A batched edition can spend longer than the whole TTL
+         * waiting for the model, and counting from the start swept those runs on
+         * the next pass after they finished -- a paid-for page gone before the
+         * reader's signer had been asked.
+         */
+        @Volatile var settledAt: Long = startedAt
+            private set
 
         @Volatile var lines: List<Line> = emptyList()
 
@@ -136,7 +151,7 @@ class Runs(
 
     fun sweep(): Int {
         val cutoff = Instant.now().epochSecond - ttlSeconds
-        val gone = runs.entries.filter { it.value.startedAt < cutoff && it.value.state != State.RUNNING }
+        val gone = runs.entries.filter { it.value.settledAt < cutoff && it.value.state != State.RUNNING }
         gone.forEach { runs.remove(it.key, it.value) }
         return gone.size
     }

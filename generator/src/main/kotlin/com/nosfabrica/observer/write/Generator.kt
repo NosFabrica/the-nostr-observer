@@ -1,12 +1,19 @@
 package com.nosfabrica.observer.write
 
+import com.anthropic.client.AnthropicClient
 import com.anthropic.client.okhttp.AnthropicOkHttpClient
 import com.anthropic.models.messages.MessageCreateParams
 import com.anthropic.models.messages.OutputConfig
+import com.anthropic.models.messages.RefusalStopDetails
+import com.anthropic.models.messages.StopReason
 import com.anthropic.models.messages.ThinkingConfigAdaptive
+import com.anthropic.models.messages.batches.BatchCreateParams
+import com.anthropic.models.messages.batches.MessageBatch
 import com.nosfabrica.observer.corpus.Art
 import com.nosfabrica.observer.corpus.Digest
 import com.nosfabrica.observer.nostr.Corpus
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 import java.time.Instant
 import java.time.ZoneId
 import java.time.ZoneOffset
@@ -21,6 +28,34 @@ data class Continuity(
 )
 
 /**
+ * What writes the paper unless somebody says otherwise.
+ *
+ * Sonnet, not Opus, and that reverses the plan's first call. The plan said to
+ * tune effort rather than reach for a cheaper model, on the grounds that the
+ * work is editorial. It was costing between one and two dollars an edition, and
+ * the sanitizer, the validator and the proof render already catch every
+ * mechanical way a page can be wrong; what is left for the model is judgement
+ * and prose, which is a thing a reader can look at and decide about.
+ */
+const val DEFAULT_MODEL = "claude-sonnet-5-5"
+
+/**
+ * List price per million tokens, input then output, at the standard rate.
+ *
+ * A model missing from here is refused at construction rather than priced at
+ * zero: a run that cannot say what it cost is the run nobody notices getting
+ * expensive. Haiku's figure holds below 100K input tokens, which is where the
+ * digest budget keeps every edition.
+ */
+internal val PRICES: Map<String, Pair<Double, Double>> =
+    mapOf(
+        "claude-sonnet-5-5" to (2.0 to 10.0),
+        "claude-opus-5-5" to (4.0 to 20.0),
+        "claude-opus-5" to (5.0 to 25.0),
+        "claude-haiku-5-5" to (0.10 to 0.50),
+    )
+
+/**
  * One call, one front page.
  *
  * The system prompt is fixed, versioned and never leaves the server. That is
@@ -30,10 +65,26 @@ data class Continuity(
  * entirely and is handled at the boundary, not here.
  */
 class Writer(
-    private val model: String = "claude-opus-5",
-    private val effort: OutputConfig.Effort = OutputConfig.Effort.HIGH,
+    private val model: String = DEFAULT_MODEL,
+    private val effort: OutputConfig.Effort = OutputConfig.Effort.MEDIUM,
+    /**
+     * Send the edition through the Message Batches API.
+     *
+     * Half price on every token, paid for in waiting: a batch usually comes back
+     * in minutes and is allowed up to a day. Nobody is reading the page while it
+     * is written -- the reader is watching a progress list -- so the wait is the
+     * cheaper thing to spend. Off for anyone iterating on the prompt by hand.
+     */
+    private val batch: Boolean = true,
+    private val pollMillis: Long = 15_000,
+    /** Built on first use, from the environment. A test hands in one pointed at a fake. */
+    connect: () -> AnthropicClient = { AnthropicOkHttpClient.fromEnv() },
 ) {
-    private val client by lazy { AnthropicOkHttpClient.fromEnv() }
+    init {
+        require(model in PRICES) { "No list price for $model. Add it to PRICES so a run can say what it cost." }
+    }
+
+    private val client by lazy(connect)
 
     private val systemPrompt: String = resource("/system-prompt.md")
     private val houseCss: String = resource("/house.css")
@@ -49,17 +100,45 @@ class Writer(
         val html: String,
         val inputTokens: Long,
         val outputTokens: Long,
+        val model: String = DEFAULT_MODEL,
+        val batched: Boolean = false,
     ) {
-        /** Opus 5 list price, so a run can print what it cost without a lookup. */
-        fun costUsd(): Double = inputTokens / 1_000_000.0 * 5.0 + outputTokens / 1_000_000.0 * 25.0
+        /** List price, halved for a batch, so a run can print what it cost without a lookup. */
+        fun costUsd(): Double {
+            val (perIn, perOut) = PRICES.getValue(model)
+            val full = inputTokens / 1_000_000.0 * perIn + outputTokens / 1_000_000.0 * perOut
+            return if (batched) full / 2 else full
+        }
     }
 
-    fun write(
+    /**
+     * The model came back without a page.
+     *
+     * A refusal, a batch that errored or expired, an answer cut off at the token
+     * ceiling. Each is a sentence for the reader, not a stack trace, and none of
+     * them is worth handing to the sanitizer as though it were a document.
+     */
+    class Unwritten(
+        override val message: String,
+    ) : Exception(message)
+
+    suspend fun write(
         corpus: Corpus,
         digest: Digest.Rendered,
         art: List<Art>,
         continuity: Continuity,
         zone: ZoneId = ZoneOffset.UTC,
+        /** Told the batch id as soon as there is one, so a lost run can still be found in the Console. */
+        onQueued: (String) -> Unit = {},
+    ): Draft {
+        val system = systemPrompt + "\n\n## House stylesheet\n\n```css\n" + houseCss + "\n```\n"
+        val user = userMessage(corpus, digest, art, continuity, zone)
+        return if (batch) batched(system, user, onQueued) else streamed(system, user)
+    }
+
+    private fun streamed(
+        system: String,
+        user: String,
     ): Draft {
         val params =
             MessageCreateParams
@@ -68,26 +147,132 @@ class Writer(
                 // A whole front page is a long generation. Streaming is not an
                 // optimisation here: a blocking call at this size hits the SDK's HTTP
                 // timeout and throws away work that was nearly finished.
-                .maxTokens(64_000)
+                .maxTokens(MAX_TOKENS)
                 .thinking(ThinkingConfigAdaptive.builder().build())
                 .outputConfig(OutputConfig.builder().effort(effort).build())
-                .system(systemPrompt + "\n\n## House stylesheet\n\n```css\n" + houseCss + "\n```\n")
-                .addUserMessage(userMessage(corpus, digest, art, continuity, zone))
+                .system(system)
+                .addUserMessage(user)
                 .build()
 
         val text = StringBuilder()
         var input = 0L
         var output = 0L
+        var stop: StopReason? = null
+        var details: RefusalStopDetails? = null
         client.messages().createStreaming(params).use { stream ->
             stream.stream().forEach { event ->
                 event.contentBlockDelta().ifPresent { delta ->
                     delta.delta().text().ifPresent { text.append(it.text()) }
                 }
                 event.messageStart().ifPresent { input = it.message().usage().inputTokens() }
-                event.messageDelta().ifPresent { output = it.usage().outputTokens() }
+                event.messageDelta().ifPresent {
+                    output = it.usage().outputTokens()
+                    stop = it.delta().stopReason().orElse(null)
+                    details = it.delta().stopDetails().orElse(null)
+                }
             }
         }
-        return Draft(strip(text.toString()), input, output)
+        refuseUnfinished(stop, details)
+        return Draft(strip(text.toString()), input, output, model, batched = false)
+    }
+
+    /**
+     * One request in a batch of one, then wait for it.
+     *
+     * Polling is free -- retrieving a batch is not billed -- and fifteen seconds
+     * is short against a wait measured in minutes. If whoever is waiting goes
+     * away (a server shutting down), the batch is cancelled on the way out: a
+     * request that has not started yet is not billed, and nothing would be left
+     * to receive the page anyway, because a run lives in memory.
+     */
+    private suspend fun batched(
+        system: String,
+        user: String,
+        onQueued: (String) -> Unit,
+    ): Draft {
+        val params =
+            BatchCreateParams.Request.Params
+                .builder()
+                .model(model)
+                .maxTokens(MAX_TOKENS)
+                .thinking(ThinkingConfigAdaptive.builder().build())
+                .outputConfig(OutputConfig.builder().effort(effort).build())
+                .system(system)
+                .addUserMessage(user)
+                .build()
+        val request =
+            BatchCreateParams
+                .builder()
+                .addRequest(
+                    BatchCreateParams.Request
+                        .builder()
+                        .customId(EDITION_ID)
+                        .params(params)
+                        .build(),
+                ).build()
+
+        val batches = client.messages().batches()
+        var batch = batches.create(request)
+        onQueued(batch.id())
+        try {
+            while (batch.processingStatus() != MessageBatch.ProcessingStatus.ENDED) {
+                delay(pollMillis)
+                batch = batches.retrieve(batch.id())
+            }
+        } catch (cancelled: CancellationException) {
+            runCatching { batches.cancel(batch.id()) }
+            throw cancelled
+        }
+
+        val result =
+            batches
+                .resultsStreaming(batch.id())
+                .use { stream -> stream.stream().toList() }
+                .firstOrNull { it.customId() == EDITION_ID }
+                ?.result()
+                ?: throw Unwritten("Batch ${batch.id()} ended with no result for the edition.")
+
+        val message =
+            result.succeeded().orElse(null)?.message()
+                ?: throw Unwritten(
+                    when {
+                        result.isErrored() -> "The model API rejected the edition: ${result.asErrored().error().error()}"
+                        result.isExpired() -> "The batch expired before the edition was written. Print again."
+                        result.isCanceled() -> "The batch was cancelled before the edition was written."
+                        else -> "Batch ${batch.id()} ended without a page."
+                    },
+                )
+        refuseUnfinished(message.stopReason().orElse(null), message.stopDetails().orElse(null))
+        val text =
+            message
+                .content()
+                .mapNotNull { block -> block.text().orElse(null)?.text() }
+                .joinToString("")
+        return Draft(strip(text), message.usage().inputTokens(), message.usage().outputTokens(), model, batched = true)
+    }
+
+    /**
+     * A refusal arrives as a successful response with no page in it, so it is
+     * stopped here rather than handed to the sanitizer as an empty document.
+     *
+     * A page cut off at the token ceiling is NOT stopped: it fails the proof
+     * render, and the ladder in `Press` already regenerates once for that.
+     */
+    private fun refuseUnfinished(
+        stop: StopReason?,
+        details: RefusalStopDetails?,
+    ) {
+        if (stop == StopReason.REFUSAL) {
+            val why = details?.category()?.orElse(null)?.asString() ?: "no category given"
+            throw Unwritten("The model declined to write this edition ($why).")
+        }
+    }
+
+    private companion object {
+        const val MAX_TOKENS = 64_000L
+
+        /** The only request in its batch; the id just has to match on the way back. */
+        const val EDITION_ID = "edition"
     }
 
     /**
@@ -107,9 +292,12 @@ class Writer(
                     .trimStart()
             s = s.removeSuffix("```").trimEnd()
         }
+        // Found-anywhere, then cut only if something precedes it. Testing `> 0`
+        // on the doctype alone made a page that STARTS with one fall through to
+        // the `<html` search and lose its doctype.
         val at =
-            s.indexOf("<!doctype", ignoreCase = true).takeIf { it > 0 }
-                ?: s.indexOf("<html", ignoreCase = true).takeIf { it > 0 }
+            s.indexOf("<!doctype", ignoreCase = true).takeIf { it >= 0 }
+                ?: s.indexOf("<html", ignoreCase = true).takeIf { it >= 0 }
         return if (at != null) s.substring(at) else s
     }
 
