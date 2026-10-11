@@ -154,7 +154,7 @@ class Editions(
                                         .toSet(),
                                 ).size,
                         bytes = blob.size,
-                        costUsd = edition.usage.costUsd(),
+                        costUsd = edition.costUsd,
                         publishable = edition.publishable,
                         violations = edition.report.violations.map { Unverified(it.kind.name, it.detail, it.excerpt) },
                     ),
@@ -193,7 +193,7 @@ class Editions(
                 // origin, and it never reaches anybody's relay. The sweep takes
                 // it on the same 30-minute clock as everything else.
                 run.html = blob
-                run.day = DAY.format(Instant.now().atZone(zone))
+                run.day = DAY.format(Instant.ofEpochSecond(edition.until).atZone(zone))
                 run.error =
                     "This edition quoted something it could not find in a source event, so it was not published. " +
                     "It was still written, and you can read it below."
@@ -216,7 +216,12 @@ class Editions(
             }
 
             val now = Instant.now().epochSecond
-            val day = DAY.format(Instant.ofEpochSecond(now).atZone(zone))
+            // The day the paper is ABOUT, which is the day its dateline prints:
+            // the close of its window, in the reader's zone. Not the day it came
+            // back. A batch can return after midnight, and filing a page under
+            // the wrong day is not only a wrong label -- the manifest is
+            // replaceable per day, so tomorrow's real edition would replace it.
+            val day = DAY.format(Instant.ofEpochSecond(edition.until).atZone(zone))
             val sha = Blossom.sha256(blob)
             run.html = blob
             run.sha = sha
@@ -227,7 +232,8 @@ class Editions(
             // INTO it: a back issue that lists only its date tells a reader
             // nothing about which paper was which.
             val next = Masthead.next(edition.rawHtml, continuities.of(run.pubkey))
-            run.upload = Templates.uploadAuth(sha, blob.size.toLong(), now, now + 600)
+            run.upload = Templates.uploadAuth(sha, blob.size.toLong(), now, now + UPLOAD_SECONDS)
+            run.uploadExpires = now + UPLOAD_SECONDS
             run.manifest = Templates.manifest(day, sha, servers, next.masthead, next.recentHeadlines.firstOrNull(), now)
             say("Ready to publish", "your signer will ask twice")
             run.state = Runs.State.SIGNING
@@ -253,6 +259,27 @@ class Editions(
             run.error = failure.message ?: failure::class.simpleName ?: "unknown failure"
             run.state = Runs.State.FAILED
         }
+    }
+
+    /**
+     * A new upload authorization, if the one being held is about to lapse.
+     *
+     * The template is built when the page is finished, and Blossom honours it
+     * for ten minutes. With a batch, the reader may not be there when it
+     * finishes; without this, a reader who came back after eleven minutes would
+     * sign an authorization the server is bound to refuse. Renewed on read, so
+     * whatever a status poll hands to the signer is current, and only near its
+     * end, so a template already on its way to the signer is not swapped out
+     * from under it.
+     */
+    fun freshen(run: Runs.Run) {
+        if (run.state != Runs.State.SIGNING) return
+        val sha = run.sha ?: return
+        val size = run.html?.size ?: return
+        val now = Instant.now().epochSecond
+        if (run.uploadExpires - now > UPLOAD_MARGIN_SECONDS) return
+        run.upload = Templates.uploadAuth(sha, size.toLong(), now, now + UPLOAD_SECONDS)
+        run.uploadExpires = now + UPLOAD_SECONDS
     }
 
     private fun describe(step: Press.Step): Pair<String, String?> =
@@ -287,6 +314,10 @@ class Editions(
                 pair("Writing your front page", "this is the slow part")
             }
 
+            is Press.Step.Queued -> {
+                pair("Waiting its turn at the press", "half price, and usually a few minutes; sometimes longer")
+            }
+
             is Press.Step.Written -> {
                 pair("Wrote ${step.chars} characters", "$${"%.2f".format(step.costUsd)}")
             }
@@ -317,6 +348,12 @@ class Editions(
             }
         }
 }
+
+/** How long a Blossom upload authorization is good for. */
+private const val UPLOAD_SECONDS = 600L
+
+/** Renew one with less than this left, so it cannot lapse between a poll and a signature. */
+private const val UPLOAD_MARGIN_SECONDS = 120L
 
 /** The day this edition is for, in the reader's own zone. */
 private val DAY =

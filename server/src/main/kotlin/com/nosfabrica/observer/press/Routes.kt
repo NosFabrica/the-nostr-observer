@@ -470,6 +470,7 @@ fun Application.routes(app: App) {
             val run =
                 app.runs.of(call.parameters["id"].orEmpty(), session.pubkey)
                     ?: return@get call.respond(HttpStatusCode.NotFound, Problem("no such edition"))
+            app.editions.freshen(run)
             call.respond(
                 Status(
                     state = run.state.name,

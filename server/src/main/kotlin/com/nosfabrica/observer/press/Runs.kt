@@ -36,6 +36,17 @@ class Runs(
      * that never answered — is a leak the size of an edition.
      */
     val ttlSeconds: Long = 30 * 60,
+    /**
+     * How long a finished page waits for its reader's signature.
+     *
+     * Longer than [ttlSeconds] because of batching: an edition can come back
+     * while the reader is asleep, and sweeping it half an hour later throws
+     * away a page they paid for. It is one page per reader at most -- the map is
+     * keyed by pubkey -- so holding it a day is bounded by construction. The
+     * upload authorization inside it is renewed on read, so its ten minutes do
+     * not set this clock (see `Editions.freshen`).
+     */
+    val signingTtlSeconds: Long = 24 * 60 * 60,
 ) {
     enum class State {
         /** The pipeline is working. */
@@ -57,6 +68,21 @@ class Runs(
         val startedAt: Long = Instant.now().epochSecond,
     ) {
         @Volatile var state: State = State.RUNNING
+            set(value) {
+                field = value
+                settledAt = Instant.now().epochSecond
+            }
+
+        /**
+         * When it last changed state, which is what the sweep counts from.
+         *
+         * Not [startedAt]. A batched edition can spend longer than the whole TTL
+         * waiting for the model, and counting from the start swept those runs on
+         * the next pass after they finished -- a paid-for page gone before the
+         * reader's signer had been asked.
+         */
+        @Volatile var settledAt: Long = startedAt
+            private set
 
         @Volatile var lines: List<Line> = emptyList()
 
@@ -68,6 +94,9 @@ class Runs(
         @Volatile var day: String? = null
 
         @Volatile var upload: EventTemplate<Event>? = null
+
+        /** When [upload] stops being honoured by a Blossom server. */
+        @Volatile var uploadExpires: Long = 0
 
         @Volatile var manifest: EventTemplate<Event>? = null
 
@@ -135,8 +164,12 @@ class Runs(
     ): Run? = runs[pubkey]?.takeIf { it.id == id }
 
     fun sweep(): Int {
-        val cutoff = Instant.now().epochSecond - ttlSeconds
-        val gone = runs.entries.filter { it.value.startedAt < cutoff && it.value.state != State.RUNNING }
+        val now = Instant.now().epochSecond
+        val gone =
+            runs.entries.filter {
+                val ttl = if (it.value.state == State.SIGNING) signingTtlSeconds else ttlSeconds
+                it.value.state != State.RUNNING && it.value.settledAt < now - ttl
+            }
         gone.forEach { runs.remove(it.key, it.value) }
         return gone.size
     }

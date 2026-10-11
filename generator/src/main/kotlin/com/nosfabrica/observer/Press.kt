@@ -17,6 +17,7 @@ import com.nosfabrica.observer.safe.Proof
 import com.nosfabrica.observer.safe.Sanitizer
 import com.nosfabrica.observer.safe.Validator
 import com.nosfabrica.observer.write.Continuity
+import com.nosfabrica.observer.write.DEFAULT_MODEL
 import com.nosfabrica.observer.write.Writer
 import java.io.Closeable
 import java.time.ZoneId
@@ -37,7 +38,10 @@ const val WINDOW_SECONDS = 24L * 60 * 60
 class Press(
     private val relays: Relays,
     private val searchRelay: String,
-    private val effort: OutputConfig.Effort = OutputConfig.Effort.HIGH,
+    private val effort: OutputConfig.Effort = OutputConfig.Effort.MEDIUM,
+    private val model: String = DEFAULT_MODEL,
+    /** Through the Message Batches API, at half price and a longer wait. See [Writer]. */
+    private val batch: Boolean = true,
 ) : Closeable {
     /**
      * One writer, not one per edition.
@@ -46,8 +50,11 @@ class Press(
      * owns a connection pool and thread pools. Building one per edition leaks
      * both for the life of the process, which a CLI run never notices and a
      * server does.
+     *
+     * Built eagerly -- its client is the lazy part -- so that a misspelt model
+     * stops a server at boot rather than the first reader who presses print.
      */
-    private val writer by lazy { Writer(effort = effort) }
+    private val writer = Writer(model, effort, batch)
 
     /**
      * One browser, not one per edition.
@@ -60,6 +67,9 @@ class Press(
     private val proofer by lazy { Proof() }
 
     override fun close() {
+        // First, and before anything slow: a batch nobody will read is still
+        // billed if it is left to finish.
+        runCatching { writer.cancelInFlight() }
         runCatching { proofer.close() }
     }
 
@@ -99,6 +109,18 @@ class Press(
         ) : Step
 
         data object Writing : Step
+
+        /**
+         * Handed to the Message Batches API and waiting its turn.
+         *
+         * Its own step because it changes what "slow" means: a streamed page is
+         * a few minutes, a batched one is usually a few minutes and is allowed a
+         * day, and a reader looking at the same "writing" line for twenty minutes
+         * deserves to know which kind of wait it is.
+         */
+        data class Queued(
+            val batchId: String,
+        ) : Step
 
         data class Written(
             val chars: Int,
@@ -173,6 +195,14 @@ class Press(
         val art: List<Art>,
         val digest: Digest.Rendered,
         val usage: Writer.Draft,
+        /**
+         * What every generation behind this page cost, not just the last one.
+         *
+         * [usage] is the draft that was kept. When the proof ladder writes the
+         * page twice, both were paid for, and a cost that names only the second
+         * under-reports exactly the editions that went wrong.
+         */
+        val costUsd: Double = usage.costUsd(),
         val removed: List<String>,
         val report: Validator.Report,
         /**
@@ -345,11 +375,12 @@ class Press(
         // The ladder is the plan's: render it, regenerate ONCE if it does not
         // read, and if the second one does not either, drop the author's
         // stylesheet for the house layout. Each rung is cheaper to be wrong
-        // about than the one below: a second generation costs a dollar, the
+        // about than the one below: a second generation costs a second edition, the
         // fallback costs the day's typography, and the reader gets a page.
         onStep(Step.Writing)
-        var draft = writer.write(corpus, digest, art, continuity, zone)
+        var draft = writer.write(corpus, digest, art, continuity, zone) { onStep(Step.Queued(it)) }
         onStep(Step.Written(draft.html.length, draft.inputTokens, draft.outputTokens, draft.costUsd()))
+        var spent = draft.costUsd()
         var sanitized = sanitizer.sanitize(draft.html)
         onStep(Step.Cleaned(sanitized.removed))
         var proof = proofer.check(sanitized.html)
@@ -357,8 +388,9 @@ class Press(
 
         if (!proof.ok) {
             onStep(Step.Writing)
-            draft = writer.write(corpus, digest, art, continuity, zone)
+            draft = writer.write(corpus, digest, art, continuity, zone) { onStep(Step.Queued(it)) }
             onStep(Step.Written(draft.html.length, draft.inputTokens, draft.outputTokens, draft.costUsd()))
+            spent += draft.costUsd()
             sanitized = sanitizer.sanitize(draft.html)
             onStep(Step.Cleaned(sanitized.removed))
             proof = proofer.check(sanitized.html)
@@ -389,6 +421,7 @@ class Press(
             art = art,
             digest = digest,
             usage = draft,
+            costUsd = spent,
             removed = sanitized.removed,
             report = report,
             proof = proof,

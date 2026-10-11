@@ -1,6 +1,5 @@
 package com.nosfabrica.observer.press
 
-import com.anthropic.models.messages.OutputConfig
 import com.nosfabrica.observer.Press
 import com.nosfabrica.observer.nostr.Relays
 import com.nosfabrica.observer.press.auth.Bunkers
@@ -10,6 +9,8 @@ import com.nosfabrica.observer.press.publish.Announce
 import com.nosfabrica.observer.press.publish.Blossom
 import com.nosfabrica.observer.press.store.Continuities
 import com.nosfabrica.observer.press.store.Db
+import com.nosfabrica.observer.write.DEFAULT_MODEL
+import com.nosfabrica.observer.write.effortNamed
 import com.vitorpamplona.quartz.nip01Core.core.Event
 import com.vitorpamplona.quartz.nip01Core.signers.EventTemplate
 import io.ktor.server.engine.embeddedServer
@@ -50,7 +51,16 @@ data class Config(
      */
     val publicUrl: String = env("OBSERVER_PUBLIC_URL") ?: "http://localhost:${env("PORT")?.toIntOrNull() ?: 8080}",
     val searchRelay: String = env("OBSERVER_RELAY") ?: "wss://search.brainstorm.world",
-    val effort: String = env("OBSERVER_EFFORT") ?: "high",
+    val effort: String = env("OBSERVER_EFFORT") ?: "medium",
+    val model: String = env("OBSERVER_MODEL") ?: DEFAULT_MODEL,
+    /**
+     * Whether editions go through the Message Batches API.
+     *
+     * On by default: half price, and a reader who already watches a progress
+     * list for minutes can watch it for a few more. `false` streams the page at
+     * full price, for local work on the prompt.
+     */
+    val batch: Boolean = env("OBSERVER_BATCH") != "false",
     /**
      * Whether a cookie may travel over plain HTTP.
      *
@@ -101,7 +111,7 @@ class App(
     val removals = ConcurrentHashMap<String, Removal>()
     val continuities = Continuities(db)
     val blossom = Blossom()
-    val press = Press(relays, config.searchRelay, effort(config.effort))
+    val press = Press(relays, config.searchRelay, effortNamed(config.effort), config.model, config.batch)
     val announce = Announce(relays, press)
     val editions = Editions(press, runs, announce, continuities, scope)
 
@@ -140,21 +150,16 @@ class App(
     }
 
     private val log = LoggerFactory.getLogger(App::class.java)
-
-    private fun effort(name: String) =
-        when (name.lowercase()) {
-            "low" -> OutputConfig.Effort.LOW
-            "medium" -> OutputConfig.Effort.MEDIUM
-            "xhigh" -> OutputConfig.Effort.XHIGH
-            "max" -> OutputConfig.Effort.MAX
-            else -> OutputConfig.Effort.HIGH
-        }
 }
 
 fun main() {
     val app = App()
     println("observer-press on ${app.config.host}:${app.config.port}, reading ${app.config.searchRelay}")
     println("  public url ${app.config.publicUrl} (sign-in signatures must name it)")
+    println(
+        "  writing with ${app.config.model} at ${app.config.effort} effort, " +
+            if (app.config.batch) "batched (half price, minutes to wait)" else "streamed (full price)",
+    )
     if (System.getenv("OBSERVER_PUBLIC_URL").isNullOrBlank()) {
         println("  OBSERVER_PUBLIC_URL is unset: every sign-in will be rejected unless readers reach this exact address")
     }
