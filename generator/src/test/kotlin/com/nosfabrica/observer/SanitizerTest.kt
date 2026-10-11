@@ -1,9 +1,7 @@
 package com.nosfabrica.observer
 
-import com.nosfabrica.observer.nostr.Calendar
-import com.nosfabrica.observer.nostr.Classifieds
 import com.nosfabrica.observer.nostr.Desk
-import com.nosfabrica.observer.nostr.Streams
+import com.nosfabrica.observer.nostr.DeskLink
 import com.nosfabrica.observer.safe.Sanitizer
 import com.nosfabrica.observer.safe.Validator
 import com.vitorpamplona.quartz.nip19Bech32.entities.NEvent
@@ -84,7 +82,7 @@ class SanitizerTest {
                 emptySet(),
                 mapOf(stream.id.lowercase() to stream),
             )
-        val writer = Streams.writerUrl(stream.id)
+        val writer = DeskLink.LIVE.writerUrl(stream.id)
         val r =
             sanitizer.sanitize(
                 """<!doctype html><html><head><title>T</title></head><body>
@@ -105,7 +103,7 @@ class SanitizerTest {
                 emptyMap(),
                 mapOf(listing.id.lowercase() to listing),
             )
-        val writer = Classifieds.writerUrl(listing.id)
+        val writer = DeskLink.CLASSIFIEDS.writerUrl(listing.id)
         val r =
             sanitizer.sanitize(
                 """<!doctype html><html><head><title>T</title></head><body>
@@ -127,7 +125,7 @@ class SanitizerTest {
                 emptyMap(),
                 mapOf(listing.id.lowercase() to listing),
             )
-        val writer = Calendar.writerUrl(listing.id)
+        val writer = DeskLink.CALENDAR.writerUrl(listing.id)
         val r =
             sanitizer.sanitize(
                 """<!doctype html><html><head><title>T</title></head><body>
@@ -167,7 +165,7 @@ class SanitizerTest {
 
     @Test
     fun `unwraps a zap stream url that names no stream we read`() {
-        val writer = Streams.writerUrl("f".repeat(64))
+        val writer = DeskLink.LIVE.writerUrl("f".repeat(64))
         val r = clean("""<p><a href="$writer">fake stream</a></p>""")
         assertFalse(r.html.contains("<a "), "no anchor survived")
         assertTrue(r.html.contains("fake stream"))
@@ -175,7 +173,7 @@ class SanitizerTest {
 
     @Test
     fun `unwraps a shopstr url that names no listing we read`() {
-        val writer = Classifieds.writerUrl("f".repeat(64))
+        val writer = DeskLink.CLASSIFIEDS.writerUrl("f".repeat(64))
         val r = clean("""<p><a href="$writer">fake listing</a></p>""")
         assertFalse(r.html.contains("<a "), "no anchor survived")
         assertTrue(r.html.contains("fake listing"))
@@ -185,7 +183,7 @@ class SanitizerTest {
     fun `unwraps an njump calendar url that names no listing we read`() {
         // Empty corpusEventIds would keep any njump hex as a citation; a real
         // run always passes the corpus, so membership is what drops fakes.
-        val writer = Calendar.writerUrl("f".repeat(64))
+        val writer = DeskLink.CALENDAR.writerUrl("f".repeat(64))
         val r =
             Sanitizer(Fixtures.art(), setOf("a".repeat(64))).sanitize(
                 """<!doctype html><html><head><title>T</title></head><body>

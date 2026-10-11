@@ -1,10 +1,8 @@
 package com.nosfabrica.observer.safe
 
 import com.nosfabrica.observer.corpus.Art
-import com.nosfabrica.observer.nostr.Calendar
-import com.nosfabrica.observer.nostr.Classifieds
 import com.nosfabrica.observer.nostr.Corpus
-import com.nosfabrica.observer.nostr.Streams
+import com.nosfabrica.observer.nostr.DeskLink
 import com.vitorpamplona.quartz.nip01Core.core.Event
 import com.vitorpamplona.quartz.nip19Bech32.Nip19Parser
 import com.vitorpamplona.quartz.nip19Bech32.entities.NEvent
@@ -60,13 +58,13 @@ class Validator(
     private val corpusEventIds: Set<String> = corpus.all().map { it.id }.toSet()
 
     /** Live streams we read — the only streams a watch link may name. */
-    private val liveStreams: List<Event> = Streams.live(corpus)
+    private val liveStreams: List<Event> = DeskLink.LIVE.listed(corpus)
 
     /** Classifieds we read — the only listings a Shopstr link may name. */
-    private val listings: List<Event> = Classifieds.listed(corpus)
+    private val listings: List<Event> = DeskLink.CLASSIFIEDS.listed(corpus)
 
     /** Calendar listings we read — the only events an njump calendar link may name. */
-    private val calendars: List<Event> = Calendar.listed(corpus)
+    private val calendars: List<Event> = DeskLink.CALENDAR.listed(corpus)
 
     /** Event ids of calendar listings — bare njump hex for these is not enough. */
     private val calendarIds: Set<String> = calendars.map { it.id.lowercase() }.toSet()
@@ -156,15 +154,13 @@ class Validator(
         for (a in doc.select("a[href]")) {
             val href = a.attr("href")
             if (!href.startsWith("http", ignoreCase = true)) continue
-            val streamId = Streams.streamLinkTarget(href, liveStreams)
-            if (streamId != null && liveStreams.any { it.id.equals(streamId, ignoreCase = true) }) continue
-            val listingId = Classifieds.listingLinkTarget(href, listings)
-            if (listingId != null && listings.any { it.id.equals(listingId, ignoreCase = true) }) continue
+            if (DeskLink.LIVE.target(href, liveStreams) != null) continue
+            if (DeskLink.CLASSIFIEDS.target(href, listings) != null) continue
             // Canonical naddr only. Writer-form hex shares the host with ordinary
             // citations; accepting it here would ship a frozen revision of a
             // replaceable listing. Sanitizer encodes; this refuses bare hex for
             // calendar ids so a regression fails closed.
-            val calendarId = Calendar.calendarLinkTarget(href, calendars)
+            val calendarId = DeskLink.CALENDAR.target(href, calendars)
             if (calendarId != null && href.contains("naddr1", ignoreCase = true)) continue
             val id = permalinkTarget(href)
             if (id != null && id in corpusEventIds && id !in calendarIds) continue

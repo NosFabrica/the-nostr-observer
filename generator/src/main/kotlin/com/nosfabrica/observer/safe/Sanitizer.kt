@@ -1,9 +1,7 @@
 package com.nosfabrica.observer.safe
 
 import com.nosfabrica.observer.corpus.Art
-import com.nosfabrica.observer.nostr.Calendar
-import com.nosfabrica.observer.nostr.Classifieds
-import com.nosfabrica.observer.nostr.Streams
+import com.nosfabrica.observer.nostr.DeskLink
 import com.vitorpamplona.quartz.nip01Core.core.Event
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
@@ -200,38 +198,24 @@ class Sanitizer(
         doc: Document,
         removed: MutableList<String>,
     ) {
-        val streams = liveStreams.values.toList()
-        val listings = classifieds.values.toList()
-        val calendarListings = calendars.values.toList()
+        val desks = listOf(DeskLink.LIVE to liveStreams, DeskLink.CLASSIFIEDS to classifieds, DeskLink.CALENDAR to calendars)
         for (a in doc.select("a[href]").toList()) {
             val href = a.attr("href")
             if (!href.startsWith("http", ignoreCase = true)) continue
-            val streamId = Streams.streamLinkTarget(href, streams)
-            val stream = streamId?.let { liveStreams[it] }
-            if (stream != null) {
-                val canonical = Streams.canonicalUrl(stream)
-                if (href != canonical) a.attr("href", canonical)
-                continue
-            }
-            val listingId = Classifieds.listingLinkTarget(href, listings)
-            val listing = listingId?.let { classifieds[it] }
-            if (listing != null) {
-                val canonical = Classifieds.canonicalUrl(listing)
-                if (href != canonical) a.attr("href", canonical)
-                continue
-            }
-            // A calendar listing cited the ordinary way — njump's canonical
-            // nevent — is encoded to its address rather than kept as written.
-            // Without this the sanitizer kept the frozen link and `Validator`
-            // refused it, so an edition that cited a meetup exactly as the
-            // brief asks was thrown away instead of repaired. resolve.mjs has
-            // always done this; this is the half that had not caught up.
-            val calendarId =
-                Calendar.calendarLinkTarget(href, calendarListings)
-                    ?: Validator.permalinkTarget(href)?.takeIf { it in calendars }
-            val calendar = calendarId?.let { calendars[it] }
-            if (calendar != null) {
-                val canonical = Calendar.canonicalUrl(calendar)
+            val linked =
+                desks.firstNotNullOfOrNull { (link, read) ->
+                    link.target(href, read.values)?.let { read[it] }?.let { link to it }
+                }
+                    // A calendar listing cited the ordinary way — njump's
+                    // canonical nevent — is encoded to its address rather than
+                    // kept as written. Without this the sanitizer kept the
+                    // frozen link and `Validator` refused it, so an edition that
+                    // cited a meetup exactly as the brief asks was thrown away
+                    // instead of repaired. resolve.mjs has always done this;
+                    // this is the half that had not caught up.
+                    ?: Validator.permalinkTarget(href)?.let { calendars[it] }?.let { DeskLink.CALENDAR to it }
+            if (linked != null) {
+                val canonical = linked.first.canonicalUrl(linked.second)
                 if (href != canonical) a.attr("href", canonical)
                 continue
             }

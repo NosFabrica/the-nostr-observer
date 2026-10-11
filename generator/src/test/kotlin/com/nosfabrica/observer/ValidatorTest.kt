@@ -1,9 +1,7 @@
 package com.nosfabrica.observer
 
-import com.nosfabrica.observer.nostr.Calendar
-import com.nosfabrica.observer.nostr.Classifieds
 import com.nosfabrica.observer.nostr.Desk
-import com.nosfabrica.observer.nostr.Streams
+import com.nosfabrica.observer.nostr.DeskLink
 import com.nosfabrica.observer.safe.Validator
 import com.vitorpamplona.quartz.nip01Core.relay.normalizer.NormalizedRelayUrl
 import com.vitorpamplona.quartz.nip19Bech32.entities.NEvent
@@ -114,7 +112,7 @@ class ValidatorTest {
     fun `accepts a verified stream watch link after encoding`() {
         val stream = Fixtures.liveStream()
         val validator = Validator(Fixtures.corpus(listOf(stream), Desk.LIVE), Fixtures.art())
-        val canonical = Streams.canonicalUrl(stream)
+        val canonical = DeskLink.LIVE.canonicalUrl(stream)
         val r = validator.validate("""<html><body><a href="$canonical">NoGood Radio</a></body></html>""")
         assertTrue(r.ok, r.summary())
     }
@@ -123,7 +121,7 @@ class ValidatorTest {
     fun `accepts a verified shopstr listing link after encoding`() {
         val listing = Fixtures.classified()
         val validator = Validator(Fixtures.corpus(listOf(listing), Desk.CLASSIFIEDS), Fixtures.art())
-        val canonical = Classifieds.canonicalUrl(listing)
+        val canonical = DeskLink.CLASSIFIEDS.canonicalUrl(listing)
         val r = validator.validate("""<html><body><a href="$canonical">4 Bars Rough Cut Tallow</a></body></html>""")
         assertTrue(r.ok, r.summary())
     }
@@ -132,7 +130,7 @@ class ValidatorTest {
     fun `accepts a verified njump calendar link after encoding`() {
         val listing = Fixtures.calendarEntry()
         val validator = Validator(Fixtures.corpus(listOf(listing), Desk.CALENDAR), Fixtures.art())
-        val canonical = Calendar.canonicalUrl(listing)
+        val canonical = DeskLink.CALENDAR.canonicalUrl(listing)
         val r = validator.validate("""<html><body><a href="$canonical">Bitcoin Meetup in Porto</a></body></html>""")
         assertTrue(r.ok, r.summary())
     }
@@ -144,7 +142,7 @@ class ValidatorTest {
         // replaceable event as an nevent-shaped permalink.
         val listing = Fixtures.calendarEntry()
         val validator = Validator(Fixtures.corpus(listOf(listing), Desk.CALENDAR), Fixtures.art())
-        val writer = Calendar.writerUrl(listing.id)
+        val writer = DeskLink.CALENDAR.writerUrl(listing.id)
         val r = validator.validate("""<html><body><a href="$writer">meetup</a></body></html>""")
         assertFalse(r.ok)
         assertTrue(r.violations.single().kind == Validator.Kind.LINK)
@@ -153,7 +151,7 @@ class ValidatorTest {
     @Test
     fun `rejects a zap stream url copied from a post body`() {
         val invented =
-            Streams.canonicalUrl(
+            DeskLink.LIVE.canonicalUrl(
                 Fixtures.event(
                     "f".repeat(64),
                     "dd44".repeat(16),
@@ -172,7 +170,7 @@ class ValidatorTest {
     @Test
     fun `rejects a shopstr url copied from a post body`() {
         val invented =
-            Classifieds.canonicalUrl(
+            DeskLink.CLASSIFIEDS.canonicalUrl(
                 Fixtures.event(
                     "f".repeat(64),
                     "ee55".repeat(16),
@@ -191,7 +189,7 @@ class ValidatorTest {
     @Test
     fun `rejects an njump calendar url copied from a post body`() {
         val invented =
-            Calendar.canonicalUrl(
+            DeskLink.CALENDAR.canonicalUrl(
                 Fixtures.event(
                     "f".repeat(64),
                     "ff66".repeat(16),
