@@ -195,21 +195,6 @@ export function corpusIndex (corpus) {
   return indexOf(corpus)
 }
 
-/** Live-stream events from the corpus — the only streams a watch link may name. */
-export function liveStreams (corpus) {
-  return indexOf(corpus).streams.list
-}
-
-/** Classified events from the corpus — the only listings a Shopstr link may name. */
-export function classifiedListings (corpus) {
-  return indexOf(corpus).listings.list
-}
-
-/** Calendar events from the corpus — the only listings an njump calendar link may name. */
-export function calendarListings (corpus) {
-  return indexOf(corpus).calendars.list
-}
-
 /**
  * Event id if `href` is a verified zap.stream watch link for a live stream we
  * read; otherwise null.

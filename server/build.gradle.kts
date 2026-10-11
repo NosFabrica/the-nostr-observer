@@ -31,13 +31,10 @@ dependencies {
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.okhttp)
     implementation(libs.anthropic)
-    // Masthead continuity reads the model's raw output; jsoup is how.
-    implementation(libs.jsoup)
     implementation(libs.ktor.server.core)
     implementation(libs.ktor.server.netty)
     implementation(libs.ktor.server.content.negotiation)
     implementation(libs.ktor.server.status.pages)
-    implementation(libs.ktor.server.call.logging)
     implementation(libs.ktor.serialization.json)
     implementation(libs.sqlite.jdbc)
     runtimeOnly(libs.logback)

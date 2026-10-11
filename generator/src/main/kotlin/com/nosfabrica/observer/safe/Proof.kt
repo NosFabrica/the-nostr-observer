@@ -24,12 +24,12 @@ import java.util.concurrent.Executors
  *
  * ## What it does not do
  *
- * Remote images are BLOCKED. Generation must not fan out to a dozen third-party
- * media hosts on the reader's behalf, and a proof that depends on somebody
- * else's uptime is a proof that fails for reasons that have nothing to do with
- * the page. The cost is real and worth stating: overflow caused by an
- * unconstrained image is not caught here, so [imagesAreConstrained] checks the
- * CSS property that would prevent it instead of waiting to see it happen.
+ * Remote images are never fetched. Generation must not fan out to a dozen
+ * third-party media hosts on the reader's behalf, and a proof that depends on
+ * somebody else's uptime is a proof that fails for reasons that have nothing to
+ * do with the page. Every picture is served a 4000px local stand-in instead, so
+ * an image the stylesheet does not constrain still overflows and is caught —
+ * see `render`.
  */
 class Proof(
     private val widths: List<Int> = listOf(390, 1280),

@@ -33,12 +33,10 @@ class GoldenEditionTest {
             Art(
                 id = "art-$n",
                 url = "https://blossom.example.com/$n.jpg",
-                mime = "image/jpeg",
                 width = 1200,
                 height = 800,
                 alt = "art $n",
                 eventId = "e$n",
-                pubkey = Fixtures.ALICE,
                 byline = "Alice",
                 caption = "caption $n",
             )

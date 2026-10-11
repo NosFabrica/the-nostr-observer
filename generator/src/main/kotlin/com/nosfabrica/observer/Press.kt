@@ -178,8 +178,6 @@ class Press(
     }
 
     data class Edition(
-        val observer: String,
-        val since: Long,
         val until: Long,
         val html: String,
         /**
@@ -192,30 +190,15 @@ class Press(
          */
         val rawHtml: String,
         val corpus: Corpus,
-        val art: List<Art>,
-        val digest: Digest.Rendered,
-        val usage: Writer.Draft,
         /**
          * What every generation behind this page cost, not just the last one.
          *
-         * [usage] is the draft that was kept. When the proof ladder writes the
-         * page twice, both were paid for, and a cost that names only the second
-         * under-reports exactly the editions that went wrong.
+         * When the proof ladder writes the page twice, both were paid for, and
+         * a cost that names only the kept draft under-reports exactly the
+         * editions that went wrong.
          */
-        val costUsd: Double = usage.costUsd(),
-        val removed: List<String>,
+        val costUsd: Double,
         val report: Validator.Report,
-        /**
-         * Whether it renders, and what went wrong if not.
-         *
-         * Not a gate. A page that fails the proof after both retries has
-         * already been reduced to the house layout, which is the strongest
-         * remedy available -- refusing it as well would throw away a truthful
-         * edition over a rendering opinion. It is reported so an operator can
-         * see it; `ran = false` means no browser was available and is not a
-         * failure of the page.
-         */
-        val proof: Proof.Report,
     ) {
         /** A page that fails the check is never offered for publication. */
         val publishable: Boolean get() = report.ok
@@ -412,19 +395,12 @@ class Press(
         onStep(Step.Checked(report))
 
         return Edition(
-            observer = observer,
-            since = corpus.since,
             until = corpus.until,
             html = sanitized.html,
             rawHtml = draft.html,
             corpus = corpus,
-            art = art,
-            digest = digest,
-            usage = draft,
             costUsd = spent,
-            removed = sanitized.removed,
             report = report,
-            proof = proof,
         )
     }
 }

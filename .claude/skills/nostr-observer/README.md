@@ -60,9 +60,9 @@ file.
 | 2 | `readiness.mjs` — four links, first unmet one wins, with the fix for that one |
 | 3 | `corpus.mjs` — fourteen desks plus an unranked control run, over a fixed 24-hour window |
 | 4 | Writes the page against `reference/editorial.md` and `reference/house.css` |
-| 5 | `validate.mjs` — every quote verbatim, every picture from the shortlist, no link to the open web |
-| 6 | `embed.mjs` — a separate artifact copy with the pictures inlined, since the artifact viewer blocks remote hosts |
-| 7 | Saves the HTML and publishes the embedded copy as an artifact |
+| 5 | `resolve.mjs` — art ids to real URLs, citations to jumble.social, desk links to their hosts, every other link unwrapped |
+| 6 | `validate.mjs` — every quote verbatim, every picture from the shortlist, no link to the open web |
+| 7 | `embed.mjs` builds an artifact copy with the pictures inlined, since the artifact viewer blocks remote hosts; the HTML is saved and that copy published |
 
 ## If it says NOT READY
 
@@ -84,7 +84,7 @@ Four layers, and only the first two can run in CI.
 node --test ".claude/skills/nostr-observer/test/*.test.mjs"
 ```
 
-89 tests. bech32 against the NIP-19 worked example, the readiness chain in
+94 tests. bech32 against the NIP-19 worked example, the readiness chain in
 every state it can reach, query construction, the relay auth gate, socket
 sharing, the digest budget, the artifact embed step, the verified
 zap.stream / Shopstr / njump link encodings, and the boundary from both

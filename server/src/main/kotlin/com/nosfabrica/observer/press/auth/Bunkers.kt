@@ -157,8 +157,6 @@ class Bunkers(
         authUrls.remove(fingerprint)
     }
 
-    fun size() = open.size
-
     private val authUrls = ConcurrentHashMap<String, () -> String?>()
 
     private companion object {

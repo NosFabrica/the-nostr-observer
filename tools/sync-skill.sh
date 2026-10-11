@@ -16,7 +16,7 @@ src="$root/generator/src/main/resources"
 dst="$root/.claude/skills/nostr-observer/reference"
 mkdir -p "$dst"
 
-# The brief was written as a system prompt for one Messages API call. Three of
+# The brief was written as a system prompt for one Messages API call. Four of
 # its statements are about THAT harness and are false in Claude Code, so they
 # are corrected here rather than left to mislead. Everything else is verbatim.
 {
