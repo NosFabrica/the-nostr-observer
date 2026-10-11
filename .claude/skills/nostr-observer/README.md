@@ -84,7 +84,7 @@ Four layers, and only the first two can run in CI.
 node --test ".claude/skills/nostr-observer/test/*.test.mjs"
 ```
 
-94 tests. bech32 against the NIP-19 worked example, the readiness chain in
+95 tests. bech32 against the NIP-19 worked example, the readiness chain in
 every state it can reach, query construction, the relay auth gate, socket
 sharing, the digest budget, the artifact embed step, the verified
 zap.stream / Shopstr / njump link encodings, and the boundary from both

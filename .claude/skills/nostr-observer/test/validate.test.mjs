@@ -10,7 +10,8 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync, existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { check, quotedText, attributes, normalize, isQuoted, PERMALINK, toPermalink, permalinkTarget, streamLinkTarget, toStreamLink, listingLinkTarget, toListingLink, calendarLinkTarget, toCalendarLink } from '../scripts/validate.mjs'
+import { check, quotedText, attributes, normalize, isQuoted, PERMALINK, toPermalink, permalinkTarget, deskLinkTarget } from '../scripts/validate.mjs'
+import { DESK_LINKS } from '../scripts/nostr.mjs'
 import { resolve } from '../scripts/resolve.mjs'
 
 const EVENT_ID = 'a'.repeat(64)
@@ -171,66 +172,75 @@ test('a permalink already in canonical form still opens in a new tab', () => {
 
 test('a verified zap.stream watch link is allowed after resolve', () => {
   const writer = `https://zap.stream/stream/${STREAM_ID}`
-  const canonical = toStreamLink(corpus.desks.live[0])
+  const canonical = DESK_LINKS.live.canonicalUrl(corpus.desks.live[0])
   const { html, changes } = resolve(`<a href="${writer}">NoGood Radio</a>`, corpus)
   assert.match(html, new RegExp(`href="${canonical.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`))
   assert.match(html, /target="_blank"/)
   assert.deepEqual(changes.map((c) => c.kind), ['stream'])
   assert.deepEqual(check(html, corpus).violations, [])
-  assert.equal(streamLinkTarget(canonical, corpus), STREAM_ID)
-  assert.equal(streamLinkTarget('https://zap.stream/stream/' + 'f'.repeat(64), corpus), null)
+  assert.equal(deskLinkTarget('live', canonical, corpus), STREAM_ID)
+  assert.equal(deskLinkTarget('live', 'https://zap.stream/stream/' + 'f'.repeat(64), corpus), null)
   assert.deepEqual(kinds(`<a href="${writer}">NoGood Radio</a>`), ['LINK'],
     'writer form must be encoded before validate')
 })
 
 test('a zap.stream URL copied from a post body is still refused', () => {
-  const invented = toStreamLink({ kind: 30311, pubkey: 'd'.repeat(64), tags: [['d', 'fake-stream']] })
+  const invented = DESK_LINKS.live.canonicalUrl({ kind: 30311, pubkey: 'd'.repeat(64), tags: [['d', 'fake-stream']] })
   assert.deepEqual(kinds(`<a href="${invented}">listen</a>`), ['LINK'])
 })
 
 test('a verified Shopstr listing link is allowed after resolve', () => {
   const writer = `https://shopstr.store/listing/${LISTING_ID}`
-  const canonical = toListingLink(corpus.desks.classifieds[0])
+  const canonical = DESK_LINKS.classifieds.canonicalUrl(corpus.desks.classifieds[0])
   const { html, changes } = resolve(`<a href="${writer}">4 Bars Rough Cut Tallow</a>`, corpus)
   assert.match(html, new RegExp(`href="${canonical.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`))
   assert.match(html, /target="_blank"/)
   assert.deepEqual(changes.map((c) => c.kind), ['listing'])
   assert.deepEqual(check(html, corpus).violations, [])
-  assert.equal(listingLinkTarget(canonical, corpus), LISTING_ID)
-  assert.equal(listingLinkTarget('https://shopstr.store/listing/' + 'a'.repeat(64), corpus), null)
+  assert.equal(deskLinkTarget('classifieds', canonical, corpus), LISTING_ID)
+  assert.equal(deskLinkTarget('classifieds', 'https://shopstr.store/listing/' + 'a'.repeat(64), corpus), null)
   assert.deepEqual(kinds(`<a href="${writer}">4 Bars Rough Cut Tallow</a>`), ['LINK'],
     'writer form must be encoded before validate')
 })
 
 test('a shopstr URL copied from a post body is still refused', () => {
-  const invented = toListingLink({ kind: 30402, pubkey: 'd'.repeat(64), tags: [['d', 'fake-listing']] })
+  const invented = DESK_LINKS.classifieds.canonicalUrl({ kind: 30402, pubkey: 'd'.repeat(64), tags: [['d', 'fake-listing']] })
   assert.deepEqual(kinds(`<a href="${invented}">buy</a>`), ['LINK'])
 })
 
 test('a verified njump calendar link is allowed after resolve', () => {
   const writer = `https://njump.me/${CALENDAR_ID}`
-  const canonical = toCalendarLink(corpus.desks.calendar[0])
+  const canonical = DESK_LINKS.calendar.canonicalUrl(corpus.desks.calendar[0])
   const { html, changes } = resolve(`<a href="${writer}">Porto, Portugal</a>`, corpus)
   assert.match(html, new RegExp(`href="${canonical.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`))
   assert.match(html, /target="_blank"/)
   assert.deepEqual(changes.map((c) => c.kind), ['calendar'])
   assert.deepEqual(check(html, corpus).violations, [])
-  assert.equal(calendarLinkTarget(canonical, corpus), CALENDAR_ID)
-  assert.equal(calendarLinkTarget('https://njump.me/' + 'a'.repeat(64), corpus), null)
+  assert.equal(deskLinkTarget('calendar', canonical, corpus), CALENDAR_ID)
+  assert.equal(deskLinkTarget('calendar', 'https://njump.me/' + 'a'.repeat(64), corpus), null)
   assert.deepEqual(kinds(`<a href="${writer}">Porto, Portugal</a>`), ['LINK'],
     'writer form must be encoded before validate')
 })
 
 test('a jumble citation of a calendar event is rewritten to an njump naddr', () => {
   const { html, changes } = resolve(`<a href="https://jumble.social/notes/${CALENDAR_ID}">meetup</a>`, corpus)
-  const canonical = toCalendarLink(corpus.desks.calendar[0])
+  const canonical = DESK_LINKS.calendar.canonicalUrl(corpus.desks.calendar[0])
   assert.match(html, new RegExp(`href="${canonical.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`))
   assert.deepEqual(changes.map((c) => c.kind), ['calendar'])
 })
 
 test('an njump calendar URL copied from a post body is still refused', () => {
-  const invented = toCalendarLink({ kind: 31923, pubkey: 'd'.repeat(64), tags: [['d', 'fake-meetup']] })
+  const invented = DESK_LINKS.calendar.canonicalUrl({ kind: 31923, pubkey: 'd'.repeat(64), tags: [['d', 'fake-meetup']] })
   assert.deepEqual(kinds(`<a href="${invented}">meetup</a>`), ['LINK'])
+})
+
+test("no desk's link verifies another desk's event", () => {
+  for (const [key, link] of Object.entries(DESK_LINKS)) {
+    const canonical = link.canonicalUrl(corpus.desks[key][0])
+    for (const other of Object.keys(DESK_LINKS).filter((k) => k !== key)) {
+      assert.equal(deskLinkTarget(other, canonical, corpus), null, `${key} link read as ${other}`)
+    }
+  }
 })
 
 test('resolve then validate leaves nothing for validate to complain about', () => {
@@ -325,9 +335,9 @@ test('a link helper does not read the corpus to answer about a url it cannot par
   let reads = 0
   const counted = { get desks () { reads++; return corpus.desks }, art: corpus.art }
   for (const href of ['https://example.test/x', 'mailto:a@b.c', 'https://njump.me/not-an-naddr']) {
-    streamLinkTarget(href, counted)
-    listingLinkTarget(href, counted)
-    calendarLinkTarget(href, counted)
+    deskLinkTarget('live', href, counted)
+    deskLinkTarget('classifieds', href, counted)
+    deskLinkTarget('calendar', href, counted)
   }
   assert.equal(reads, 0)
 })
@@ -335,8 +345,8 @@ test('a link helper does not read the corpus to answer about a url it cannot par
 test('the corpus is indexed once, however many links ask about it', () => {
   let reads = 0
   const counted = { get desks () { reads++; return corpus.desks }, art: corpus.art }
-  const stream = toStreamLink(corpus.desks.live[0])
-  for (let i = 0; i < 50; i++) assert.ok(streamLinkTarget(stream, counted))
+  const stream = DESK_LINKS.live.canonicalUrl(corpus.desks.live[0])
+  for (let i = 0; i < 50; i++) assert.ok(deskLinkTarget('live', stream, counted))
   assert.equal(reads, 1)
 })
 

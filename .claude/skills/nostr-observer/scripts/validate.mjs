@@ -23,7 +23,7 @@
 import { readFileSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
 import { tags, attributes as attrsOf, textIn } from './html.mjs'
-import { toNevent, fromNevent, fromNaddr, toZapStreamUrl, LIVE_KIND, toShopstrUrl, CLASSIFIED_KIND, toNjumpCalendarUrl, CALENDAR_KINDS, tagValue } from './nostr.mjs'
+import { toNevent, fromNevent, fromNaddr, DESK_LINKS, tagValue } from './nostr.mjs'
 
 function arg (name, fallback = null) {
   const at = process.argv.indexOf(name)
@@ -138,21 +138,12 @@ export function permalinkTarget (href) {
   }
 }
 
-export const STREAM_WRITER = /^https:\/\/zap\.stream\/stream\/([0-9a-f]{64})(?:[/?#].*)?$/i
-export const STREAM_NADDR = /^https:\/\/zap\.stream\/(naddr1[0-9a-z]+)(?:[/?#].*)?$/i
-
-export const LISTING_WRITER = /^https:\/\/shopstr\.store\/listing\/([0-9a-f]{64})(?:[/?#].*)?$/i
-export const LISTING_NADDR = /^https:\/\/shopstr\.store\/listing\/(naddr1[0-9a-z]+)(?:[/?#].*)?$/i
-
-export const CALENDAR_WRITER = /^https:\/\/njump\.me\/([0-9a-f]{64})(?:[/?#].*)?$/i
-export const CALENDAR_NADDR = /^https:\/\/njump\.me\/(naddr1[0-9a-z]+)(?:[/?#].*)?$/i
-
 /**
  * The corpus, indexed once per run instead of once per link.
  *
- * Each of the three lists below used to be rebuilt on every call — a `.flat()`
- * over every desk, then a filter over every event — and `resolve.mjs` asks all
- * six target helpers about every anchor on the page. Measured on a busy window
+ * Each desk link's list used to be rebuilt on every call — a `.flat()` over
+ * every desk, then a filter over every event — and `resolve.mjs` asks every
+ * desk link about every anchor on the page. Measured on a busy window
  * (4,800 ranked events, 528 anchors) that was 585 ms in resolve, of which about
  * 440 ms was these scans running for URLs that do not even match the helper's
  * own regex. Nothing reads the corpus until it has been parsed from disk and
@@ -162,7 +153,8 @@ export const CALENDAR_NADDR = /^https:\/\/njump\.me\/(naddr1[0-9a-z]+)(?:[/?#].*
  *
  * `byAddress` exists because the naddr lookup is the one that runs per matching
  * link, and a linear `find` over every stream is the same mistake one level
- * down.
+ * down. The kind is part of the key, so 31922 and 31923 cannot answer for each
+ * other even when a pubkey reuses a d-tag across both.
  */
 const INDEX = new WeakMap()
 
@@ -181,11 +173,8 @@ function indexOf (corpus) {
       byAddress: new Map(list.map((e) => [addressKey(e.kind, e.pubkey, tagValue(e, 'd')), e])),
     }
   }
-  const built = {
-    streams: of((e) => e.kind === LIVE_KIND && tagValue(e, 'd')),
-    listings: of((e) => e.kind === CLASSIFIED_KIND && tagValue(e, 'd')),
-    calendars: of((e) => CALENDAR_KINDS.has(e.kind) && tagValue(e, 'd')),
-  }
+  const built = Object.fromEntries(Object.entries(DESK_LINKS).map(([key, link]) =>
+    [key, of((e) => link.kinds.has(e.kind) && tagValue(e, 'd'))]))
   INDEX.set(corpus, built)
   return built
 }
@@ -196,108 +185,36 @@ export function corpusIndex (corpus) {
 }
 
 /**
- * Event id if `href` is a verified zap.stream watch link for a live stream we
- * read; otherwise null.
+ * Event id if `href` is a verified canonical link to an event we read on the
+ * desk `key` names (a key of `DESK_LINKS`); otherwise null.
  *
- * Two shapes after resolve: canonical naddr, or the writer form
- * `zap.stream/stream/<64-hex>` which resolve encodes. Either way the naddr
- * must decode to the same pubkey + d-tag as a kind 30311 in the corpus — not
- * merely appear in somebody's post.
+ * The naddr must decode to the same kind + pubkey + d-tag as an event in the
+ * corpus — not merely appear in somebody's post. The writer form is not
+ * accepted here: resolve.mjs encodes it, and refusing it after resolve is what
+ * makes a regression in that step fail closed.
  */
-export function streamLinkTarget (href, corpus) {
-  // The regex first: a URL that is not a zap.stream address is the common case
+export function deskLinkTarget (key, href, corpus) {
+  // The regex first: a URL that is not this host's address is the common case
   // on any page, and it used to cost a full pass over the corpus to find out.
-  const naddr = STREAM_NADDR.exec(href)
+  const link = DESK_LINKS[key]
+  const naddr = link.naddr.exec(href)
   if (!naddr) return null
   try {
     const { kind, pubkey, identifier } = fromNaddr(naddr[1])
-    if (kind !== LIVE_KIND) return null
-    const event = indexOf(corpus).streams.byAddress.get(addressKey(kind, pubkey, identifier))
+    if (!link.kinds.has(kind)) return null
+    const event = indexOf(corpus)[key].byAddress.get(addressKey(kind, pubkey, identifier))
     return event?.id || null
   } catch {
     return null
   }
 }
 
-/** Writer form, for resolve.mjs only. */
-export function streamWriterTarget (href, corpus) {
-  const writer = STREAM_WRITER.exec(href)
+/** Writer form (`<host>/…/<64-hex>`), for resolve.mjs only. */
+export function deskWriterTarget (key, href, corpus) {
+  const writer = DESK_LINKS[key].writer.exec(href)
   if (!writer) return null
   const id = writer[1].toLowerCase()
-  return indexOf(corpus).streams.byId.has(id) ? id : null
-}
-
-export function toStreamLink (event) {
-  return toZapStreamUrl(event)
-}
-
-/**
- * Event id if `href` is a verified Shopstr listing link for a classified we
- * read; otherwise null.
- *
- * Two shapes after resolve: canonical naddr, or the writer form
- * `shopstr.store/listing/<64-hex>` which resolve encodes. Either way the
- * naddr must decode to the same pubkey + d-tag as a kind 30402 in the corpus.
- */
-export function listingLinkTarget (href, corpus) {
-  const naddr = LISTING_NADDR.exec(href)
-  if (!naddr) return null
-  try {
-    const { kind, pubkey, identifier } = fromNaddr(naddr[1])
-    if (kind !== CLASSIFIED_KIND) return null
-    const event = indexOf(corpus).listings.byAddress.get(addressKey(kind, pubkey, identifier))
-    return event?.id || null
-  } catch {
-    return null
-  }
-}
-
-/** Writer form, for resolve.mjs only. */
-export function listingWriterTarget (href, corpus) {
-  const writer = LISTING_WRITER.exec(href)
-  if (!writer) return null
-  const id = writer[1].toLowerCase()
-  return indexOf(corpus).listings.byId.has(id) ? id : null
-}
-
-export function toListingLink (event) {
-  return toShopstrUrl(event)
-}
-
-/**
- * Event id if `href` is a verified njump calendar link for a listing we read;
- * otherwise null.
- *
- * Two shapes after resolve: canonical naddr, or the writer form
- * `njump.me/<64-hex>` which resolve encodes. Either way the naddr must decode
- * to the same kind + pubkey + d-tag as a 31922/31923 in the corpus. An nevent
- * would freeze one revision of a replaceable event; the naddr is the listing.
- */
-export function calendarLinkTarget (href, corpus) {
-  const naddr = CALENDAR_NADDR.exec(href)
-  if (!naddr) return null
-  try {
-    const { kind, pubkey, identifier } = fromNaddr(naddr[1])
-    if (!CALENDAR_KINDS.has(kind)) return null
-    // The kind is part of the key, so 31922 and 31923 cannot answer for each
-    // other even when a pubkey reuses a d-tag across both.
-    const event = indexOf(corpus).calendars.byAddress.get(addressKey(kind, pubkey, identifier))
-    return event?.id || null
-  } catch {
-    return null
-  }
-}
-
-/** Writer form, for resolve.mjs only. */
-export function calendarWriterTarget (href, corpus) {
-  const writer = CALENDAR_WRITER.exec(href)
-  if (!writer) return null
-  const id = writer[1].toLowerCase()
-  return indexOf(corpus).calendars.byId.has(id) ? id : null
-}
-
-export function toCalendarLink (event) {
-  return toNjumpCalendarUrl(event)
+  return indexOf(corpus)[key].byId.has(id) ? id : null
 }
 
 // Things there is no sanitizer to strip, so they are refused instead.
@@ -371,7 +288,7 @@ export function check (html, corpus) {
   const haystack = events.map((e) => normalize(e.content || ''))
   const eventIds = new Set(events.map((e) => e.id))
   const allowedImages = new Set((corpus.art || []).map((a) => a.url))
-  const calendarIds = indexOf(corpus).calendars.byId
+  const calendarIds = indexOf(corpus).calendar.byId
 
   const violations = []
   const flag = (kind, detail, excerpt) => violations.push({ kind, detail, excerpt })
@@ -403,9 +320,7 @@ export function check (html, corpus) {
     // since the calendar desk landed and this half did not, which is the
     // two-halves-disagreeing bug the permalink regex already taught us once.
     if (id && eventIds.has(id) && !calendarIds.has(id)) continue
-    if (streamLinkTarget(href, corpus)) continue
-    if (listingLinkTarget(href, corpus)) continue
-    if (calendarLinkTarget(href, corpus)) continue
+    if (Object.keys(DESK_LINKS).some((key) => deskLinkTarget(key, href, corpus))) continue
     // Presence in the corpus is evidence of NOTHING. An earlier version of
     // this rule allowlisted every URL that appeared in the corpus, on the
     // theory that a link nobody posted must have been invented. The corpus

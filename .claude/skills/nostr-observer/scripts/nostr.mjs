@@ -163,10 +163,8 @@ export function toNevent (hex) {
   return encodeBech32('nevent', [0, 32, ...Buffer.from(id, 'hex')])
 }
 
-export const LIVE_KIND = 30311
-
 /**
- * Kind 30311 address to `naddr1…` (NIP-19 TLV: 0=identifier, 2=author, 3=kind).
+ * An address to `naddr1…` (NIP-19 TLV: 0=identifier, 2=author, 3=kind).
  *
  * The first version of this encoding put kind in type 0 and the d-tag in type 2,
  * which produced bech32 that looked valid and failed on every gateway. NIP-19
@@ -211,57 +209,49 @@ export function fromNaddr (input) {
   return { kind, pubkey, identifier }
 }
 
-/** Canonical zap.stream watch page for a live event. */
-export function toZapStreamUrl (event) {
-  const d = tagValue(event, 'd')
-  if (!d || event.kind !== LIVE_KIND) throw new Error('Not a live stream address')
-  return `https://zap.stream/${toNaddr({ kind: LIVE_KIND, pubkey: event.pubkey, identifier: d })}`
-}
-
-/** Writer form: event id hex. resolve.mjs encodes the naddr afterwards. */
-export function streamWriterUrl (eventId) {
-  const id = String(eventId || '').toLowerCase()
-  if (!/^[0-9a-f]{64}$/.test(id)) throw new Error(`Not an event id: ${String(eventId).slice(0, 16)}`)
-  return `https://zap.stream/stream/${id}`
-}
-
-export const CLASSIFIED_KIND = 30402
-
-/** Canonical Shopstr listing page for a classified. */
-export function toShopstrUrl (event) {
-  const d = tagValue(event, 'd')
-  if (!d || event.kind !== CLASSIFIED_KIND) throw new Error('Not a classified address')
-  return `https://shopstr.store/listing/${toNaddr({ kind: CLASSIFIED_KIND, pubkey: event.pubkey, identifier: d })}`
-}
-
-/** Writer form: event id hex. resolve.mjs encodes the naddr afterwards. */
-export function classifiedWriterUrl (eventId) {
-  const id = String(eventId || '').toLowerCase()
-  if (!/^[0-9a-f]{64}$/.test(id)) throw new Error(`Not an event id: ${String(eventId).slice(0, 16)}`)
-  return `https://shopstr.store/listing/${id}`
-}
-
-/** NIP-52 calendar — 31922 all-day, 31923 timed. Both are parameterized replaceable. */
-export const CALENDAR_KINDS = new Set([31922, 31923])
-
 /**
- * Canonical njump page for a calendar listing.
+ * The three desks whose events get a real destination, keyed as `corpus.mjs`
+ * keys its desks: Live now to zap.stream, Classifieds to Shopstr, Diary &
+ * Calendar to njump. They differ only in host and path.
  *
- * jumble.social has no calendar view, and an nevent freezes one revision of a
- * replaceable event. njump with an naddr is the address that stays on the
- * listing as the organiser updates it.
+ * The digest hands the writer `writerUrl(id)` — the event id in hex on the
+ * host — and resolve.mjs re-encodes it to `canonicalUrl(event)`, the host's
+ * naddr page. Only events carrying a `d` tag qualify: without one there is no
+ * address to build. Calendar goes to njump because jumble.social has no
+ * calendar view, and because an nevent would freeze one revision of a
+ * replaceable event; the naddr stays on the listing as the organiser updates it.
  */
-export function toNjumpCalendarUrl (event) {
-  const d = tagValue(event, 'd')
-  if (!d || !CALENDAR_KINDS.has(event.kind)) throw new Error('Not a calendar address')
-  return `https://njump.me/${toNaddr({ kind: event.kind, pubkey: event.pubkey, identifier: d })}`
+export const DESK_LINKS = {
+  live: deskLink({ kinds: [30311], host: 'zap.stream', writerPath: '/stream/', naddrPath: '/', line: 'watch', change: 'stream', what: 'stream watch link(s) to zap.stream' }),
+  classifieds: deskLink({ kinds: [30402], host: 'shopstr.store', writerPath: '/listing/', naddrPath: '/listing/', line: 'listing', change: 'listing', what: 'classified listing link(s) to Shopstr' }),
+  calendar: deskLink({ kinds: [31922, 31923], host: 'njump.me', writerPath: '/', naddrPath: '/', line: 'calendar', change: 'calendar', what: 'calendar link(s) to njump' }),
 }
 
-/** Writer form: event id hex. resolve.mjs encodes the naddr afterwards. */
-export function calendarWriterUrl (eventId) {
-  const id = String(eventId || '').toLowerCase()
-  if (!/^[0-9a-f]{64}$/.test(id)) throw new Error(`Not an event id: ${String(eventId).slice(0, 16)}`)
-  return `https://njump.me/${id}`
+function deskLink ({ kinds, host, writerPath, naddrPath, line, change, what }) {
+  const escape = (value) => value.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')
+  const writerPrefix = `https://${host}${writerPath}`
+  const naddrPrefix = `https://${host}${naddrPath}`
+  return {
+    kinds: new Set(kinds),
+    /** The digest's line name (`watch:`), and resolve's name for an encoded link. */
+    line,
+    change,
+    what,
+    writer: new RegExp(`^${escape(writerPrefix)}([0-9a-f]{64})(?:[/?#].*)?$`, 'i'),
+    naddr: new RegExp(`^${escape(naddrPrefix)}(naddr1[0-9a-z]+)(?:[/?#].*)?$`, 'i'),
+    /** Writer form: event id hex. resolve.mjs encodes the naddr afterwards. */
+    writerUrl (eventId) {
+      const id = String(eventId || '').toLowerCase()
+      if (!/^[0-9a-f]{64}$/.test(id)) throw new Error(`Not an event id: ${String(eventId).slice(0, 16)}`)
+      return writerPrefix + id
+    },
+    /** The host's canonical page for an event, addressed by naddr. */
+    canonicalUrl (event) {
+      const d = tagValue(event, 'd')
+      if (!d || !this.kinds.has(event.kind)) throw new Error(`Not an address on ${host}`)
+      return naddrPrefix + toNaddr({ kind: event.kind, pubkey: event.pubkey, identifier: d })
+    },
+  }
 }
 
 /** `nevent1…` to lowercase event-id hex. Throws if it is not an nevent that names an id. */

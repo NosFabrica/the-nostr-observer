@@ -21,8 +21,8 @@
 
 import { readFileSync, writeFileSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
-import { permalinkTarget, toPermalink, streamLinkTarget, streamWriterTarget, toStreamLink, listingLinkTarget, listingWriterTarget, toListingLink, calendarLinkTarget, calendarWriterTarget, toCalendarLink, corpusIndex } from './validate.mjs'
-import { fromNevent } from './nostr.mjs'
+import { permalinkTarget, toPermalink, deskLinkTarget, deskWriterTarget, corpusIndex } from './validate.mjs'
+import { fromNevent, DESK_LINKS } from './nostr.mjs'
 import { tags, attributes } from './html.mjs'
 
 /**
@@ -136,7 +136,19 @@ export function resolve (html, corpus) {
   // target helpers below already consult it, and a second set of maps built
   // here is both the same work twice and a chance for the two to disagree
   // about what counts as linkable.
-  const { streams, listings, calendars } = corpusIndex(corpus)
+  const index = corpusIndex(corpus)
+  // Which desk link `url` verifies against, and the event it names. A calendar
+  // listing cited the ordinary way — a permalink — counts too: it is re-encoded
+  // to njump rather than kept as a frozen nevent.
+  const deskTarget = (url, id) => {
+    for (const key of Object.keys(DESK_LINKS)) {
+      const eventId = deskWriterTarget(key, url, corpus) || deskLinkTarget(key, url, corpus)
+      const event = eventId && index[key].byId.get(eventId.toLowerCase())
+      if (event) return { link: DESK_LINKS[key], event }
+    }
+    const listing = id && index.calendar.byId.get(id)
+    return listing ? { link: DESK_LINKS.calendar, event: listing } : null
+  }
   const anchors = tags(out, 'a').reverse()
   for (const anchor of anchors) {
     const url = attributes(anchor.raw).href || ''
@@ -148,9 +160,9 @@ export function resolve (html, corpus) {
     // also accepts `</a >`, which the literal missed.
     const closing = closeAnchor(out, anchor.end)
     if (!closing) continue
-    const streamId = streamWriterTarget(url, corpus) || streamLinkTarget(url, corpus)
-    if (streamId && streams.byId.has(streamId)) {
-      const canonical = toStreamLink(streams.byId.get(streamId))
+    // Kept links point at their canonical address and open in a new tab: the
+    // paper stays put, and a writer who forgets target=_blank still gets it.
+    const keep = (canonical, kind) => {
       let tag = anchor.raw
       if (url !== canonical) {
         tag = tag.replace(/(\bhref\s*=\s*)("[^"]*"|'[^']*'|[^\s>]+)/i, `$1"${canonical}"`)
@@ -158,60 +170,16 @@ export function resolve (html, corpus) {
       tag = openInNewTab(tag)
       if (tag !== anchor.raw) {
         out = out.slice(0, anchor.start) + tag + out.slice(anchor.end)
-        if (url !== canonical) {
-          changes.push({ kind: 'stream', detail: `${url} -> ${canonical}` })
-        }
+        if (url !== canonical) changes.push({ kind, detail: `${url} -> ${canonical}` })
       }
-      continue
     }
-    const listingId = listingWriterTarget(url, corpus) || listingLinkTarget(url, corpus)
-    if (listingId && listings.byId.has(listingId)) {
-      const canonical = toListingLink(listings.byId.get(listingId))
-      let tag = anchor.raw
-      if (url !== canonical) {
-        tag = tag.replace(/(\bhref\s*=\s*)("[^"]*"|'[^']*'|[^\s>]+)/i, `$1"${canonical}"`)
-      }
-      tag = openInNewTab(tag)
-      if (tag !== anchor.raw) {
-        out = out.slice(0, anchor.start) + tag + out.slice(anchor.end)
-        if (url !== canonical) {
-          changes.push({ kind: 'listing', detail: `${url} -> ${canonical}` })
-        }
-      }
-      continue
-    }
-    const calendarId = calendarWriterTarget(url, corpus) || calendarLinkTarget(url, corpus)
-      || (id && calendars.byId.has(id) ? id : null)
-    if (calendarId && calendars.byId.has(calendarId)) {
-      const canonical = toCalendarLink(calendars.byId.get(calendarId))
-      let tag = anchor.raw
-      if (url !== canonical) {
-        tag = tag.replace(/(\bhref\s*=\s*)("[^"]*"|'[^']*'|[^\s>]+)/i, `$1"${canonical}"`)
-      }
-      tag = openInNewTab(tag)
-      if (tag !== anchor.raw) {
-        out = out.slice(0, anchor.start) + tag + out.slice(anchor.end)
-        if (url !== canonical) {
-          changes.push({ kind: 'calendar', detail: `${url} -> ${canonical}` })
-        }
-      }
+    const desk = deskTarget(url, id)
+    if (desk) {
+      keep(desk.link.canonicalUrl(desk.event), desk.link.change)
       continue
     }
     if (id && eventIds.has(id)) {
-      const canonical = toPermalink(id)
-      let tag = anchor.raw
-      if (url !== canonical) {
-        tag = tag.replace(/(\bhref\s*=\s*)("[^"]*"|'[^']*'|[^\s>]+)/i, `$1"${canonical}"`)
-      }
-      // The paper stays put; Jumble is a citation, not a destination that
-      // replaces the edition. A writer who forgets target=_blank still gets it.
-      tag = openInNewTab(tag)
-      if (tag !== anchor.raw) {
-        out = out.slice(0, anchor.start) + tag + out.slice(anchor.end)
-        if (url !== canonical) {
-          changes.push({ kind: 'permalink', detail: `${url} -> ${canonical}` })
-        }
-      }
+      keep(toPermalink(id), 'permalink')
       continue
     }
     out = out.slice(0, anchor.start) + out.slice(anchor.end, closing.start) + out.slice(closing.end)
@@ -236,15 +204,15 @@ function main () {
   console.log('')
   console.log(`  Resolved ${counts.resolved || 0} art id(s).`)
   if (counts.permalink) console.log(`  Encoded ${counts.permalink} permalink(s) to jumble.social.`)
-  if (counts.stream) console.log(`  Encoded ${counts.stream} stream watch link(s) to zap.stream.`)
-  if (counts.listing) console.log(`  Encoded ${counts.listing} classified listing link(s) to Shopstr.`)
-  if (counts.calendar) console.log(`  Encoded ${counts.calendar} calendar link(s) to njump.`)
+  for (const link of Object.values(DESK_LINKS)) {
+    if (counts[link.change]) console.log(`  Encoded ${counts[link.change]} ${link.what}.`)
+  }
   if (counts.dropped || counts.unwrapped) {
     console.log('')
     console.log('  CHANGES WORTH READING - each of these is the page trying to do something')
     console.log('  the paper does not do. Look at them before you ship:')
     console.log('')
-    for (const change of changes.filter((c) => c.kind !== 'resolved' && c.kind !== 'permalink' && c.kind !== 'stream' && c.kind !== 'listing' && c.kind !== 'calendar')) {
+    for (const change of changes.filter((c) => c.kind === 'dropped' || c.kind === 'unwrapped')) {
       console.log(`  ${change.kind.toUpperCase()}: ${change.detail}`)
     }
   }
