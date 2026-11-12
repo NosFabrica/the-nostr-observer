@@ -74,7 +74,7 @@ brainstorm_server itself is reached with a separate, unguarded client.
 | `OBSERVER_RUNNER_TOKEN` | (required) | the same value as brainstorm_server's `OBSERVER_RUNNER_TOKEN`. A secret: from a k8s Secret, never in a manifest |
 | `OBSERVER_RUNNER_POLL_SECONDS` | `300` | seconds between polls (at least 30) |
 | `OBSERVER_SEARCH_RELAY` | `wss://search.brainstorm.world` | the ranked relay the press reads |
-| `OBSERVER_INDEX_RELAYS` | the search relay, `wss://purplepag.es` | comma-separated; where relay lists, 10063, 10040 and kind 0 are found. Public relays only |
+| `OBSERVER_INDEX_RELAYS` | the search relay (Brainstorm's index relay is the same) | comma-separated; where relay lists, 10063, 10040 and kind 0 are found. Public relays only |
 | `OBSERVER_RUNNER_STATE` | none (memory) | the run records file; the image sets `/var/lib/observer-runner/runs.json` |
 
 ## Deploying beside brainstorm_server

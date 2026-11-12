@@ -11,8 +11,10 @@ import java.io.File
  * The worker's own record of the occurrences it ran (NIP-FB: a runner can't write `claim` or
  * `ran`, so its records and its published site are what keep it from running one twice). A run
  * that reached the model ENDED, whatever came of it: it may have spent the Assistant's money, so
- * it is never run again on its own. A run that died before ending is [OwnRun.DIED] and may be
- * taken up again.
+ * it is never run again on its own. A run that was interrupted (the worker died, or the run threw
+ * after it started) counts as ENDED too, never [OwnRun.DIED]: the worker can't tell whether it
+ * reached the model, so it never risks paying for the same morning twice. Only a start that spent
+ * nothing ([forget], the ranking wasn't ready) is tried again.
  */
 interface RunRecords {
     fun ownRun(
@@ -69,8 +71,8 @@ class FileRunRecords(
     ): OwnRun =
         when (records[owner to occurrence]) {
             null -> OwnRun.NONE
-            true -> OwnRun.ENDED
-            false -> OwnRun.DIED
+            // Started and never ended: interrupted. Never taken up again on its own.
+            else -> OwnRun.ENDED
         }
 
     @Synchronized

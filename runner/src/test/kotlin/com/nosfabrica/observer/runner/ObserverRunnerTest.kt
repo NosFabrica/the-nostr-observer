@@ -10,6 +10,7 @@ import com.vitorpamplona.quartz.nip5aStaticWebsites.observer.ObserverEdition
 import com.vitorpamplona.quartz.nip5aStaticWebsites.observer.ObserverSite
 import com.vitorpamplona.quartz.nipFAAgentKeys.tags.AgentKeyTag
 import com.vitorpamplona.quartz.nipFBScheduledTasks.ScheduledTask
+import com.vitorpamplona.quartz.nipFBScheduledTasks.ScheduledTaskClaims.OwnRun
 import com.vitorpamplona.quartz.nipFBScheduledTasks.ScheduledTaskEvent
 import kotlinx.coroutines.test.runTest
 import java.time.Instant
@@ -123,6 +124,20 @@ class ObserverRunnerTest {
             assertTrue(site.tags.any { it.size > 2 && it[0] == "path" && it[1] == "/$day.html" })
             assertEquals("Vitor's Observer", site.tags.first { it[0] == "title" }[1])
             assertEquals(listOf(35128), api.signedKinds.filter { it == 35128 })
+        }
+
+    @Test
+    fun anInterruptedRunIsNeverPrintedAgain() =
+        runTest {
+            world()
+            schedule()
+            // A run that started and never ended (the worker died mid-print): it may have reached
+            // the model, so the next poll doesn't risk paying for the same morning twice.
+            records.started(owner.pubKey, Instant.parse("2026-11-12T06:00:00Z").epochSecond)
+            assertEquals(OwnRun.ENDED, records.ownRun(owner.pubKey, Instant.parse("2026-11-12T06:00:00Z").epochSecond))
+            assertEquals(RunOutcome.ATTEMPTED, runner.poll()[owner.pubKey])
+            assertTrue(printer.calls.isEmpty())
+            assertTrue(relays.published.isEmpty())
         }
 
     @Test

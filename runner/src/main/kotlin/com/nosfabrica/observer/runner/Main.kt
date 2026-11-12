@@ -46,7 +46,7 @@ class RunnerConfig(
                         ?.split(',')
                         ?.map { it.trim() }
                         ?.filter { it.isNotEmpty() }
-                        ?: listOf(search, "wss://purplepag.es"),
+                        ?: listOf(search),
                 searchRelay = search,
                 stateFile = env["OBSERVER_RUNNER_STATE"]?.trim()?.takeIf { it.isNotEmpty() }?.let(::File),
             )
