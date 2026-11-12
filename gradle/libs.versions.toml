@@ -1,51 +1,43 @@
 [versions]
-kotlin = "2.4.0"
-app = "0.1.0"
+# Quartz's own Kotlin: its metadata is read by this compiler.
+kotlin = "2.4.21"
+app = "0.2.0"
 
-# Quartz from JitPack (amethyst @ commit) — Nostr event models and signature
-# verification. Started aligned with vespa-relay's pin so the two projects agree.
+# Quartz from JitPack (vitorpamplona/quartz @ commit): the Observer site, NIP-FA, NIP-FB and
+# their runner rules, at the commit the engine and the runner were written against.
 #
-# A JitPack version IS a git commit hash, and hashes carry no order. Gradle sees
-# version STRINGS and, when two parts of the graph ask for different ones, keeps
-# the lexicographically higher — which for hashes means an arbitrary one, chosen
-# silently. That is why every module force()s this pin, and why "newer" is a word
-# that does not apply here. The only relation that means anything between two
-# hashes is ancestry, and only git can answer it:
+# A JitPack version IS a git commit hash, and hashes carry no order. Gradle sees version
+# STRINGS and, when two parts of the graph ask for different ones, keeps the lexicographically
+# higher, which for hashes is an arbitrary one, chosen silently. That is why every module
+# force()s this pin, and why "newer" is a word that does not apply here. The only relation
+# between two hashes is ancestry, and only git answers it:
 #   git merge-base --is-ancestor A B
-quartz = "1866007e99"
+quartz = "b22ee03833810b82fd01b5dca8574b8742b28de1"
+# The crypto primitives Quartz is built on; the engine hashes with them directly. Keep it at
+# the version Quartz's own catalog names for the commit above.
+cryptoKmp = "2.1.0"
 
 coroutines = "1.11.0"
-serialization = "1.11.0"
-okhttp = "5.4.0"
+serialization = "1.12.0"
+okhttp = "5.5.1"
 jsoup = "1.21.1"
-# The proof render. Drives the Chromium that is already on the box.
-playwright = "1.49.0"
-anthropic = "2.34.0"
-junit = "5.11.4"
 spotless = "8.8.0"
-ktlint = "1.8.0"
+ktlint = "1.7.1"
 
 [libraries]
-quartz = { module = "com.github.vitorpamplona.amethyst:quartz", version.ref = "quartz" }
+quartz = { module = "com.github.vitorpamplona.quartz:quartz", version.ref = "quartz" }
+crypto = { module = "com.vitorpamplona.crypto:crypto", version.ref = "cryptoKmp" }
 
 kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
+kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "coroutines" }
 kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "serialization" }
 
-# The relay socket. Quartz wraps this same client in BasicOkHttpWebSocket; the
-# generator only reads, so it talks to OkHttp directly.
+# The writer's, Blossom's and the server API's HTTP. `executeAsync` is okhttp-coroutines'.
 okhttp = { module = "com.squareup.okhttp3:okhttp", version.ref = "okhttp" }
+okhttp-coroutines = { module = "com.squareup.okhttp3:okhttp-coroutines", version.ref = "okhttp" }
 
-# The sanitizer. jsoup's Cleaner + Safelist is the allowlist; the CSS pass is
-# ours, because jsoup does not parse stylesheets.
+# The page checks run on a real HTML parser.
 jsoup = { module = "org.jsoup:jsoup", version.ref = "jsoup" }
-playwright = { module = "com.microsoft.playwright:playwright", version.ref = "playwright" }
-
-# The writer. Rides on OkHttp, already in the graph.
-anthropic = { module = "com.anthropic:anthropic-java", version.ref = "anthropic" }
-
-junit-jupiter = { module = "org.junit.jupiter:junit-jupiter", version.ref = "junit" }
-kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "coroutines" }
-junit-platform-launcher = { module = "org.junit.platform:junit-platform-launcher" }
 
 [plugins]
 kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }

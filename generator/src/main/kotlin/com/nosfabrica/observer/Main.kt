@@ -1,275 +1,91 @@
 package com.nosfabrica.observer
 
-import com.nosfabrica.observer.nostr.Readiness
-import com.nosfabrica.observer.nostr.Relays
-import com.nosfabrica.observer.write.DEFAULT_MODEL
-import com.nosfabrica.observer.write.PRICES
-import com.nosfabrica.observer.write.effortNamed
-import com.vitorpamplona.quartz.nip19Bech32.decodePublicKeyAsHexOrNull
+import com.nosfabrica.observer.frontpage.FRONT_PAGE_WINDOW_SECONDS
+import com.nosfabrica.observer.frontpage.FrontPagePress
+import com.nosfabrica.observer.frontpage.PaperBoundary
+import com.nosfabrica.observer.frontpage.ProbeVerdict
+import com.nosfabrica.observer.frontpage.WriterException
+import com.nosfabrica.observer.frontpage.WriterFailure
+import com.nosfabrica.observer.frontpage.digest
+import com.nosfabrica.observer.frontpage.fromNpub
+import com.nosfabrica.observer.frontpage.isEventIdHex
+import com.nosfabrica.observer.frontpage.paperBoundary
+import com.vitorpamplona.quartz.nip01Core.relay.client.NostrClient
+import com.vitorpamplona.quartz.nip01Core.relay.normalizer.RelayUrlNormalizer
+import com.vitorpamplona.quartz.nip01Core.relay.sockets.okhttp.BasicOkHttpWebSocket
+import com.vitorpamplona.quartz.utils.TimeUtils
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.runBlocking
+import okhttp3.OkHttpClient
 import java.io.File
-import java.time.Instant
 import kotlin.system.exitProcess
 
 private const val DEFAULT_RELAY = "wss://search.brainstorm.world"
 
-/** Flags that take no value. Everything else consumes the next argument. */
-private val BOOLEAN_FLAGS = setOf("--dry-run", "--check", "--no-batch")
-
 private val USAGE =
     """
-    observer-press - print one edition
+    generator: a local dry run of the Observer's engine
 
-      observer-press <npub-or-hex> [options]
+      generator <npub-or-hex> --dry-run [--relay <url>] [--out <dir>]
 
-      --relay <url>    relay to read from (default $DEFAULT_RELAY)
-      --out <file>     where to write the edition (default edition.html)
-      --until <epoch>  end of the 24h window (default: now)
-      --effort <lvl>   low | medium | high | xhigh | max (default medium)
-      --model <id>     the model that writes the page (default $DEFAULT_MODEL)
-      --no-batch       stream the page now at full price, instead of the half-price
-                       Message Batches API (minutes, and up to a day)
-      --timezone <id>  the reader's zone, e.g. America/New_York (default: this machine's)
-      --dry-run        pull, prune and shortlist, but do not call the model
-      --check          report the readiness chain and stop
-
-    Reads ANTHROPIC_API_KEY from the environment.
+    Probes the reader's ranking, pulls the last 24 hours through it and writes the digest the
+    writer would read to <dir>/observer-<code>.digest.md (default: editions/). It never calls
+    a model: a paper is printed by the reader's own clients, or by their Assistant (runner/).
     """.trimIndent()
 
-fun main(args: Array<String>) =
-    runBlocking {
-        if (args.isEmpty() || args[0] in setOf("-h", "--help")) {
-            println(USAGE)
-            return@runBlocking
-        }
-
-        // Parsed by walking, not by chunking pairs. `chunked(2)` reads
-        // `--dry-run --out x` as ("--dry-run" -> "--out") and silently loses the
-        // filename, which is exactly what it did on the first live run.
-        val flags = mutableMapOf<String, String>()
-        var i = 1
-        while (i < args.size) {
-            val arg = args[i]
-            when {
-                !arg.startsWith("--") -> {
-                    Unit
-                }
-
-                arg in BOOLEAN_FLAGS -> {
-                    flags[arg] = "true"
-                }
-
-                i + 1 < args.size -> {
-                    flags[arg] = args[i + 1]
-                    i++
-                }
-
-                else -> {
-                    flags[arg] = "true"
-                }
-            }
-            i++
-        }
-        val relayUrl = flags["--relay"] ?: DEFAULT_RELAY
-        val out = File(flags["--out"] ?: "edition.html")
-        val until = flags["--until"]?.toLongOrNull() ?: Instant.now().epochSecond
-
-        // The paper is dated in the reader's day. On a CLI run this machine is
-        // the closest thing to a reader there is; a bad id is worth stopping
-        // for, because silently printing UTC dates a paper wrong for half the
-        // world and nothing downstream would notice.
-        val zone =
-            flags["--timezone"]?.let { name ->
-                runCatching { java.time.ZoneId.of(name) }.getOrElse {
-                    System.err.println("Not a timezone: $name (try America/New_York, Europe/Lisbon, UTC)")
-                    exitProcess(2)
-                }
-            } ?: java.time.ZoneId.systemDefault()
-
-        // quartz owns NIP-19 decoding, but NOT this guard, and the difference
-        // matters. `decodePublicKeyAsHexOrNull` decodes ANY 32-byte bech32
-        // payload: measured, it turns a valid nsec into the hex of the SECRET
-        // key rather than returning null. Without this check a reader who
-        // pastes their nsec into the front door would have their private key
-        // put into a relay filter and sent over the wire.
-        if (args[0].startsWith("nsec1", ignoreCase = true)) {
-            System.err.println("That is a SECRET key. Paste your npub or hex public key instead.")
-            exitProcess(2)
-        }
-        val observer =
-            decodePublicKeyAsHexOrNull(args[0])
-                ?: run {
-                    System.err.println("Not a usable npub or hex pubkey: ${args[0].take(24)}")
-                    exitProcess(2)
-                }
-
-        // Checked before anything is built: a typo in a flag is a usage error,
-        // and deserves a sentence rather than a stack trace from a constructor.
-        val model = flags["--model"] ?: DEFAULT_MODEL
-        if (model !in PRICES) {
-            System.err.println("Unknown model: $model (known: ${PRICES.keys.joinToString()})")
-            exitProcess(2)
-        }
-
-        Relays().use { relays ->
-            // A Chromium process outlives the run otherwise -- the proof
-            // render starts one lazily and nothing else would stop it.
-            val press =
-                Press(
-                    relays,
-                    relayUrl,
-                    effortNamed(flags["--effort"]),
-                    model = model,
-                    batch = !flags.containsKey("--no-batch"),
-                ).also { p ->
-                    Runtime.getRuntime().addShutdownHook(Thread { p.close() })
-                }
-
-            if (flags.containsKey("--check")) {
-                val (facts, verdict) = press.readiness(observer, until - WINDOW_SECONDS)
-                step("Reading $relayUrl through $observer")
-                report(verdict)
-                // The second chain, asked at pre-flight like the first. A reader
-                // with a perfect lens and no media server can read their paper
-                // and not publish it, and should learn that here rather than
-                // after one has been written.
-                val store = press.storage(observer, facts.writeRelays.orEmpty())
-                step("Storage: ${store.state} - ${Readiness.explainStorage(store)}")
-                store.chain.forEach { link ->
-                    println("    ${symbol(link.status)} ${link.key}${link.detail?.let { " ($it)" } ?: ""}")
-                }
-                return@use
-            }
-
-            try {
-                if (flags.containsKey("--dry-run")) {
-                    val (_, _, digest) = press.gather(observer, until, ::show)
-                    out.writeText(digest.text)
-                    step("Dry run - digest written to ${out.path}")
-                    return@use
-                }
-
-                val edition = press.edition(observer, until, zone = zone, onStep = ::show)
-                out.writeText(edition.html)
-                step("Wrote ${out.path} (${edition.html.length} bytes)")
-
-                // A page that fails the check is not an edition. Exiting non-zero
-                // is how the caller - a person now, a publish button later - is
-                // stopped from treating it as one.
-                if (!edition.publishable) {
-                    System.err.println("\nThis edition would NOT be offered for publication.")
-                    exitProcess(4)
-                }
-            } catch (api: com.anthropic.errors.AnthropicServiceException) {
-                // A bad key used to print forty lines of coroutine stack at
-                // somebody who typed one command. The API's own sentence is the
-                // useful half; the trace belongs in a log nobody has yet.
-                System.err.println("\nThe model API refused: ${api.message?.lines()?.firstOrNull() ?: "no reason given"}")
-                exitProcess(5)
-            } catch (unwritten: com.nosfabrica.observer.write.Writer.Unwritten) {
-                System.err.println("\n${unwritten.message}")
-                exitProcess(5)
-            } catch (refused: Press.Refused) {
-                // NO_LENS is already on screen: `report` printed the whole chain
-                // and the sentence explaining the first unmet link. Repeating the
-                // message here said the same thing twice in different words.
-                if (refused.reason != Press.Refused.Reason.NO_LENS) {
-                    System.err.println("\n${refused.message}")
-                }
-                exitProcess(3)
-            }
-        }
+fun main(args: Array<String>) {
+    val flags = args.filter { it.startsWith("--") }.toSet()
+    val positional = args.filterIndexed { i, a -> !a.startsWith("--") && (i == 0 || args[i - 1] !in setOf("--relay", "--out")) }
+    if (positional.size != 1 || "--dry-run" !in flags) {
+        println(USAGE)
+        exitProcess(if ("--help" in flags || "-h" in args) 0 else 2)
     }
 
-private fun show(progress: Press.Step) {
-    when (progress) {
-        is Press.Step.Reading -> {
-            step("Reading ${progress.relay} through ${progress.observer}")
-        }
+    fun value(name: String) = args.indexOf(name).takeIf { it >= 0 }?.let { args.getOrNull(it + 1) }
 
-        is Press.Step.Lensed -> {
-            report(progress.verdict)
-        }
+    val who = positional.single()
+    // An nsec must never reach a relay filter: refuse it before anything decodes it.
+    if (who.startsWith("nsec1")) {
+        System.err.println("That is a secret key. Give the npub.")
+        exitProcess(2)
+    }
+    val observer = fromNpub(who) ?: who.lowercase().takeIf { isEventIdHex(it) }
+    if (observer == null) {
+        System.err.println("Not an npub or a hex pubkey: $who")
+        exitProcess(2)
+    }
+    val relay = RelayUrlNormalizer.normalizeOrNull(value("--relay") ?: DEFAULT_RELAY)
+    if (relay == null) {
+        System.err.println("Not a relay URL.")
+        exitProcess(2)
+    }
+    val out = File(value("--out") ?: "editions")
 
-        is Press.Step.Pulled -> {
-            // The denominator, when the relay gives one. "608 events" alone
-            // reads as the size of the day; it is the size of the request.
-            val of = progress.surfaced?.let { " (of $it your lens surfaced)" } ?: ""
-            step("Pulled ${progress.events} events$of from ${progress.voices} people, ${progress.profiles} profiles")
-            step("Control: ${progress.control} anonymous notes, ${progress.overlap} of them also in the paper")
-        }
-
-        is Press.Step.Digested -> {
-            step("Digest: ${progress.kept} kept, ${progress.dropped} pruned, ~${progress.approxTokens} tokens")
-            step("Art: ${progress.art} candidates, hotlinked (nothing fetched)")
-        }
-
-        Press.Step.Writing -> {
-            step("Writing the page...")
-        }
-
-        is Press.Step.Queued -> {
-            step("Queued as batch ${progress.batchId} - usually minutes, at most a day")
-        }
-
-        is Press.Step.Written -> {
-            step(
-                "Model returned ${progress.chars} chars - ${progress.inputTokens} in, " +
-                    "${progress.outputTokens} out, $${"%.2f".format(progress.costUsd)}",
-            )
-        }
-
-        is Press.Step.Cleaned -> {
-            if (progress.removed.isEmpty()) {
-                step("Sanitizer: clean")
-            } else {
-                step("Sanitizer removed ${progress.removed.size} thing(s):")
-                progress.removed.forEach { println("    - $it") }
+    val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    val client = NostrClient(BasicOkHttpWebSocket.Builder { OkHttpClient() }, scope)
+    val boundary: PaperBoundary = paperBoundary() ?: error("no page checks on this platform")
+    val press =
+        FrontPagePress(client, relay, boundary, { _, _ -> throw WriterException(WriterFailure.UNSUPPORTED) })
+    try {
+        runBlocking {
+            val until = TimeUtils.now()
+            if (press.probe(observer, until - FRONT_PAGE_WINDOW_SECONDS) != ProbeVerdict.READY) {
+                println("The ranking isn't projected yet: the observed read is empty while the anonymous one isn't.")
+                exitProcess(1)
             }
+            val corpus = press.pull(observer, until)
+            val text = digest(corpus)
+            out.mkdirs()
+            val file = File(out, "observer-${corpus.code}.digest.md")
+            file.writeText(text)
+            println("${corpus.events.size} posts, ${corpus.art.size} pictures, overlap ${corpus.overlap}/${corpus.control.size}")
+            println("digest: ${file.path} (${text.length} characters)")
         }
-
-        is Press.Step.Checked -> {
-            step("Validator: ${progress.report.summary()}")
-            progress.report.violations.forEach { println("    ! ${it.kind}: ${it.detail} -- \"${it.excerpt}\"") }
-        }
-
-        is Press.Step.Proofed -> {
-            val how =
-                if (progress.fellBack) {
-                    " (house layout)"
-                } else if (progress.attempt > 1) {
-                    " (second attempt)"
-                } else {
-                    ""
-                }
-            step("Render$how: ${progress.report.summary()}")
-            progress.report.findings.forEach { println("    ! ${it.what}: ${it.detail}") }
-        }
+    } finally {
+        client.disconnect()
+        scope.cancel()
     }
 }
-
-private fun report(verdict: Readiness.Verdict) {
-    step("Lens: ${verdict.state} - ${Readiness.explain(verdict)}")
-    verdict.chain.forEach { link ->
-        println("    ${symbol(link.status)} ${link.key}${link.detail?.let { " ($it)" } ?: ""}")
-    }
-    if (!verdict.ranks) {
-        println()
-        println("  No usable lens, so there is no ranked paper to print.")
-        println("  " + Readiness.NO_LENS_YET)
-        println()
-    }
-}
-
-private fun symbol(status: Readiness.Status) =
-    when (status) {
-        Readiness.Status.OK -> "[ok]     "
-        Readiness.Status.PARTIAL -> "[partial]"
-        Readiness.Status.BROKEN -> "[BROKEN] "
-        Readiness.Status.WAITING -> "[waiting]"
-        Readiness.Status.ASIDE -> "[aside]  "
-    }
-
-// ASCII on purpose: the JVM's default console encoding is not UTF-8 everywhere,
-// and a status line that renders as "? Reading" reads like an error.
-private fun step(msg: String) = println("- $msg")

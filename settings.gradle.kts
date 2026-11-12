@@ -26,3 +26,15 @@ dependencyResolutionManagement {
         maven("https://jitpack.io")
     }
 }
+
+// `-PquartzDir=../quartz` builds Quartz from a local checkout instead of the JitPack pin: for
+// working on both at once, or while JitPack hasn't built the pinned commit yet. Every module
+// that asks for the pinned artifact gets the checkout's `:quartz` project instead.
+val quartzDir = providers.gradleProperty("quartzDir").orNull
+if (quartzDir != null) {
+    includeBuild(quartzDir) {
+        dependencySubstitution {
+            substitute(module("com.github.vitorpamplona.quartz:quartz")).using(project(":quartz"))
+        }
+    }
+}
