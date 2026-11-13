@@ -23,6 +23,7 @@ import okhttp3.Interceptor
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Protocol
+import okhttp3.Request
 import okhttp3.Response
 import okhttp3.ResponseBody.Companion.toResponseBody
 import okio.Buffer
@@ -66,19 +67,26 @@ class FakeInternalApi(
     override suspend fun decrypt(
         owner: HexKey,
         event: Event,
+        schedule: Event?,
     ): String {
         val assistant = assistants[owner] ?: throw NoAssistantException(owner)
         if (!event.verify()) throw RefusedByServerException("bad signature")
+
+        fun isOwnersSchedule(e: Event): Boolean {
+            val p = e.tags.filter { it.size > 1 && it[0] == "p" }.map { it[1] }
+            return e.kind == 34817 && e.verify() && e.pubKey == owner && p == listOf(assistant.pubKey)
+        }
         val peer =
             when (event.kind) {
                 34817 -> {
-                    val p = event.tags.filter { it.size > 1 && it[0] == "p" }.map { it[1] }
-                    if (event.pubKey != owner || p != listOf(assistant.pubKey)) throw RefusedByServerException("not this owner's schedule")
+                    if (!isOwnersSchedule(event)) throw RefusedByServerException("not this owner's schedule")
                     owner
                 }
 
                 12000 -> {
                     if (event.pubKey != assistant.pubKey) throw RefusedByServerException("not the Assistant's keys")
+                    // The keys open only for a print the owner asked this Assistant for (contract section 2).
+                    if (schedule == null || !isOwnersSchedule(schedule)) throw RefusedByServerException("no schedule")
                     assistant.pubKey
                 }
 
@@ -140,7 +148,7 @@ class FakeRelays : RelayAccess {
     ): RelayRead {
         asked += relays to filter
         val up = relays - down
-        return RelayRead(up.flatMap { held[it].orEmpty() }.filter { filter.match(it) }.distinctBy { it.id }, up.isNotEmpty())
+        return RelayRead(up.flatMap { held[it].orEmpty() }.filter { filter.match(it) }.distinctBy { it.id }, up)
     }
 
     override suspend fun publish(
@@ -159,6 +167,9 @@ class FakeBlossom {
     val requests = mutableListOf<String>()
     val stored = HashMap<String, ByteArray>()
 
+    /** Every server answers 503 while this is set. */
+    var down = false
+
     val client: OkHttpClient =
         OkHttpClient
             .Builder()
@@ -168,20 +179,9 @@ class FakeBlossom {
                     val host = request.url.host
                     requests += "${request.method} $host${request.url.encodedPath}"
                     val (code, body) =
-                        when (request.method) {
-                            "PUT" -> {
-                                val buffer = Buffer()
-                                request.body!!.writeTo(buffer)
-                                val bytes = buffer.readByteArray()
-                                val sha = sha256Hex(bytes)
-                                stored["$host/$sha"] = bytes
-                                200 to """{"sha256":"$sha","url":"https://$host/$sha"}""".encodeToByteArray()
-                            }
-
-                            else -> {
-                                val sha = request.url.encodedPath.trim('/')
-                                stored["$host/$sha"]?.let { 200 to it } ?: (404 to ByteArray(0))
-                            }
+                        when {
+                            down -> 503 to ByteArray(0)
+                            else -> answer(request)
                         }
                     Response
                         .Builder()
@@ -193,6 +193,25 @@ class FakeBlossom {
                         .build()
                 },
             ).build()
+
+    private fun answer(request: Request): Pair<Int, ByteArray> {
+        val host = request.url.host
+        return when (request.method) {
+            "PUT" -> {
+                val buffer = Buffer()
+                request.body!!.writeTo(buffer)
+                val bytes = buffer.readByteArray()
+                val sha = sha256Hex(bytes)
+                stored["$host/$sha"] = bytes
+                200 to """{"sha256":"$sha","url":"https://$host/$sha"}""".encodeToByteArray()
+            }
+
+            else -> {
+                val sha = request.url.encodedPath.trim('/')
+                stored["$host/$sha"]?.let { 200 to it } ?: (404 to ByteArray(0))
+            }
+        }
+    }
 
     fun hostsWritten() = requests.filter { it.startsWith("PUT ") }.map { it.removePrefix("PUT ").substringBefore('/') }.toSet()
 }

@@ -44,11 +44,14 @@ interface InternalApi {
     /**
      * The plaintext of [event]'s content, decrypted by [owner]'s Assistant. The server takes only
      * the whole signed event: the owner's schedule naming that Assistant (kind 34817), or the
-     * Assistant's own AI keys (kind 12000). It never takes a bare ciphertext.
+     * Assistant's own AI keys (kind 12000), which open only beside the owner's signed [schedule]
+     * being printed (the contract's `schedule`; ignored for a 34817). It never takes a bare
+     * ciphertext.
      */
     suspend fun decrypt(
         owner: HexKey,
         event: Event,
+        schedule: Event? = null,
     ): String
 
     /**
@@ -116,11 +119,13 @@ class HttpInternalApi(
     override suspend fun decrypt(
         owner: HexKey,
         event: Event,
+        schedule: Event?,
     ): String {
         val body =
             buildJsonObject {
                 put("owner", owner)
                 put("event", json.parseToJsonElement(event.toJson()))
+                if (schedule != null) put("schedule", json.parseToJsonElement(schedule.toJson()))
             }
         val data = call(Request.Builder().url("$base/decrypt").post(body.toString().toRequestBody(JSON)), owner) as? JsonObject
         return data?.string("plaintext") ?: throw InternalApiException("decrypt: no plaintext")

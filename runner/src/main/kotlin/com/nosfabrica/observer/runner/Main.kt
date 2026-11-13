@@ -133,6 +133,8 @@ fun main() {
             records = FileRunRecords(config.stateFile),
             models = { http.listAgentModels(it) },
             accepting = { !stopping.get() },
+            // Beside the run records, on the same volume: a paid paper survives a restart.
+            pending = PendingPapers(config.stateFile?.let { File(it.absoluteFile.parentFile, "pending") }),
         )
 
     // SIGTERM: no new print starts; the one under way may finish within the grace period.

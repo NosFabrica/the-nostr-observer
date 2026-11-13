@@ -55,7 +55,10 @@ class AssistantSiteIO(
         val site = ObserverSite.runnerSite(read.events, assistant, owner)
         return when {
             site != null -> SiteRead.Found(site)
-            read.anyServed -> SiteRead.None
+            // Only the Assistant's own relays can say it has no site: the index relay answering
+            // while all of them are down would read as "none", and the publish would rebuild the
+            // archive from nothing.
+            read.servedAny(assistantRelays) -> SiteRead.None
             else -> SiteRead.Unreadable
         }
     }
@@ -101,6 +104,11 @@ class AssistantSiteIO(
     }
 
     override suspend fun maxMessageLengths(): List<Int?> = emptyList()
+
+    override suspend fun latestRunnerSite(
+        runner: HexKey,
+        reader: HexKey,
+    ): SiteRead = if (runner == assistant && reader == owner) latestSite(assistant) else SiteRead.None
 
     // The server adds its own `client` tag to what it signs: one tag fewer for the editions.
     override suspend fun maxEventTags(): List<Int?> = listOf(ObserverSite.DEFAULT_MAX_TAGS - 1)
@@ -149,7 +157,8 @@ class ReaderSiteIO(
             )?.let(::asNamedSite)
         return when {
             site != null -> SiteRead.Found(site)
-            read.anyServed -> SiteRead.None
+            // As for the Assistant's site: only the owner's own relays can say there is none.
+            read.servedAny(ownerRelays) -> SiteRead.None
             else -> SiteRead.Unreadable
         }
     }
