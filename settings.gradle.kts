@@ -39,3 +39,19 @@ if (quartzDir != null) {
         }
     }
 }
+
+// assistant-runner's `:core` (the Assistant keys, the `assistant_runner` schema's stores, the trigger
+// contract's types). `-PassistantRunnerDir=<path>` builds it from a checkout, as `quartzDir` does
+// Quartz; without it, a checkout at `../assistant-runner` is used when there is one. Otherwise the
+// JitPack pin in gradle/libs.versions.toml is resolved, which needs the repository to be public:
+// JitPack builds a private one only with an authorised token.
+val assistantRunnerDir =
+    providers.gradleProperty("assistantRunnerDir").orNull
+        ?: settingsDir.resolve("../assistant-runner").takeIf { it.isDirectory }?.path
+if (assistantRunnerDir != null) {
+    includeBuild(assistantRunnerDir) {
+        dependencySubstitution {
+            substitute(module("com.github.NosFabrica.assistant-runner:core")).using(project(":core"))
+        }
+    }
+}

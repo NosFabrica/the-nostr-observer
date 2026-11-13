@@ -17,15 +17,19 @@ application {
 configurations.all {
     resolutionStrategy {
         force(libs.quartz)
+        force(libs.assistant.core)
     }
 }
 
 dependencies {
     implementation(project(":generator"))
     implementation(libs.kotlinx.serialization.json)
+    implementation(libs.assistant.core)
 
     testImplementation(kotlin("test"))
     testImplementation(libs.kotlinx.coroutines.test)
+    // TestPostgres (a throwaway cluster, or CI's service), BrainstormSchema, capturingLogs.
+    testImplementation(testFixtures(libs.assistant.core))
 }
 
 tasks.test {

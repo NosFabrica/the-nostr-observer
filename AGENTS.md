@@ -54,6 +54,13 @@ Other agents build Quartz and Amethyst on the same machine: one Gradle invocatio
   Hashes carry no order, so every module `force()`s the pin; the only relation between two
   hashes is `git merge-base --is-ancestor`. Quartz is KMP with Android in its graph, so
   `settings.gradle.kts` needs `google()`. `-PquartzDir=../quartz` builds a local checkout.
+- **assistant-runner's `:core`** (`NosFabrica/assistant-runner`: the Assistant keys, the
+  `assistant_runner` schema's stores, the trigger contract) is pinned the same way
+  (`assistantRunner` in `gradle/libs.versions.toml`, forced, its `quartz` pin equal to ours).
+  That repository is **private**, so JitPack can't build it yet: `settings.gradle.kts` builds a
+  checkout instead, `-PassistantRunnerDir=<path>` or `../assistant-runner` when it exists. Until
+  the repository is public, CI needs a checkout of it beside this one (or the build fails to
+  resolve the pin).
 - **Dependency licences**: read the LICENSE or POM before adding one. Permissive is fine;
   LGPL or a linking exception, say so; anything stricter, stop and ask.
 - Comments say why, especially why not. Run `spotlessApply` before committing.

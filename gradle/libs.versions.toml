@@ -18,6 +18,13 @@ quartz = "8c21607e05e77ecf88de8013d849949362411176"
 # the version Quartz's own catalog names for the commit above.
 cryptoKmp = "2.1.0"
 
+# assistant-runner's `:core` from JitPack (NosFabrica/assistant-runner @ commit): the Assistant keys,
+# the `assistant_runner` schema's stores and the trigger contract. A commit hash, like Quartz's,
+# so every module force()s it. It pins Quartz too: keep the two `quartz` pins equal. The
+# repository is private, so JitPack can't build it yet: `settings.gradle.kts` substitutes a
+# checkout (`-PassistantRunnerDir`, or `../assistant-runner`) until it is public.
+assistantRunner = "4476b8e845ff16d9c531bbe049407314ff0b6cfd"
+
 coroutines = "1.11.0"
 serialization = "1.12.0"
 okhttp = "5.5.1"
@@ -28,6 +35,7 @@ ktlint = "1.7.1"
 [libraries]
 quartz = { module = "com.github.vitorpamplona.quartz:quartz", version.ref = "quartz" }
 crypto = { module = "com.vitorpamplona.crypto:crypto", version.ref = "cryptoKmp" }
+assistant-core = { module = "com.github.NosFabrica.assistant-runner:core", version.ref = "assistantRunner" }
 
 kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
 kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "coroutines" }
