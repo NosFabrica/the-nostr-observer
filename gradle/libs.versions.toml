@@ -4,7 +4,8 @@ kotlin = "2.4.21"
 app = "0.2.0"
 
 # Quartz from JitPack (vitorpamplona/quartz @ commit): the Observer site, NIP-FA, NIP-FB and
-# their runner rules, at the commit the engine and the runner were written against.
+# their runner rules (and the `effort` param), at the commit the engine and the runner were
+# written against: the head of the 2.17.0 release PR.
 #
 # A JitPack version IS a git commit hash, and hashes carry no order. Gradle sees version
 # STRINGS and, when two parts of the graph ask for different ones, keeps the lexicographically
@@ -12,7 +13,7 @@ app = "0.2.0"
 # force()s this pin, and why "newer" is a word that does not apply here. The only relation
 # between two hashes is ancestry, and only git answers it:
 #   git merge-base --is-ancestor A B
-quartz = "c4b25b8dcd21c02078e0f887ff8f68a96b00d2ac"
+quartz = "b0201affce50162af575db910356fac531302b44"
 # The crypto primitives Quartz is built on; the engine hashes with them directly. Keep it at
 # the version Quartz's own catalog names for the commit above.
 cryptoKmp = "2.1.0"

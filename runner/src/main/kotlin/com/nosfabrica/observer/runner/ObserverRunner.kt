@@ -3,7 +3,6 @@ package com.nosfabrica.observer.runner
 import com.nosfabrica.observer.frontpage.AgentModel
 import com.nosfabrica.observer.frontpage.EditionClock
 import com.nosfabrica.observer.frontpage.EditionContext
-import com.nosfabrica.observer.frontpage.FrontPageParams
 import com.nosfabrica.observer.frontpage.FrontPagePress
 import com.nosfabrica.observer.frontpage.IRoleBasedHttpClientBuilder
 import com.nosfabrica.observer.frontpage.ObserverPage
@@ -205,7 +204,7 @@ class PrintOptions(
 val BRAINSTORM_LINKS = PaperLinkSet("https://brainstorm.world/e/", "https://brainstorm.world/p/")
 
 /** The writing effort [task] asks for (NIP-FB `param` `effort`): Deep, or Standard by its absence. */
-fun effortOf(task: ScheduledTask): WritingEffort = FrontPageParams.effort(task)
+fun effortOf(task: ScheduledTask): WritingEffort = if (ObserverParams.isDeep(task)) WritingEffort.DEEP else WritingEffort.STANDARD
 
 /**
  * [PaperPrinter] with Amethyst's press: the same desks, writer and page checks as the apps.
@@ -474,7 +473,7 @@ class ObserverRunner(
         pending.of(owner).takeIf { it.isNotEmpty() }?.let { publishPending(pair, it, assistantSite()) }
 
         val task = ScheduledTask(event.tags, decryptTags(pair, event))
-        if (!FrontPageParams.understands(task)) return report(owner, RunOutcome.UNKNOWN_PARAMS)
+        if (!ObserverParams.understands(task)) return report(owner, RunOutcome.UNKNOWN_PARAMS)
         val zone = zoneOf(task.tz) ?: return report(owner, RunOutcome.UNKNOWN_ZONE)
         val at = now()
 

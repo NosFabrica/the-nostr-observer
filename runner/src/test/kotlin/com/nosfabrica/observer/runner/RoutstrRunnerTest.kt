@@ -1,7 +1,6 @@
 package com.nosfabrica.observer.runner
 
 import com.nosfabrica.observer.frontpage.AgentModel
-import com.nosfabrica.observer.frontpage.FrontPageParams
 import com.nosfabrica.observer.frontpage.RoutstrInfo
 import com.nosfabrica.observer.frontpage.SatsPricing
 import com.nosfabrica.observer.frontpage.SingleHttpClient
@@ -9,6 +8,7 @@ import com.nosfabrica.observer.frontpage.WriterException
 import com.nosfabrica.observer.frontpage.WriterFailure
 import com.nosfabrica.observer.frontpage.WritingEffort
 import com.nosfabrica.observer.frontpage.writerExceptionFor
+import com.vitorpamplona.quartz.nip5aStaticWebsites.observer.ObserverParams
 import com.vitorpamplona.quartz.nipFAAgentKeys.tags.AgentKeyTag
 import com.vitorpamplona.quartz.nipFBScheduledTasks.ScheduledTaskClaims.OwnRun
 import kotlinx.coroutines.runBlocking
@@ -109,7 +109,7 @@ class RoutstrRunnerTest : RunnerWorld() {
             val worker = runnerWith(routstr = RoutstrFunds(FakeNode(balanceMsats = standard)))
             world(listOf(nodeKey, openRouter))
             listedModels = dear
-            schedule(FrontPageParams.withEffort(task(model = model, key = nodeKey), WritingEffort.DEEP))
+            schedule(ObserverParams.withDeep(task(model = model, key = nodeKey), true))
             assertEquals(RunOutcome.INSUFFICIENT_BALANCE, worker.poll()[owner.pubKey])
             assertTrue(printer.calls.isEmpty())
         }

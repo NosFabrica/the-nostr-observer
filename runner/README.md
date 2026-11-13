@@ -30,8 +30,8 @@ runner"). It runs on Brainstorm's servers, beside brainstorm_server, as its own 
    server maps to that Assistant). No `p`: the owner took printing back (`NOT_NAMED`). More than
    half of the owner's write relays must have answered the read (`NO_QUORUM` otherwise).
 5. Has the server decrypt the schedule (`decrypt` with the whole signed event; the plaintext is
-   kept by event id), skips one with a param it doesn't understand (`FrontPageParams.understands`:
-   Quartz's `model` and `key`, and `effort`),
+   kept by event id), skips one with a param it doesn't understand (`ObserverParams.understands`:
+   `model`, `key` and `effort`),
    and decides with `ScheduledTaskClaims.decideAsRunner`: due, not paused, after the time it was
    set, not already started here, no live claim by one of the owner's devices
    (`CLAIMED_BY_DEVICE`).

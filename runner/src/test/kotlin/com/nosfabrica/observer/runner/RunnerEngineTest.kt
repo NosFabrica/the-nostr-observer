@@ -3,7 +3,6 @@ package com.nosfabrica.observer.runner
 import com.nosfabrica.observer.frontpage.AgentModel
 import com.nosfabrica.observer.frontpage.DEFAULT_DIGEST_BUDGET
 import com.nosfabrica.observer.frontpage.EditionContext
-import com.nosfabrica.observer.frontpage.FrontPageParams
 import com.nosfabrica.observer.frontpage.JsoupPaperBoundary
 import com.nosfabrica.observer.frontpage.PrintResult
 import com.nosfabrica.observer.frontpage.RoutstrPricing
@@ -20,6 +19,7 @@ import com.vitorpamplona.quartz.nip01Core.relay.normalizer.NormalizedRelayUrl
 import com.vitorpamplona.quartz.nip5aStaticWebsites.observer.ObserverEdition
 import com.vitorpamplona.quartz.nip5aStaticWebsites.observer.ObserverEditions
 import com.vitorpamplona.quartz.nip5aStaticWebsites.observer.ObserverEditionsCodec
+import com.vitorpamplona.quartz.nip5aStaticWebsites.observer.ObserverParams
 import com.vitorpamplona.quartz.nip5aStaticWebsites.observer.ObserverSite
 import com.vitorpamplona.quartz.utils.TimeUtils
 import kotlinx.coroutines.runBlocking
@@ -197,7 +197,7 @@ class RunnerEngineTest : RunnerWorld() {
     fun theSchedulesEffortParamReachesThePrint() =
         runBlocking {
             world()
-            schedule(FrontPageParams.withEffort(task(), WritingEffort.DEEP))
+            schedule(ObserverParams.withDeep(task(), true))
             assertEquals(RunOutcome.PRINTED, runner.poll()[owner.pubKey])
             assertEquals(WritingEffort.DEEP, printer.options.single().effort)
         }
