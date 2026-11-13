@@ -47,7 +47,11 @@ interface RunRecords {
         occurrence: Long,
     )
 
-    /** Forget a start that spent nothing (the ranking wasn't ready): the next poll may try again. */
+    /**
+     * Forget a start that spent nothing (the ranking wasn't ready, or the endpoint's provider was
+     * down before any answer): a later poll may try again. Forgotten on disk too, best effort: if
+     * that write fails, the start stays on disk, and after a restart it reads as ended.
+     */
     fun forget(
         owner: HexKey,
         occurrence: Long,
@@ -139,7 +143,8 @@ class FileRunRecords(
         occurrence: Long,
     ) {
         records.remove(owner to occurrence)
-        // Not forgotten on disk: after a restart the start reads as ended, and the morning isn't tried again.
+        // A failed write leaves the start on disk, read as ended after a restart: that morning is
+        // then not tried again, which costs a paper, never a second payment.
         saveOrLog()
     }
 

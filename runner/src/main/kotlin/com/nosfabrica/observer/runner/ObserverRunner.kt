@@ -9,8 +9,8 @@ import com.nosfabrica.observer.frontpage.ObserverPublisher
 import com.nosfabrica.observer.frontpage.PaperBoundary
 import com.nosfabrica.observer.frontpage.PrintResult
 import com.nosfabrica.observer.frontpage.WriterException
+import com.nosfabrica.observer.frontpage.WriterFailure
 import com.nosfabrica.observer.frontpage.chatComplete
-import com.nosfabrica.observer.frontpage.listAgentModels
 import com.nosfabrica.observer.frontpage.profilesFrom
 import com.nosfabrica.observer.frontpage.publishedSha256
 import com.nosfabrica.observer.frontpage.rankModels
@@ -39,6 +39,8 @@ import com.vitorpamplona.quartz.nipFBScheduledTasks.ZoneIdCronZone
 import com.vitorpamplona.quartz.utils.Log
 import com.vitorpamplona.quartz.utils.TimeUtils
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -47,10 +49,13 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.Call
 import okhttp3.EventListener
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicReference
 
 /** How one schedule went on one poll. Logged by name, with the owner: never a key or a plaintext. */
 enum class RunOutcome {
@@ -69,9 +74,9 @@ enum class RunOutcome {
     SCHEDULE_CHANGED,
 
     /**
-     * The `key` param names an endpoint the Assistant's list doesn't have, and the schedule names
-     * a `model`: that model is never asked of another endpoint. Nothing spent; not tried again
-     * for this occurrence.
+     * The `key` param names an endpoint the Assistant's list doesn't have: the reader chose to
+     * spend there, so no other provider's key is used instead, with or without a `model` param.
+     * Nothing spent; looked at again when the Assistant's list changes.
      */
     KEY_NOT_GIVEN,
 
@@ -121,6 +126,21 @@ enum class RunOutcome {
 
     /** The key's URL is loopback, private or internal: the worker never calls it. */
     REFUSED_URL,
+
+    /** The key's URL is a Tor onion: the worker has no Tor, and never resolves one. */
+    UNREACHABLE_ONION,
+
+    /**
+     * A Routstr key's balance doesn't cover the print: under twice the model's `max_cost` before
+     * it (nothing spent, looked at again hourly), or the node's 402 during it (ended).
+     */
+    INSUFFICIENT_BALANCE,
+
+    /** A Routstr node's 503 `payment_settlement_failed`: it charged and withheld the page. Ended, never resent. */
+    CHARGED_NO_ANSWER,
+
+    /** The endpoint's own provider is down (a Routstr node's 424): nothing spent, tried again hourly. */
+    UPSTREAM_UNAVAILABLE,
 
     /** No `model` param and the endpoint lists none. */
     NO_MODEL,
@@ -175,14 +195,25 @@ class PressPrinter(
         readerName: String,
     ): PrintResult =
         cancellingCalls(http) { tracked ->
-            FrontPagePress(
-                client,
-                searchRelay,
-                boundary,
-                { messages, onEvent -> tracked.chatComplete(key, model, messages, onEvent) },
-            ).print(owner, readerName)
+            var answered = 0
+            try {
+                FrontPagePress(
+                    client,
+                    searchRelay,
+                    boundary,
+                    { messages, onEvent -> tracked.chatComplete(key, model, messages, onEvent).also { answered++ } },
+                ).print(owner, readerName)
+            } catch (e: WriterException) {
+                // The repair round failed after the first page was paid for: never "nothing spent".
+                throw if (answered > 0) AfterAnswerException(e) else e
+            }
         }
 }
+
+/** The writer failed on a later call of a print whose first call was answered (and paid for). */
+class AfterAnswerException(
+    val writer: WriterException,
+) : Exception("after an answer: ${writer.failure}")
 
 /**
  * [block] with an [IRoleBasedHttpClientBuilder] whose money calls are all cancelled the moment
@@ -233,7 +264,7 @@ class ObserverRunner(
     private val blossom: BlossomHttp,
     private val printer: PaperPrinter,
     private val records: RunRecords,
-    /** The models an endpoint lists, for a schedule with no `model` param ([listAgentModels]). */
+    /** The models an endpoint lists (the engine's `listAgentModels`): the default model, and a Routstr node's prices. */
     private val models: suspend (AgentKeyTag) -> List<AgentModel>,
     private val zoneOf: (String?) -> CronZone? = { it?.let(ZoneIdCronZone::of) },
     private val now: () -> Long = { TimeUtils.now() },
@@ -245,6 +276,12 @@ class ObserverRunner(
     private val accepting: () -> Boolean = { true },
     /** Papers printed but not yet published ([PendingPaper]). */
     private val pending: PendingPapers = PendingPapers(null),
+    /** Routstr keys' detection and balance, asked of each key's own node. */
+    private val routstr: RoutstrFunds = RoutstrFunds(NoRoutstrNode),
+    /** The longest the `/models` listing may take: it is asked before a print, and a stopping worker waits for it. */
+    private val modelsTimeoutMs: Long = MODELS_TIMEOUT_MS,
+    /** Where the blocking writes of the records and the pending papers run. */
+    private val diskDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) {
     /** Every (owner, Assistant) brainstorm_server holds, page by page. */
     suspend fun assistants(): List<AssistantPair> {
@@ -269,6 +306,11 @@ class ObserverRunner(
         val occurrence: Long,
         val outcome: RunOutcome,
         val until: Long,
+        /**
+         * For an outcome that turned on the Assistant's keys ([KEY_DEPENDENT]), the id of the kind
+         * 12000 it was decided with ("" for none): a new list from the owner unsettles it.
+         */
+        val keysId: String? = null,
     )
 
     private val settled = ConcurrentHashMap<HexKey, Settled>()
@@ -276,7 +318,13 @@ class ObserverRunner(
     /** Decrypted schedule tags by event id: an event never changes, so neither does its plaintext. Pruned to the schedules of the last poll. */
     private val decryptedTags = ConcurrentHashMap<String, Array<Array<String>>>()
 
-    /** One pass over every schedule. Returns each owner's outcome, for tests and the log. */
+    /**
+     * One pass over every schedule. Returns each owner's outcome, for tests and the log.
+     *
+     * A [RunnerTokenRejectedException] (the server refuses this worker) stops new runs, but the
+     * runs under way finish: they may already have paid for a page, which is ended in the records
+     * and kept to publish. It is thrown once they have.
+     */
     suspend fun poll(): Map<HexKey, RunOutcome> {
         val pairs = assistants()
         val byOwner = pairs.associateBy { it.owner }
@@ -284,20 +332,26 @@ class ObserverRunner(
         val reads = nostr.schedules(byOwner.keys)
         decryptedTags.keys.retainAll(reads.map { it.event.id }.toSet())
         settled.keys.retainAll(byOwner.keys)
+        val rejected = AtomicReference<RunnerTokenRejectedException?>(null)
+
+        // Neither a stopping worker nor a refused token starts a run, even one queued for a permit.
+        fun mayStart() = accepting() && rejected.get() == null
         val ran =
             coroutineScope {
                 reads
                     .mapNotNull { read -> byOwner[read.event.pubKey]?.let { read to it } }
                     .map { (read, pair) ->
                         async {
+                            if (!mayStart()) return@async pair.owner to report(pair.owner, RunOutcome.STOPPING)
                             gate.withPermit {
                                 pair.owner to
                                     try {
-                                        runSchedule(read, pair)
+                                        if (!mayStart()) report(pair.owner, RunOutcome.STOPPING) else runSchedule(read, pair)
                                     } catch (e: CancellationException) {
                                         throw e
                                     } catch (e: RunnerTokenRejectedException) {
-                                        throw e
+                                        rejected.compareAndSet(null, e)
+                                        RunOutcome.ERROR
                                     } catch (e: Exception) {
                                         // The class only: a message could carry what a provider or server echoed.
                                         Log.w(TAG) { "owner=${pair.owner} outcome=${RunOutcome.ERROR} error=${e.javaClass.simpleName}" }
@@ -307,16 +361,19 @@ class ObserverRunner(
                         }
                     }.awaitAll()
             }
+        rejected.get()?.let { throw it }
         // A pending paper whose owner no longer has an Assistant, or is past its time, goes.
-        pending.owners().forEach { owner ->
-            val paper = pending.of(owner) ?: return@forEach
-            if (owner !in byOwner || now() > paper.until) {
-                pending.drop(owner)
-                report(owner, RunOutcome.PUBLISH_FAILED, "pending paper dropped")
+        pending.all().forEach { paper ->
+            if (paper.owner !in byOwner || now() > paper.until) {
+                onDisk { pending.drop(paper) }
+                report(paper.owner, RunOutcome.PUBLISH_FAILED, "pending paper dropped")
             }
         }
         return ran.toMap(LinkedHashMap())
     }
+
+    /** [block] on the IO dispatcher: the records and the pending papers are synced to disk, a blocking write. */
+    private suspend fun <T> onDisk(block: () -> T): T = withContext(diskDispatcher) { block() }
 
     /** Ends a schedule's run with [outcome], already reported. */
     private class Stop(
@@ -345,6 +402,8 @@ class ObserverRunner(
     ): RunOutcome {
         val event = read.event
         val owner = pair.owner
+        // Checked again here: a SIGTERM while this run waited for a permit starts nothing.
+        if (!accepting()) return report(owner, RunOutcome.STOPPING)
         val named = ScheduledTask(event.tags).runners
         // The owner took printing back (their newest version names no runner): nothing to do, said quietly.
         if (named.isEmpty()) return report(owner, RunOutcome.NOT_NAMED)
@@ -364,8 +423,8 @@ class ObserverRunner(
         suspend fun servers() = serversRead ?: ownerServers(owner, ownerRelays).also { serversRead = it }
 
         suspend fun assistantSite() = AssistantSiteIO(owner, pair.assistant, api, nostr, assistantRelays, servers(), blossom, now)
-        // A paper already paid for goes out first, before anything else is decided.
-        pending.of(owner)?.let { publishPending(pair, it, assistantSite()) }
+        // Papers already paid for go out first, before anything else is decided.
+        pending.of(owner).takeIf { it.isNotEmpty() }?.let { publishPending(pair, it, assistantSite()) }
 
         val task = ScheduledTask(event.tags, decryptTags(pair, event))
         if (!ObserverParams.understands(task)) return report(owner, RunOutcome.UNKNOWN_PARAMS)
@@ -379,20 +438,23 @@ class ObserverRunner(
         if (!first.shouldRun) return report(owner, verdictOutcome(first.verdict))
         val occurrence = first.occurrence!!
         settled[owner]?.let { s ->
-            if (s.scheduleId == event.id && s.occurrence == occurrence &&
-                at < s.until
+            if (s.scheduleId == event.id && s.occurrence == occurrence && at < s.until &&
+                (s.keysId == null || s.keysId == keyListId(pair.assistant, assistantRelays))
             ) {
                 return report(owner, s.outcome, "settled", quiet = true)
             }
         }
         val nextDue = task.expression()?.nextAfter(occurrence, zone) ?: (occurrence + DAY_SECONDS)
 
+        // The id of the Assistant's kind 12000 the key was picked from, once it has been read.
+        var keysId: String? = null
+
         fun settle(
             outcome: RunOutcome,
             detail: String? = null,
         ): RunOutcome {
             val until = if (outcome in FIXABLE) minOf(at + FIXABLE_RETRY_SECONDS, nextDue) else nextDue
-            settled[owner] = Settled(event.id, occurrence, outcome, until)
+            settled[owner] = Settled(event.id, occurrence, outcome, until, keysId?.takeIf { outcome in KEY_DEPENDENT })
             return report(owner, outcome, detail)
         }
 
@@ -427,13 +489,38 @@ class ObserverRunner(
         if (servers.isEmpty()) return settle(RunOutcome.NO_SERVERS)
         if (!hasLens(owner, ownerRelays)) return settle(RunOutcome.NO_LENS)
 
-        val key = assistantKey(pair, task, event, assistantRelays) ?: return settle(RunOutcome.NO_KEY)
-        // The `model` param names a model at the `key` param's endpoint: never carried over to another one.
+        val key =
+            when (val keys = assistantKey(pair, task, event, assistantRelays)) {
+                KeyRead.NoQuorum -> return report(owner, RunOutcome.NO_QUORUM, "kind 12000")
+                is KeyRead.Read -> {
+                    keysId = keys.listId
+                    keys.key
+                }
+            } ?: return settle(RunOutcome.NO_KEY)
+        // The `key` param names an endpoint: never another provider's key instead, model param or not.
         val choice = ObserverParams.keyChoice(task)
-        if (choice != null && ObserverParams.model(task) != null && !choice.isAt(key)) return settle(RunOutcome.KEY_NOT_GIVEN)
+        if (choice != null && !choice.isAt(key)) return settle(RunOutcome.KEY_NOT_GIVEN)
         // SSRF: the worker is inside Brainstorm's network. The guarded client checks again at connect time.
-        UrlGuard.refusal(key.url)?.let { return settle(RunOutcome.REFUSED_URL, it) }
-        val model = ObserverParams.model(task) ?: defaultModel(key) ?: return settle(RunOutcome.NO_MODEL)
+        UrlGuard.refusal(key.url)?.let {
+            return settle(
+                if (it ==
+                    UrlGuard.ONION
+                ) {
+                    RunOutcome.UNREACHABLE_ONION
+                } else {
+                    RunOutcome.REFUSED_URL
+                },
+                it,
+            )
+        }
+        var listed: List<AgentModel>? = null
+
+        suspend fun listed() = listed ?: listModels(key).also { listed = it }
+        val model = ObserverParams.model(task) ?: rankModels(listed().map { it.id }).firstOrNull() ?: return settle(RunOutcome.NO_MODEL)
+        // A Routstr key's balance must cover the print before anything is spent; asked of the key's own node only.
+        if (routstr.isRoutstr(key) { listed() } && routstr.tooLow(key, listed().firstOrNull { it.id == model })) {
+            return settle(RunOutcome.INSUFFICIENT_BALANCE)
+        }
 
         val name = readerName(owner, ownerRelays)
         if (!accepting()) return report(owner, RunOutcome.STOPPING)
@@ -442,7 +529,7 @@ class ObserverRunner(
         if (again == null || !again.quorum) return report(owner, RunOutcome.NO_QUORUM, "re-read")
         if (again.event.id != event.id) return report(owner, RunOutcome.SCHEDULE_CHANGED)
         try {
-            records.started(owner, occurrence)
+            onDisk { records.started(owner, occurrence) }
         } catch (e: RunRecordsException) {
             // Not written down, so not started: printing now could pay for this morning twice after a restart.
             return report(owner, RunOutcome.RECORDS_UNAVAILABLE, e.message)
@@ -451,31 +538,59 @@ class ObserverRunner(
             try {
                 withTimeout(printTimeoutMs) { printer.print(key, model, owner, name) }
             } catch (e: TimeoutCancellationException) {
-                records.ended(owner, occurrence)
+                onDisk { records.ended(owner, occurrence) }
                 return settle(RunOutcome.TIMED_OUT)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: WriterException) {
-                records.ended(owner, occurrence)
-                // The failure's name and status only: what the provider said may echo the request.
-                return settle(RunOutcome.WRITER_FAILED, listOfNotNull(e.failure.name, e.status?.toString()).joinToString(" "))
+                return writerFailed(e, answered = false, owner, occurrence, ::settle)
+            } catch (e: AfterAnswerException) {
+                return writerFailed(e.writer, answered = true, owner, occurrence, ::settle)
             }
         return when (result) {
             is PrintResult.NotReady -> {
-                records.forget(owner, occurrence)
+                onDisk { records.forget(owner, occurrence) }
                 report(owner, RunOutcome.NOT_READY, result.verdict.name)
             }
 
             is PrintResult.Refused -> {
-                records.ended(owner, occurrence)
+                onDisk { records.ended(owner, occurrence) }
                 settle(RunOutcome.PAGE_REFUSED, "${result.violations.size} problems")
             }
 
             is PrintResult.Printed -> {
-                records.ended(owner, occurrence)
                 val paper = pendingFor(owner, occurrence, zone, result, model, name)
-                settle(publish(pair, paper, assistantSite))
+                // Kept before it is published: a worker stopped mid-publish still has the paid paper.
+                onDisk { pending.keep(paper) }
+                onDisk { records.ended(owner, occurrence) }
+                settle(publish(pair, pending.of(owner), assistantSite))
             }
+        }
+    }
+
+    /**
+     * How a writer failure ends the run. Whatever reached the model is ended in the records (it
+     * may have spent), except a 424 before any answer: the node's own provider was down and
+     * nothing was charged, so the start is forgotten and the occurrence tried again hourly.
+     */
+    private suspend fun writerFailed(
+        e: WriterException,
+        answered: Boolean,
+        owner: HexKey,
+        occurrence: Long,
+        settle: (RunOutcome, String?) -> RunOutcome,
+    ): RunOutcome {
+        // The failure's name and status only: what the provider said may echo the request.
+        val detail = listOfNotNull(e.failure.name, e.status?.toString(), "after an answer".takeIf { answered }).joinToString(" ")
+        if (e.failure == WriterFailure.UPSTREAM_DOWN && !answered) {
+            onDisk { records.forget(owner, occurrence) }
+            return settle(RunOutcome.UPSTREAM_UNAVAILABLE, detail)
+        }
+        onDisk { records.ended(owner, occurrence) }
+        return when {
+            e.failure == WriterFailure.SETTLEMENT_FAILED -> settle(RunOutcome.CHARGED_NO_ANSWER, detail)
+            e.failure == WriterFailure.LOW_BALANCE || e.status == 402 -> settle(RunOutcome.INSUFFICIENT_BALANCE, detail)
+            else -> settle(RunOutcome.WRITER_FAILED, detail)
         }
     }
 
@@ -512,19 +627,23 @@ class ObserverRunner(
         )
     }
 
-    /** Publishes [paper] to the Assistant's site; on any failure it is kept to be published again on a later poll, never printed again. */
+    /**
+     * Publishes [papers] (an owner's, oldest first, each already kept) to the Assistant's site in
+     * one site event, and drops them once out. On any failure they stay kept, to be published
+     * again on a later poll, never printed again.
+     */
     private suspend fun publish(
         pair: AssistantPair,
-        paper: PendingPaper,
+        papers: List<PendingPaper>,
         site: AssistantSiteIO,
     ): RunOutcome {
-        val publisher = ObserverPublisher(site, pair.assistant, { paper.readerName }, now, forReader = pair.owner)
+        val publisher = ObserverPublisher(site, pair.assistant, { papers.last().readerName }, now, forReader = pair.owner)
         val failure =
             try {
                 when (
                     val published =
                         publisher.publish(
-                            listOf(ObserverPage(ObserverPublisher.entryFor(paper.edition(), paper.sha256), paper.html)),
+                            papers.map { ObserverPage(ObserverPublisher.entryFor(it.edition(), it.sha256), it.html) },
                         )
                 ) {
                     is ObserverPublishResult.Published -> null
@@ -533,33 +652,32 @@ class ObserverRunner(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: RunnerTokenRejectedException) {
-                pending.keep(paper)
                 throw e
             } catch (e: Exception) {
                 // `sign` refused, Blossom threw: the class only, never a message.
                 e.javaClass.simpleName
             }
         if (failure == null) {
-            pending.drop(pair.owner)
+            onDisk { papers.forEach(pending::drop) }
             return RunOutcome.PRINTED
         }
-        pending.keep(paper)
-        Log.i(TAG) { "owner=${pair.owner} publish failed ($failure): kept to publish again" }
+        Log.i(TAG) { "owner=${pair.owner} publish failed ($failure): ${papers.size} kept to publish again" }
         return RunOutcome.PUBLISH_PENDING
     }
 
-    /** A paid paper that didn't go out, published again (never printed again); dropped once out, or once [PendingPaper.until] passes. */
+    /** Paid papers that didn't go out, published again (never printed again); each dropped once out, or once its [PendingPaper.until] passes. */
     private suspend fun publishPending(
         pair: AssistantPair,
-        paper: PendingPaper,
+        papers: List<PendingPaper>,
         site: AssistantSiteIO,
     ) {
-        if (now() > paper.until) {
-            pending.drop(pair.owner)
+        val (live, expired) = papers.partition { now() <= it.until }
+        expired.forEach {
+            onDisk { pending.drop(it) }
             report(pair.owner, RunOutcome.PUBLISH_FAILED, "pending paper dropped")
-            return
         }
-        if (publish(pair, paper, site) == RunOutcome.PRINTED) report(pair.owner, RunOutcome.PRINTED, "published late")
+        if (live.isEmpty()) return
+        if (publish(pair, live, site) == RunOutcome.PRINTED) report(pair.owner, RunOutcome.PRINTED, "${live.size} published late")
     }
 
     /** The schedule's private tags, decrypted by the server from the whole signed event, once per event. */
@@ -590,31 +708,53 @@ class ObserverRunner(
             stop(pair.owner, RunOutcome.DECRYPT_REFUSED)
         }
 
-    /** The Assistant's own NIP-FA list (kind 12000, by the Assistant), decrypted by the server beside [schedule], and the key the schedule picks; null when none. */
+    /** What [assistantKey] read: the key and the list it came from, or too few relays answered. */
+    private sealed interface KeyRead {
+        /** [key] is null when the list holds no usable key; [listId] is "" when there is no list. */
+        class Read(
+            val key: AgentKeyTag?,
+            val listId: String,
+        ) : KeyRead
+
+        object NoQuorum : KeyRead
+    }
+
+    private fun keyListFilter(assistant: HexKey) = Filter(kinds = listOf(AgentKeyEvent.KIND), authors = listOf(assistant), limit = 4)
+
+    /**
+     * The Assistant's own NIP-FA list (kind 12000, by the Assistant), decrypted by the server
+     * beside [schedule], and the key the schedule picks. Read with the server's majority rule:
+     * more than half of the Assistant's relays must answer, or a list the owner just replaced
+     * (a key taken back) could still be the one read.
+     */
     private suspend fun assistantKey(
         pair: AssistantPair,
         task: ScheduledTask,
         schedule: ScheduledTaskEvent,
         relays: Set<NormalizedRelayUrl>,
-    ): AgentKeyTag? {
-        val list =
-            nostr.newest(pair.assistant, relays, Filter(kinds = listOf(AgentKeyEvent.KIND), authors = listOf(pair.assistant), limit = 4))
-                ?: return null
+    ): KeyRead {
+        val (list, quorum) = nostr.newestWithQuorum(pair.assistant, relays, keyListFilter(pair.assistant))
+        if (!quorum) return KeyRead.NoQuorum
+        if (list == null) return KeyRead.Read(null, "")
         val keys = parseTags(decrypt(pair, list, schedule))?.usableAgentKeys().orEmpty()
-        return ObserverParams.key(task, keys)
+        return KeyRead.Read(ObserverParams.key(task, keys), list.id)
     }
 
-    private suspend fun defaultModel(key: AgentKeyTag): String? {
-        val listed =
-            try {
-                models(key)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                emptyList()
-            }
-        return rankModels(listed.map { it.id }).firstOrNull()
-    }
+    /** The id of the Assistant's newest kind 12000 ("" for none), unread: what a settled key outcome was decided with. */
+    private suspend fun keyListId(
+        assistant: HexKey,
+        relays: Set<NormalizedRelayUrl>,
+    ): String = nostr.newest(assistant, relays, keyListFilter(assistant))?.id ?: ""
+
+    /** The models [key]'s endpoint lists ([models]), within [modelsTimeoutMs]; empty when it can't say. */
+    private suspend fun listModels(key: AgentKeyTag): List<AgentModel> =
+        try {
+            withTimeoutOrNull(modelsTimeoutMs) { models(key) }.orEmpty()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            emptyList()
+        }
 
     /** The owner's Blossom servers (kind 10063), in their order, only those a guarded client may dial. */
     private suspend fun ownerServers(
@@ -693,7 +833,31 @@ class ObserverRunner(
         private const val DAY_SECONDS = 86_400L
 
         /** Outcomes the owner can fix within the morning (a list published, a key added): looked at again after [FIXABLE_RETRY_SECONDS]. */
-        private val FIXABLE = setOf(RunOutcome.NO_SERVERS, RunOutcome.NO_RELAYS, RunOutcome.NO_LENS, RunOutcome.NO_KEY, RunOutcome.NO_MODEL)
+        private val FIXABLE =
+            setOf(
+                RunOutcome.NO_SERVERS,
+                RunOutcome.NO_RELAYS,
+                RunOutcome.NO_LENS,
+                RunOutcome.NO_KEY,
+                RunOutcome.NO_MODEL,
+                // A balance topped up, a node's provider back: nothing was spent, so the morning may still print.
+                RunOutcome.INSUFFICIENT_BALANCE,
+                RunOutcome.UPSTREAM_UNAVAILABLE,
+            )
+
+        /** Outcomes decided by the Assistant's kind 12000: settled only while that list is the same event. */
+        private val KEY_DEPENDENT =
+            setOf(
+                RunOutcome.NO_KEY,
+                RunOutcome.KEY_NOT_GIVEN,
+                RunOutcome.REFUSED_URL,
+                RunOutcome.UNREACHABLE_ONION,
+                RunOutcome.NO_MODEL,
+                RunOutcome.INSUFFICIENT_BALANCE,
+            )
+
+        /** The `/models` listing before a print; a SIGTERM's grace waits for it. */
+        const val MODELS_TIMEOUT_MS = 20_000L
 
         const val FIXABLE_RETRY_SECONDS = 3_600L
 

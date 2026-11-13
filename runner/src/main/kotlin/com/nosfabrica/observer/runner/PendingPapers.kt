@@ -49,56 +49,74 @@ class PendingPaper(
 }
 
 /**
- * The papers waiting to be published, one per owner (a newer one replaces an older one: the
- * newer print's site carries the older editions it read). Kept in memory and, with a [dir], one
- * file per owner on the state volume, so a restart doesn't lose a paid paper.
+ * The papers waiting to be published, one per (owner, occurrence): an older paper that never got
+ * out is not replaced by a newer one, it goes out with it (or after it). Kept in memory and, with
+ * a [dir], one file per paper on the state volume, so a restart doesn't lose a paid paper. A paper
+ * is kept BEFORE its first publish, so a worker stopped mid-publish still has it.
  */
 class PendingPapers(
     private val dir: File?,
 ) {
+    private data class Key(
+        val owner: HexKey,
+        val occurrence: Long,
+    )
+
     private val json = Json { ignoreUnknownKeys = true }
-    private val papers = ConcurrentHashMap<HexKey, PendingPaper>()
+    private val papers = ConcurrentHashMap<Key, PendingPaper>()
+
+    /** The file each paper was read from: one written by an older worker is named by its owner alone. */
+    private val files = ConcurrentHashMap<Key, File>()
 
     init {
         dir?.listFiles { f -> f.name.endsWith(".json") }?.forEach { file ->
             try {
                 val paper = json.decodeFromString<PendingPaper>(file.readText())
-                papers[paper.owner] = paper
+                val key = Key(paper.owner, paper.occurrence)
+                papers[key] = paper
+                files[key] = file
             } catch (e: Exception) {
                 Log.w(TAG, "Could not read a pending paper; leaving ${file.name} for an operator", e)
             }
         }
     }
 
-    fun of(owner: HexKey): PendingPaper? = papers[owner]
+    /** [owner]'s papers waiting, oldest occurrence first. */
+    fun of(owner: HexKey): List<PendingPaper> = papers.values.filter { it.owner == owner }.sortedBy { it.occurrence }
 
-    fun owners(): Set<HexKey> = papers.keys.toSet()
+    fun all(): List<PendingPaper> = papers.values.sortedWith(compareBy({ it.owner }, { it.occurrence }))
 
     fun keep(paper: PendingPaper) {
-        papers[paper.owner] = paper
+        val key = Key(paper.owner, paper.occurrence)
+        papers[key] = paper
         val dir = dir ?: return
         try {
             if (!dir.isDirectory && !dir.mkdirs()) throw IOException("could not create ${dir.path}")
-            val file = fileOf(paper.owner)
+            val file = fileOf(key)
             val tmp = File(file.path + ".tmp")
             FileOutputStream(tmp).use { out ->
                 out.write(json.encodeToString(paper).encodeToByteArray())
                 out.fd.sync()
             }
             Files.move(tmp.toPath(), file.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+            files.put(key, file)?.takeIf { it != file }?.let(::delete)
         } catch (e: IOException) {
             // Still kept in memory: retried until a restart.
             Log.w(TAG, "Could not write a pending paper to the state volume", e)
         }
     }
 
-    fun drop(owner: HexKey) {
-        papers.remove(owner)
-        val file = dir?.let { fileOf(owner) } ?: return
+    fun drop(paper: PendingPaper) {
+        val key = Key(paper.owner, paper.occurrence)
+        papers.remove(key)
+        files.remove(key)?.let(::delete)
+    }
+
+    private fun delete(file: File) {
         if (!file.delete() && file.exists()) Log.w(TAG) { "Could not delete ${file.name}" }
     }
 
-    private fun fileOf(owner: HexKey) = File(dir, "$owner.json")
+    private fun fileOf(key: Key) = File(dir, "${key.owner}-${key.occurrence}.json")
 
     companion object {
         private const val TAG = "PendingPapers"

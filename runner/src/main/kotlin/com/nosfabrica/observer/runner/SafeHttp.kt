@@ -9,7 +9,9 @@ import okhttp3.ResponseBody.Companion.toResponseBody
 import okio.Buffer
 import okio.ForwardingSource
 import okio.buffer
+import java.io.FilterInputStream
 import java.io.IOException
+import java.io.InputStream
 import java.net.Inet4Address
 import java.net.Inet6Address
 import java.net.InetAddress
@@ -45,6 +47,24 @@ class RefusedUrlException(
 ) : IOException("refused: $reason")
 
 object UrlGuard {
+    /**
+     * The refusal of a Tor onion. The worker has no Tor, and an onion name must never reach a
+     * resolver: the cluster's DNS would pass `….onion` upstream, telling it which hidden service a
+     * reader uses. [GuardedDns] asks [hostRefusal] before it resolves anything, so this keeps it there.
+     */
+    const val ONION = "an onion address (the worker has no Tor)"
+
+    /** Whether [host] is a Tor onion name, any version, any spelling: never dialled, never resolved. */
+    fun isOnion(host: String): Boolean {
+        val h =
+            host
+                .lowercase()
+                .removePrefix("[")
+                .removeSuffix("]")
+                .trimEnd('.')
+        return h == "onion" || h.endsWith(".onion")
+    }
+
     /** Names that only mean something inside a network. */
     private val INTERNAL_SUFFIXES =
         listOf(".localhost", ".local", ".internal", ".intranet", ".lan", ".home.arpa", ".svc", ".cluster.local", ".corp")
@@ -65,6 +85,8 @@ object UrlGuard {
                 return "not a URL"
             }
         val scheme = uri.scheme?.lowercase() ?: return "not a URL"
+        // Before the scheme: an `http://….onion` node is refused as an onion, which says what to do about it.
+        if (isOnion(uri.host.orEmpty())) return ONION
         if (scheme !in schemes) return "scheme $scheme is not allowed here"
         val host =
             uri.host
@@ -85,6 +107,7 @@ object UrlGuard {
                 .removeSuffix("]")
                 .trimEnd('.')
         if (h.isEmpty()) return "no host"
+        if (isOnion(h)) return ONION
         when (val literal = literal(h)) {
             is Literal.Address -> return if (isInternal(literal.address)) "an internal address" else null
             Literal.Unreadable -> return "an address no resolver reads the same way"
@@ -224,8 +247,11 @@ class GuardedDns(
  * connect to, whatever the URL said and whichever path got there (a literal OkHttp never sent to
  * [Dns], a resolver this code doesn't know of, a route OkHttp retries).
  */
-class GuardedSocketFactory : SocketFactory() {
-    override fun createSocket(): Socket = GuardedSocket()
+class GuardedSocketFactory(
+    /** How much each socket may read per window, or null for no bound ([ReadBudget]). */
+    private val budget: ReadBudget? = null,
+) : SocketFactory() {
+    override fun createSocket(): Socket = GuardedSocket(budget)
 
     override fun createSocket(
         host: String,
@@ -252,8 +278,13 @@ class GuardedSocketFactory : SocketFactory() {
     ): Socket = createSocket().apply { bind(InetSocketAddress(localAddress, localPort)).also { connect(InetSocketAddress(address, port)) } }
 }
 
-/** A socket that won't connect to an internal address ([UrlGuard.isInternal]). */
-private class GuardedSocket : Socket() {
+/** A socket that won't connect to an internal address ([UrlGuard.isInternal]), and reads within its [budget]. */
+private class GuardedSocket(
+    private val budget: ReadBudget?,
+) : Socket() {
+    // One count per socket, however many times its stream is asked for.
+    private val meter = budget?.let { ReadMeter(it) }
+
     override fun connect(
         endpoint: SocketAddress?,
         timeout: Int,
@@ -262,6 +293,57 @@ private class GuardedSocket : Socket() {
         if (UrlGuard.isInternal(address)) throw RefusedUrlException("an internal address")
         super.connect(endpoint, timeout)
     }
+
+    override fun getInputStream(): InputStream {
+        val stream = super.getInputStream()
+        return meter?.let { MeteredInputStream(stream, it) } ?: stream
+    }
+}
+
+/**
+ * At most [maxBytes] read by one socket in any [windowMs]. OkHttp has no limit on an inbound
+ * WebSocket message: it buffers the whole message, however long, before it hands it on, so a
+ * relay sending one endless frame would grow the worker's memory until it dies. The bytes are
+ * counted below TLS, where frames can't be seen, so the bound is on the rate: a message can only
+ * grow by [maxBytes] per [windowMs], while a read lasts at most [QuartzRelayAccess.FETCH_DEADLINE_MS]
+ * and the relay client drops a relay that no read wants. Past the budget the socket fails, and
+ * the relay with it.
+ */
+class ReadBudget(
+    val maxBytes: Long,
+    val windowMs: Long,
+    val clock: () -> Long = System::currentTimeMillis,
+)
+
+private class ReadMeter(
+    private val budget: ReadBudget,
+) {
+    private var windowStart = budget.clock()
+    private var used = 0L
+
+    @Synchronized
+    fun add(bytes: Int) {
+        val at = budget.clock()
+        if (at - windowStart >= budget.windowMs) {
+            windowStart = at
+            used = 0
+        }
+        used += bytes
+        if (used > budget.maxBytes) throw IOException("read more than ${budget.maxBytes} bytes in ${budget.windowMs} ms")
+    }
+}
+
+private class MeteredInputStream(
+    stream: InputStream,
+    private val meter: ReadMeter,
+) : FilterInputStream(stream) {
+    override fun read(): Int = super.read().also { if (it >= 0) meter.add(1) }
+
+    override fun read(
+        b: ByteArray,
+        off: Int,
+        len: Int,
+    ): Int = super.read(b, off, len).also { if (it > 0) meter.add(it) }
 }
 
 /** Refuses a request whose URL [UrlGuard] refuses, before any connection is made. */
@@ -297,13 +379,14 @@ fun guardedClient(
     base: OkHttpClient,
     schemes: Set<String> = setOf("https"),
     dns: Dns = GuardedDns(),
+    readBudget: ReadBudget? = null,
 ): OkHttpClient =
     base
         .newBuilder()
         .addInterceptor(UrlGuardInterceptor(schemes))
         .addInterceptor(BodyCapInterceptor())
         .dns(dns)
-        .socketFactory(GuardedSocketFactory())
+        .socketFactory(GuardedSocketFactory(readBudget))
         .followRedirects(false)
         .followSslRedirects(false)
         .proxy(Proxy.NO_PROXY)

@@ -128,12 +128,21 @@ class FakeInternalApi(
     }
 }
 
-/** Relays in memory: each answers a filter with what it holds, by Quartz's own matcher. */
+/**
+ * Relays in memory: each answers a filter with what it holds, by Quartz's own matcher, newest
+ * first and cut at the filter's `limit` (or at the relay's [defaultLimit] when it gives none), as a relay does.
+ */
 class FakeRelays : RelayAccess {
     val held = HashMap<NormalizedRelayUrl, MutableList<Event>>()
     val published = mutableListOf<Pair<Event, Set<NormalizedRelayUrl>>>()
     val asked = mutableListOf<Pair<Set<NormalizedRelayUrl>, Filter>>()
     var down: Set<NormalizedRelayUrl> = emptySet()
+
+    /** What a relay sends for a filter with no `limit`: many relays cut there without saying so. */
+    var defaultLimit: (NormalizedRelayUrl) -> Int? = { null }
+
+    /** Relays that answer a filter with a CLOSED instead (a REQ too large for them, say). */
+    var refuses: (NormalizedRelayUrl, Filter) -> Boolean = { _, _ -> false }
 
     fun put(
         relay: NormalizedRelayUrl,
@@ -146,9 +155,16 @@ class FakeRelays : RelayAccess {
         relays: Set<NormalizedRelayUrl>,
         filter: Filter,
     ): RelayRead {
-        asked += relays to filter
+        synchronized(asked) { asked += relays to filter }
         val up = relays - down
-        return RelayRead(up.flatMap { held[it].orEmpty() }.filter { filter.match(it) }.distinctBy { it.id }, up)
+        val refused = up.filter { refuses(it, filter) }.toSet()
+        val answering = up - refused
+        val events =
+            answering.flatMap { relay ->
+                val matching = held[relay].orEmpty().filter { filter.match(it) }.sortedByDescending { it.createdAt }
+                (filter.limit ?: defaultLimit(relay))?.let { matching.take(it) } ?: matching
+            }
+        return RelayRead(events.distinctBy { it.id }, answering, refused)
     }
 
     override suspend fun publish(

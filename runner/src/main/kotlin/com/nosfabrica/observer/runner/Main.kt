@@ -111,6 +111,11 @@ class RunnerConfig(
     }
 }
 
+/** What one reader's relay socket may read per [RELAY_READ_WINDOW_MS]: far over any list or site, far under the heap. */
+const val RELAY_READ_BUDGET_BYTES = 16L * 1024 * 1024
+
+const val RELAY_READ_WINDOW_MS = 10_000L
+
 fun main() {
     val config =
         try {
@@ -158,7 +163,11 @@ fun main() {
     val blossomClient = guarded.newBuilder().callTimeout(2, TimeUnit.MINUTES).build()
     // A call to the AI endpoint never outlives a print's budget, whatever the server sends.
     val moneyClient = guarded.newBuilder().callTimeout(ObserverRunner.PRINT_TIMEOUT_SECONDS, TimeUnit.SECONDS).build()
+    // A reader's relays: each socket reads at most RELAY_READ_BUDGET per window, since OkHttp
+    // bounds no inbound WebSocket message. The index relays are Brainstorm's own, and carry every
+    // print's corpus: they aren't held to it.
     val guardedSockets = guardedClient(base, setOf("wss"))
+    val budgetedSockets = guardedClient(base, setOf("wss"), readBudget = ReadBudget(RELAY_READ_BUDGET_BYTES, RELAY_READ_WINDOW_MS))
     val http =
         object : IRoleBasedHttpClientBuilder {
             override fun okHttpClientForMoney(url: String) = moneyClient
@@ -169,9 +178,18 @@ fun main() {
     val stopping = AtomicBoolean(false)
     val idle = CountDownLatch(1)
     val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-    val client = NostrClient(BasicOkHttpWebSocket.Builder({ guardedSockets }, { UrlGuard.refusal(it.url, setOf("wss")) == null }), scope)
     val search = RelayUrlNormalizer.normalizeOrNull(config.searchRelay) ?: error("OBSERVER_SEARCH_RELAY is not a relay URL")
-    val nostr = RunnerNostr(QuartzRelayAccess(client), RunnerNostr.relaysOf(config.indexRelays), search)
+    val index = RunnerNostr.relaysOf(config.indexRelays)
+    val ours = index + search
+    val client =
+        NostrClient(
+            BasicOkHttpWebSocket.Builder(
+                { if (it in ours) guardedSockets else budgetedSockets },
+                { UrlGuard.refusal(it.url, setOf("wss")) == null },
+            ),
+            scope,
+        )
+    val nostr = RunnerNostr(QuartzRelayAccess(client), index, search)
     val runner =
         ObserverRunner(
             api = HttpInternalApi(config.serverUrl, config.token, serverClient),
@@ -183,6 +201,8 @@ fun main() {
             accepting = { !stopping.get() },
             // Beside the run records, on the same volume: a paid paper survives a restart.
             pending = PendingPapers(config.stateFile?.let { File(it.absoluteFile.parentFile, "pending") }),
+            // Only ever the key's own node; through the same guarded client as the print.
+            routstr = RoutstrFunds(HttpRoutstrNode(http)),
         )
 
     // SIGTERM: no new print starts; the one under way may finish within the grace period.
@@ -196,7 +216,9 @@ fun main() {
 
     Log.i("ObserverRunner") { "started: polling every ${config.pollSeconds}s" }
     try {
-        runBlocking {
+        // Not the main thread's own loop: the poll's work spreads over the cores, and the blocking
+        // writes (run records, pending papers) move to the IO dispatcher on their own.
+        runBlocking(Dispatchers.Default) {
             while (!stopping.get()) {
                 try {
                     val outcomes = runner.poll()

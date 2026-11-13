@@ -24,94 +24,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
-class ObserverRunnerTest {
-    private val owner = newSigner()
-    private val assistant = newSigner()
-    private val stranger = newSigner()
-    private val strangersAssistant = newSigner()
-
-    private val index = relay("wss://index.example")
-    private val ownerRelay = relay("wss://owner.example")
-    private val assistantRelay = relay("wss://assistant.example")
-
-    // 06:30 UTC on 12 November 2026: London's 06:00 run is due, and today is 2026-11-12.
-    private val now = Instant.parse("2026-11-12T06:30:00Z").epochSecond
-    private val day = "2026-11-12"
-
-    private val openRouter = AgentKeyTag("sk-or-v1-first-key-0001", "https://openrouter.ai/api/v1")
-    private val secondOpenRouter = AgentKeyTag("sk-or-v1-second-key-a3f9", "https://openrouter.ai/api/v1")
-    private val anthropic = AgentKeyTag("sk-ant-api03-third-key-77zz", "https://api.anthropic.com/v1")
-
-    private val relays = FakeRelays()
-    private val blossom = FakeBlossom()
-    private val printer = FakePrinter()
-    private val records = FileRunRecords(null)
-    private val api = FakeInternalApi(mapOf(owner.pubKey to assistant, stranger.pubKey to strangersAssistant))
-    private var listedModels = listed("openai/gpt-4o-mini", "anthropic/claude-sonnet-4.5", "text-embedding-3")
-
-    private val runner =
-        ObserverRunner(
-            api = api,
-            nostr = RunnerNostr(relays, setOf(index), null),
-            blossom = BlossomHttp(blossom.client),
-            printer = printer,
-            records = records,
-            models = { listedModels },
-            now = { now },
-        )
-
-    private suspend fun world(keys: List<AgentKeyTag> = listOf(openRouter, secondOpenRouter, anthropic)) {
-        relays.put(
-            index,
-            owner.signed(10002, arrayOf(arrayOf("r", ownerRelay.url, "write")), createdAt = 1),
-            assistant.signed(10002, arrayOf(arrayOf("r", assistantRelay.url)), createdAt = 1),
-            stranger.signed(10002, arrayOf(arrayOf("r", ownerRelay.url, "write")), createdAt = 1),
-        )
-        relays.put(
-            ownerRelay,
-            owner.signed(
-                10063,
-                arrayOf(arrayOf("server", "https://blossom.owner.example"), arrayOf("server", "https://media.owner.example")),
-                createdAt = 1,
-            ),
-            owner.signed(10040, arrayOf(arrayOf("30382:rank", "b".repeat(64), "wss://nip85.example")), createdAt = 1),
-            owner.signed(0, emptyArray(), """{"name":"Vitor"}""", createdAt = 1),
-        )
-        // The Assistant's own Blossom list must never be used: uploads go to the owner's servers.
-        relays.put(
-            assistantRelay,
-            assistant.signed(10063, arrayOf(arrayOf("server", "https://assistant-own.example")), createdAt = 1),
-            agentKeyList(assistant, keys, createdAt = 1),
-        )
-    }
-
-    private fun task(
-        model: String? = "anthropic/claude-sonnet-4.5",
-        key: AgentKeyTag? = secondOpenRouter,
-    ): ScheduledTask {
-        var t =
-            ScheduledTask
-                .create("observer", "observer", "0 6 * * *", "Europe/London", setAt = 0)
-                .withRunner(assistant.pubKey, 0)
-        if (model != null) t = t.withParam("model", listOf(model))
-        if (key != null) t = t.withParam("key", listOf(key.url, key.key.takeLast(4)))
-        return t
-    }
-
-    private suspend fun schedule(
-        task: ScheduledTask = task(),
-        by: NostrSignerInternal = owner,
-        onIndex: Boolean = true,
-        createdAt: Long = now - 3_600,
-    ): Event {
-        val template = ScheduledTaskEvent.update(task, by, "observer", createdAt = createdAt)
-        val event = typed(by.sign(template))
-        relays.put(ownerRelay, event)
-        // Brainstorm's index relay (the search relay) mirrors it: the worker finds schedules there first.
-        if (onIndex) relays.put(index, event)
-        return event
-    }
-
+class ObserverRunnerTest : RunnerWorld() {
     @Test
     fun printsWithTheParamsAndPublishesTheAssistantsSiteForTheOwner() =
         runTest {
@@ -421,21 +334,6 @@ class ObserverRunnerTest {
             assertTrue(failedLogs.contains("WRITER_FAILED"))
         }
 
-    private fun runnerWith(
-        printer: PaperPrinter = this.printer,
-        records: RunRecords = this.records,
-        accepting: () -> Boolean = { true },
-    ) = ObserverRunner(
-        api = api,
-        nostr = RunnerNostr(relays, setOf(index), null),
-        blossom = BlossomHttp(blossom.client),
-        printer = printer,
-        records = records,
-        models = { listedModels },
-        now = { now },
-        accepting = accepting,
-    )
-
     @Test
     fun aPrintThatNeverEndsIsStoppedAndNotRunAgain() =
         runTest {
@@ -513,8 +411,6 @@ class ObserverRunnerTest {
             assertTrue(printer.calls.isEmpty())
             assertEquals(OwnRun.NONE, records.ownRun(owner.pubKey, Instant.parse("2026-11-12T06:00:00Z").epochSecond))
         }
-
-    private val six = Instant.parse("2026-11-12T06:00:00Z").epochSecond
 
     @Test
     fun takingPrintingBackStopsTheWorkerEvenWhereTheOlderVersionLingers() =
