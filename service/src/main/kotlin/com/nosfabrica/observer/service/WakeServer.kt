@@ -1,7 +1,5 @@
 package com.nosfabrica.observer.service
 
-import com.nosfabrica.assistant.core.SettledAnswer
-import com.nosfabrica.assistant.core.WakeRequest
 import com.sun.net.httpserver.HttpExchange
 import com.sun.net.httpserver.HttpServer
 import com.vitorpamplona.quartz.utils.Log

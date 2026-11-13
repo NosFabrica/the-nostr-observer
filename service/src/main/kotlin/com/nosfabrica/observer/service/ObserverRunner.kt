@@ -1,9 +1,5 @@
 package com.nosfabrica.observer.service
 
-import com.nosfabrica.assistant.core.AssistantPair
-import com.nosfabrica.assistant.core.MemoryPendingStore
-import com.nosfabrica.assistant.core.PendingStore
-import com.nosfabrica.assistant.core.RunStore
 import com.nosfabrica.observer.frontpage.AgentModel
 import com.nosfabrica.observer.frontpage.EditionClock
 import com.nosfabrica.observer.frontpage.EditionContext
@@ -30,6 +26,10 @@ import com.nosfabrica.observer.frontpage.savedFromSite
 import com.nosfabrica.observer.frontpage.shortNpub
 import com.nosfabrica.observer.frontpage.standingPaper
 import com.nosfabrica.observer.frontpage.withPaperCsp
+import com.nosfabrica.observer.service.keys.AssistantPair
+import com.nosfabrica.observer.service.state.MemoryPendingStore
+import com.nosfabrica.observer.service.state.PendingStore
+import com.nosfabrica.observer.service.state.RunStore
 import com.vitorpamplona.quartz.nip01Core.core.Event
 import com.vitorpamplona.quartz.nip01Core.core.HexKey
 import com.vitorpamplona.quartz.nip01Core.relay.client.INostrClient
@@ -323,7 +323,7 @@ class ObserverRunner(
     private val nostr: RunnerNostr,
     private val blossom: BlossomHttp,
     private val printer: PaperPrinter,
-    /** `assistant_runner.runs`: the claim before spending, its end after. */
+    /** `observer.runs`: the claim before spending, its end after. */
     private val runs: RunStore,
     /** The models an endpoint lists (the engine's `listAgentModels`): the default model, and a Routstr node's prices. */
     private val models: suspend (AgentKeyTag) -> List<AgentModel>,
@@ -333,7 +333,7 @@ class ObserverRunner(
     private val printTimeoutMs: Long = PRINT_TIMEOUT_SECONDS * 1000,
     /** False once the service is stopping: a run that hasn't started its print yet doesn't. */
     private val accepting: () -> Boolean = { true },
-    /** Papers printed but not yet published ([PendingPaper]), in `assistant_runner.pending`. */
+    /** Papers printed but not yet published ([PendingPaper]), in `observer.pending`. */
     private val pending: PendingStore = MemoryPendingStore(),
     /** Routstr keys' detection and balance, asked of each key's own node. */
     private val routstr: RoutstrFunds = RoutstrFunds(NoRoutstrNode),
@@ -1077,7 +1077,7 @@ class ObserverRunner(
     companion object {
         private const val TAG = "ObserverRunner"
 
-        /** The task this service runs: the schedules' `task`, and its rows in `assistant_runner`. */
+        /** The task this service runs: the schedules' `task`, and its rows in the `observer` schema. */
         const val TASK = ObserverSchedule.TASK
 
         /** Owners run at once ([WakeService]): one slow reader's server never holds up the rest. */

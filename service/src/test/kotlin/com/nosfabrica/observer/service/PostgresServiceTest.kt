@@ -1,16 +1,16 @@
 package com.nosfabrica.observer.service
 
-import com.nosfabrica.assistant.core.AssistantKeys
-import com.nosfabrica.assistant.core.BrainstormSchema
-import com.nosfabrica.assistant.core.Db
-import com.nosfabrica.assistant.core.Fernet
-import com.nosfabrica.assistant.core.FernetKeyFile
-import com.nosfabrica.assistant.core.Migrations
-import com.nosfabrica.assistant.core.PostgresPendingStore
-import com.nosfabrica.assistant.core.PostgresRunStore
-import com.nosfabrica.assistant.core.RunState
-import com.nosfabrica.assistant.core.TestPostgres
-import com.nosfabrica.assistant.core.capturingLogs
+import com.nosfabrica.observer.service.keys.AssistantKeys
+import com.nosfabrica.observer.service.keys.Fernet
+import com.nosfabrica.observer.service.keys.FernetKeyFile
+import com.nosfabrica.observer.service.state.Db
+import com.nosfabrica.observer.service.state.Migrations
+import com.nosfabrica.observer.service.state.PostgresPendingStore
+import com.nosfabrica.observer.service.state.PostgresRunStore
+import com.nosfabrica.observer.service.state.RunState
+import com.nosfabrica.observer.service.testing.BrainstormSchema
+import com.nosfabrica.observer.service.testing.TestPostgres
+import com.nosfabrica.observer.service.testing.capturingLogs
 import com.vitorpamplona.quartz.nip01Core.core.toHexKey
 import com.vitorpamplona.quartz.nip19Bech32.toNsec
 import com.vitorpamplona.quartz.nip5aStaticWebsites.observer.ObserverSite
@@ -31,7 +31,7 @@ import kotlin.test.assertTrue
 /**
  * The service against a real Postgres (a throwaway cluster, or CI's service; skipped, saying so,
  * when there is neither): brainstorm_server's `brainstorm_nsec` and Fernet key file for the Assistant's key,
- * `assistant_runner.runs` for the claim and its end, `assistant_runner.pending` for the paper.
+ * `observer.runs` for the claim and its end, `observer.pending` for the paper.
  * Relays, Blossom and the model are fakes, as everywhere.
  *
  * `runBlocking`, not `runTest`: the stores run on the IO dispatcher, and while the test thread

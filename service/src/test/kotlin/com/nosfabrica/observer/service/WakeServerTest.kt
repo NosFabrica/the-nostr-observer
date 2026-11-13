@@ -1,8 +1,6 @@
 package com.nosfabrica.observer.service
 
-import com.nosfabrica.assistant.core.MemoryPendingStore
-import com.nosfabrica.assistant.core.SettledAnswer
-import com.nosfabrica.assistant.core.WakeRequest
+import com.nosfabrica.observer.service.state.MemoryPendingStore
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers

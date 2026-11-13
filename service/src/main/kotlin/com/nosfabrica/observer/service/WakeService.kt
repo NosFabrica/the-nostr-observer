@@ -1,9 +1,8 @@
 package com.nosfabrica.observer.service
 
-import com.nosfabrica.assistant.core.PendingStore
-import com.nosfabrica.assistant.core.RunState
-import com.nosfabrica.assistant.core.RunStore
-import com.nosfabrica.assistant.core.WakeRequest
+import com.nosfabrica.observer.service.state.PendingStore
+import com.nosfabrica.observer.service.state.RunState
+import com.nosfabrica.observer.service.state.RunStore
 import com.vitorpamplona.quartz.nip01Core.core.HexKey
 import com.vitorpamplona.quartz.utils.Log
 import kotlinx.coroutines.CancellationException
@@ -40,8 +39,9 @@ sealed interface WakeAnswer {
 /**
  * The wakes, for one owner each: at most [parallelism] owners' paths at once, one per owner (a
  * wake for an owner already running joins that run), each on [scope] in the background. The
- * runner (assistant-runner) wakes again until a `runs` row exists, so a settled occurrence is
- * answered from that row, a cheap read, without reading a relay.
+ * runner (assistant-runner) wakes again until it is answered `200`, and never reads this service's
+ * tables: a settled occurrence is answered from its `runs` row, a cheap read, without reading a
+ * relay, and that answer is what stops the runner's wakes.
  *
  * The same slots serve the retry loop ([republishPending]), so a re-publish never overlaps a print
  * for the same owner.

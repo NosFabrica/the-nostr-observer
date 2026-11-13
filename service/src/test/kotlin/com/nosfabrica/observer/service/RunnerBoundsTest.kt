@@ -1,6 +1,6 @@
 package com.nosfabrica.observer.service
 
-import com.nosfabrica.assistant.core.MemoryPendingStore
+import com.nosfabrica.observer.service.state.MemoryPendingStore
 import com.vitorpamplona.quartz.nip01Core.core.Event
 import com.vitorpamplona.quartz.nip01Core.relay.filters.Filter
 import com.vitorpamplona.quartz.nip01Core.relay.normalizer.NormalizedRelayUrl

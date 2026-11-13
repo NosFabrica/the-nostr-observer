@@ -1,7 +1,7 @@
 package com.nosfabrica.observer.service
 
-import com.nosfabrica.assistant.core.KeyFailure
-import com.nosfabrica.assistant.core.capturingLogs
+import com.nosfabrica.observer.service.keys.KeyFailure
+import com.nosfabrica.observer.service.testing.capturingLogs
 import com.vitorpamplona.quartz.nip01Core.core.Event
 import com.vitorpamplona.quartz.nip01Core.crypto.verify
 import com.vitorpamplona.quartz.nip01Core.signers.EventTemplate

@@ -1,11 +1,11 @@
 package com.nosfabrica.observer.service
 
-import com.nosfabrica.assistant.core.KeyFailure
-import com.nosfabrica.assistant.core.MemoryRunStore
-import com.nosfabrica.assistant.core.RunStore
-import com.nosfabrica.assistant.core.capturingLogs
 import com.nosfabrica.observer.frontpage.WriterException
 import com.nosfabrica.observer.frontpage.WriterFailure
+import com.nosfabrica.observer.service.keys.KeyFailure
+import com.nosfabrica.observer.service.state.MemoryRunStore
+import com.nosfabrica.observer.service.state.RunStore
+import com.nosfabrica.observer.service.testing.capturingLogs
 import com.vitorpamplona.quartz.nip01Core.core.Event
 import com.vitorpamplona.quartz.nip01Core.core.HexKey
 import com.vitorpamplona.quartz.nip01Core.crypto.verify

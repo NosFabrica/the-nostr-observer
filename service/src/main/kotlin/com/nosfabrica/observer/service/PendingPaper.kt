@@ -1,8 +1,8 @@
 package com.nosfabrica.observer.service
 
-import com.nosfabrica.assistant.core.Pending
-import com.nosfabrica.assistant.core.PendingFile
 import com.nosfabrica.observer.frontpage.SavedEdition
+import com.nosfabrica.observer.service.state.Pending
+import com.nosfabrica.observer.service.state.PendingFile
 import com.vitorpamplona.quartz.nip01Core.core.HexKey
 import com.vitorpamplona.quartz.utils.Log
 import kotlinx.serialization.Serializable
@@ -13,7 +13,7 @@ import kotlinx.serialization.json.jsonObject
 
 /**
  * A paper that was printed (and paid for) but not published: Blossom was down, a relay refused,
- * or a sign failed. It is kept, page and all, in `assistant_runner.pending` ([toPending]: the
+ * or a sign failed. It is kept, page and all, in `observer.pending` ([toPending]: the
  * edition's fields in `meta`, the page as a file), and published again until [until], as
  * Amethyst's `publishPending` does. It is never printed again: its run is ended. An older paper
  * that never got out isn't replaced by a newer one: it goes out with it.

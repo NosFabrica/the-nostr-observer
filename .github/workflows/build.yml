@@ -9,7 +9,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
 
-    # The Postgres the service's store tests run against (:core's TestPostgres reads
+    # The Postgres the service's key-read and store tests run against (its TestPostgres reads
     # TEST_DATABASE_URL when it can't start a cluster of its own). Nothing else in the build
     # talks to a network service.
     services:
@@ -44,9 +44,6 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v6
 
-      # assistant-runner's :core resolves from JitPack, which can't build it while that
-      # repository is private: until it is public (or a checkout of it is added here, with a
-      # token that can read it), this step fails to resolve the pin. See AGENTS.md.
       # `build` is compile + test + spotlessCheck, so formatting alone fails
       # here exactly as it does in the pre-commit hook. Nothing in it talks to
       # a model, a relay or a Blossom server: every test passes with no network.

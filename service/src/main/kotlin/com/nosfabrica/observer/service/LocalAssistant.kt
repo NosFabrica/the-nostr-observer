@@ -1,8 +1,8 @@
 package com.nosfabrica.observer.service
 
-import com.nosfabrica.assistant.core.AssistantDirectory
-import com.nosfabrica.assistant.core.AssistantKey
-import com.nosfabrica.assistant.core.KeyFailure
+import com.nosfabrica.observer.service.keys.AssistantDirectory
+import com.nosfabrica.observer.service.keys.AssistantKey
+import com.nosfabrica.observer.service.keys.KeyFailure
 import com.vitorpamplona.quartz.nip01Core.core.Event
 import com.vitorpamplona.quartz.nip01Core.core.HexKey
 import com.vitorpamplona.quartz.nip01Core.crypto.verify

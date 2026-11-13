@@ -18,24 +18,19 @@ quartz = "8c21607e05e77ecf88de8013d849949362411176"
 # the version Quartz's own catalog names for the commit above.
 cryptoKmp = "2.1.0"
 
-# assistant-runner's `:core` from JitPack (NosFabrica/assistant-runner @ commit): the Assistant keys,
-# the `assistant_runner` schema's stores and the trigger contract. A commit hash, like Quartz's,
-# so every module force()s it. It pins Quartz too: keep the two `quartz` pins equal. The
-# repository is private, so JitPack can't build it yet: `settings.gradle.kts` substitutes a
-# checkout (`-PassistantRunnerDir`, or `../assistant-runner`) until it is public.
-assistantRunner = "15c3265b2639be1119417c04635abc849315f427"
-
 coroutines = "1.11.0"
 serialization = "1.12.0"
 okhttp = "5.5.1"
 jsoup = "1.21.1"
+# The service's Postgres (brainstorm_server's `brainstorm_nsec` columns, its own `observer` schema).
+# BSD-2-Clause (its POM's <licenses>); its one required runtime dependency, checker-qual, is MIT.
+postgresql = "42.7.14"
 spotless = "8.8.0"
 ktlint = "1.7.1"
 
 [libraries]
 quartz = { module = "com.github.vitorpamplona.quartz:quartz", version.ref = "quartz" }
 crypto = { module = "com.vitorpamplona.crypto:crypto", version.ref = "cryptoKmp" }
-assistant-core = { module = "com.github.NosFabrica.assistant-runner:core", version.ref = "assistantRunner" }
 
 kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
 kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "coroutines" }
@@ -47,6 +42,8 @@ okhttp-coroutines = { module = "com.squareup.okhttp3:okhttp-coroutines", version
 
 # The page checks run on a real HTML parser.
 jsoup = { module = "org.jsoup:jsoup", version.ref = "jsoup" }
+
+postgresql = { module = "org.postgresql:postgresql", version.ref = "postgresql" }
 
 [plugins]
 kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }

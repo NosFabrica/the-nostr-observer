@@ -1,10 +1,10 @@
 package com.nosfabrica.observer.service
 
-import com.nosfabrica.assistant.core.MemoryPendingStore
-import com.nosfabrica.assistant.core.MemoryRunStore
-import com.nosfabrica.assistant.core.PendingStore
-import com.nosfabrica.assistant.core.RunStore
 import com.nosfabrica.observer.frontpage.AgentModel
+import com.nosfabrica.observer.service.state.MemoryPendingStore
+import com.nosfabrica.observer.service.state.MemoryRunStore
+import com.nosfabrica.observer.service.state.PendingStore
+import com.nosfabrica.observer.service.state.RunStore
 import com.vitorpamplona.quartz.nip01Core.core.Event
 import com.vitorpamplona.quartz.nip01Core.signers.NostrSignerInternal
 import com.vitorpamplona.quartz.nipFAAgentKeys.tags.AgentKeyTag

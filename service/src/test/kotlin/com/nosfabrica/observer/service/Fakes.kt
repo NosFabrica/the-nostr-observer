@@ -1,14 +1,14 @@
 package com.nosfabrica.observer.service
 
-import com.nosfabrica.assistant.core.AssistantDirectory
-import com.nosfabrica.assistant.core.AssistantKey
-import com.nosfabrica.assistant.core.AssistantPair
-import com.nosfabrica.assistant.core.KeyFailure
 import com.nosfabrica.observer.frontpage.AgentModel
 import com.nosfabrica.observer.frontpage.PrintResult
 import com.nosfabrica.observer.frontpage.ProbeVerdict
 import com.nosfabrica.observer.frontpage.WriterException
 import com.nosfabrica.observer.frontpage.assemble
+import com.nosfabrica.observer.service.keys.AssistantDirectory
+import com.nosfabrica.observer.service.keys.AssistantKey
+import com.nosfabrica.observer.service.keys.AssistantPair
+import com.nosfabrica.observer.service.keys.KeyFailure
 import com.vitorpamplona.quartz.nip01Core.core.Event
 import com.vitorpamplona.quartz.nip01Core.core.HexKey
 import com.vitorpamplona.quartz.nip01Core.crypto.KeyPair

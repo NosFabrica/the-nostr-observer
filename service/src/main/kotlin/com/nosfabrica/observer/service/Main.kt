@@ -1,15 +1,14 @@
 package com.nosfabrica.observer.service
 
-import com.nosfabrica.assistant.core.AssistantKeys
-import com.nosfabrica.assistant.core.Db
-import com.nosfabrica.assistant.core.FernetKeyFile
-import com.nosfabrica.assistant.core.Migrations
-import com.nosfabrica.assistant.core.PostgresPendingStore
-import com.nosfabrica.assistant.core.PostgresRunStore
-import com.nosfabrica.assistant.core.WakeRequest
 import com.nosfabrica.observer.frontpage.IRoleBasedHttpClientBuilder
 import com.nosfabrica.observer.frontpage.JsoupPaperBoundary
 import com.nosfabrica.observer.frontpage.listAgentModels
+import com.nosfabrica.observer.service.keys.AssistantKeys
+import com.nosfabrica.observer.service.keys.FernetKeyFile
+import com.nosfabrica.observer.service.state.Db
+import com.nosfabrica.observer.service.state.Migrations
+import com.nosfabrica.observer.service.state.PostgresPendingStore
+import com.nosfabrica.observer.service.state.PostgresRunStore
 import com.vitorpamplona.quartz.nip01Core.relay.client.NostrClient
 import com.vitorpamplona.quartz.nip01Core.relay.normalizer.RelayUrlNormalizer
 import com.vitorpamplona.quartz.nip01Core.relay.sockets.okhttp.BasicOkHttpWebSocket
@@ -101,12 +100,12 @@ fun main() {
         }
     Log.minLevel = LogLevel.INFO
 
-    // The `assistant_runner` schema: whichever process starts first applies what is missing.
+    // The service's own `observer` schema: whichever of its processes starts first applies what is missing.
     try {
         runBlocking { Migrations.migrate(db) }.takeIf { it.isNotEmpty() }?.let { Log.i(TAG) { "migrated: $it" } }
     } catch (e: Exception) {
         // The class only: a driver's message may carry the URL.
-        System.err.println("observer-service: can't migrate the assistant_runner schema: ${e.javaClass.simpleName}")
+        System.err.println("observer-service: can't migrate the observer schema: ${e.javaClass.simpleName}")
         exitProcess(3)
     }
 

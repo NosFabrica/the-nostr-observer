@@ -1,11 +1,10 @@
 package com.nosfabrica.observer.service
 
-import com.nosfabrica.assistant.core.MemoryPendingStore
-import com.nosfabrica.assistant.core.MemoryRunStore
-import com.nosfabrica.assistant.core.PendingStore
-import com.nosfabrica.assistant.core.RunStore
-import com.nosfabrica.assistant.core.WakeRequest
-import com.nosfabrica.assistant.core.capturingLogs
+import com.nosfabrica.observer.service.state.MemoryPendingStore
+import com.nosfabrica.observer.service.state.MemoryRunStore
+import com.nosfabrica.observer.service.state.PendingStore
+import com.nosfabrica.observer.service.state.RunStore
+import com.nosfabrica.observer.service.testing.capturingLogs
 import com.vitorpamplona.quartz.nip01Core.core.HexKey
 import com.vitorpamplona.quartz.nip5aStaticWebsites.observer.ObserverSite
 import com.vitorpamplona.quartz.nipFBScheduledTasks.ScheduledTask

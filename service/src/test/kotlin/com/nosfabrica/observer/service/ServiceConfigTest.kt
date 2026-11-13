@@ -1,6 +1,6 @@
 package com.nosfabrica.observer.service
 
-import com.nosfabrica.assistant.core.FernetKeyFile
+import com.nosfabrica.observer.service.keys.FernetKeyFile
 import java.nio.file.Paths
 import kotlin.test.Test
 import kotlin.test.assertEquals
