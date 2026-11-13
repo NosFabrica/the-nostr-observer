@@ -69,16 +69,29 @@ test('video asks for the deprecated kinds too, because that is where the video i
   assert.deepEqual(DESKS.find((d) => d.key === 'calendar').kinds, [31922, 31923])
 })
 
-test('no two desks share a kind', () => {
+test('no two desks share a kind, except Long-form and the Kitchen, which split it by tag', () => {
   // While the desks shared one REQ, two desks claiming the same kind collided
-  // and the anonymous control run was filed as news.
+  // and the anonymous control run was filed as news. Each desk is its own REQ
+  // now, so the one shared kind is safe only because the two `keeps` are
+  // exact complements: a recipe goes to the Kitchen, everything else to
+  // Long-form, nothing to both.
   const seen = new Map()
+  const shared = new Set(['articles+kitchen'])
   for (const desk of DESKS) {
     for (const kind of desk.kinds) {
-      assert.equal(seen.has(kind), false, `kind ${kind} is on both ${seen.get(kind)} and ${desk.key}`)
+      if (seen.has(kind)) {
+        assert.ok(shared.has(`${seen.get(kind)}+${desk.key}`), `kind ${kind} is on both ${seen.get(kind)} and ${desk.key}`)
+        continue
+      }
       seen.set(kind, desk.key)
     }
   }
+  const articles = DESKS.find((d) => d.key === 'articles')
+  const kitchen = DESKS.find((d) => d.key === 'kitchen')
+  const recipe = { id: 'r', pubkey: SOMEBODY, kind: 30023, tags: [['t', 'zapcooking']] }
+  const essay = { id: 'e', pubkey: SOMEBODY, kind: 30023, tags: [['t', 'bitcoin']] }
+  assert.deepEqual(belongs(articles, OBSERVER, [recipe, essay]).map((e) => e.id), ['e'])
+  assert.deepEqual(belongs(kitchen, OBSERVER, [recipe, essay]).map((e) => e.id), ['r'])
 })
 
 test('imeta is parsed as space-separated key/value inside each tag element', () => {

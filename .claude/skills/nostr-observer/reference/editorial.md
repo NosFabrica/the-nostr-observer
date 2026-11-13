@@ -303,6 +303,34 @@ who is broadcasting.
   zap.stream URL from a post body; presence in the corpus is not evidence that
   a URL is yours to link.
 
+## Kitchen
+
+The **Kitchen** desk carries recipes cooks posted on Nostr: kind 30023
+long-form posts tagged `zapcooking` (or the older `nostrcooking`), ranked
+through the reader's lens like every other desk. It is the one desk that reads
+further back than 24 hours, the last 30 days, because there are only a couple
+of dozen community recipes a month. The NYT Cooking mirror is already left out,
+and so is any recipe that ran in one of the last 14 editions.
+
+- **Run at most one recipe**, on the back page or in a corner. It is a standing
+  feature, never the lead. The digest lists the best-ranked first; take that one
+  unless another is plainly better for the day.
+- **Credit the cook by name**, as the digest gives it.
+- **Quote the ingredients and steps verbatim, or summarise them.** The digest
+  prints the recipe whole. Anything inside `<q>` or `<blockquote>` is checked
+  against it like any other quote, so copy exactly or paraphrase in prose.
+- **Never invent a quantity**, a time or a temperature. If the cook did not give
+  one, the paper does not either. Do not scale, convert or "fix" a recipe.
+- **Add a Source link to the post**, in the citation form:
+  `https://jumble.social/notes/<64-hex-event-id>` (the `source:` line the digest
+  printed). Step 5 encodes it like any other citation.
+- Its picture is on the art shortlist (`picture: art-N` in the digest). Cite it
+  by id, caption it from the post, and credit the cook.
+- **Never use a recipe, recipe data or a picture from outside Nostr.** Not
+  TheMealDB, not a cooking site, not a recipe you know. The paper's recipe is
+  something a person in the reader's web of trust published, or nothing. If the
+  Kitchen desk is empty, leave the recipe out.
+
 ## Links
 
 **The paper prints addresses; it does not make them clickable.** Write URLs as
