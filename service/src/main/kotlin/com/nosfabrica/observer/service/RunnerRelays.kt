@@ -137,6 +137,34 @@ class QuartzRelayAccess(
     }
 }
 
+/**
+ * What a read of someone's NIP-65 list found: their write relays, and whether that answer is one a
+ * quorum can be judged on.
+ */
+class WriteRelays(
+    /** Their write relays, vetted (`wss`, no internal host); empty unless [state] is [State.LISTED]. */
+    val relays: Set<NormalizedRelayUrl>,
+    val state: State,
+) {
+    enum class State {
+        /** Their newest list was read, and names [relays]. */
+        LISTED,
+
+        /** An index relay answered for them in full and holds no list, or one naming no write relay: the index relays stand in. */
+        NONE,
+
+        /** No index relay answered for them in full (CLOSED, a timeout, a cap): their relays are unknown, not none. */
+        UNKNOWN,
+
+        /** Their list names write relays and every one was refused (`ws`, an internal host): there is nowhere to ask. */
+        REFUSED,
+    }
+
+    companion object {
+        val UNKNOWN = WriteRelays(emptySet(), State.UNKNOWN)
+    }
+}
+
 /** An owner's newest Observer schedule, as read, and whether enough of their relays answered to trust that it is the newest. */
 class ScheduleRead(
     val event: ScheduledTaskEvent,
@@ -173,7 +201,7 @@ class RunnerNostr(
     private val minChunk: Int = MIN_CHUNK,
 ) {
     private class CachedRelays(
-        val relays: Set<NormalizedRelayUrl>,
+        val relays: WriteRelays,
         val at: Long,
     )
 
@@ -212,19 +240,22 @@ class RunnerNostr(
         return RelayRead(raw.events.distinctBy { it.id }.filter { acceptable(it, at) }, raw.served, raw.refused)
     }
 
-    /** [pubkey]'s NIP-65 write relays, as `wss` URLs only; empty when they published none. Cached ([relayListTtlSeconds]). */
-    suspend fun writeRelays(pubkey: HexKey): Set<NormalizedRelayUrl> = writeRelaysOf(listOf(pubkey))[pubkey].orEmpty()
+    /** [pubkey]'s NIP-65 write relays, as `wss` URLs only; empty when they published none or they couldn't be read. Cached ([relayListTtlSeconds]). */
+    suspend fun writeRelays(pubkey: HexKey): Set<NormalizedRelayUrl> = writeRelayList(pubkey).relays
+
+    /** [pubkey]'s NIP-65 write relays, and whether the read can be judged on ([WriteRelays.State]). Cached ([relayListTtlSeconds]). */
+    suspend fun writeRelayList(pubkey: HexKey): WriteRelays = writeRelaysOf(listOf(pubkey))[pubkey] ?: WriteRelays.UNKNOWN
 
     /**
      * Each of [pubkeys]' NIP-65 write relays, read from the index relays ([byAuthors]), and
-     * reused for [relayListTtlSeconds]. A list no index relay answered for in full isn't cached:
-     * the next call asks again. Lists past their time are dropped, so people the worker no
-     * longer asks about don't stay in memory.
+     * reused for [relayListTtlSeconds]: [WriteRelays.State.UNKNOWN] for one no index relay
+     * answered for in full, which isn't cached (the next call asks again). Lists past their time
+     * are dropped, so people the worker no longer asks about don't stay in memory.
      */
-    suspend fun writeRelaysOf(pubkeys: Collection<HexKey>): Map<HexKey, Set<NormalizedRelayUrl>> {
+    suspend fun writeRelaysOf(pubkeys: Collection<HexKey>): Map<HexKey, WriteRelays> {
         val at = now()
         relayLists.entries.removeIf { at - it.value.at >= relayListTtlSeconds }
-        val out = HashMap<HexKey, Set<NormalizedRelayUrl>>()
+        val out = HashMap<HexKey, WriteRelays>()
         val stale = ArrayList<HexKey>()
         for (key in pubkeys.distinct()) {
             val cached = relayLists[key]
@@ -241,21 +272,34 @@ class RunnerNostr(
                 .mapValues { (_, lists) -> newestOf(lists) as AdvertisedRelayListEvent }
         val covered = reads.flatMapTo(HashSet()) { it.covered }
         for (key in stale) {
-            val relays = newest[key]?.let(::vetted).orEmpty()
+            val list = newest[key]
+            val relays =
+                when {
+                    list != null -> vetted(list)
+                    key in covered -> WriteRelays(emptySet(), WriteRelays.State.NONE)
+                    else -> WriteRelays.UNKNOWN
+                }
             out[key] = relays
-            if (key in covered || key in newest) relayLists[key] = CachedRelays(relays, at)
+            if (relays.state != WriteRelays.State.UNKNOWN) relayLists[key] = CachedRelays(relays, at)
         }
         return out
     }
 
-    /** `writeRelays()` doesn't vet schemes; and a relay that names an internal host is refused here. */
-    private fun vetted(list: AdvertisedRelayListEvent): Set<NormalizedRelayUrl> =
-        list
-            .writeRelays()
-            .orEmpty()
-            .filter { UrlGuard.refusal(it, setOf("wss")) == null }
-            .mapNotNull { RelayUrlNormalizer.normalizeOrNull(it) }
-            .toSet()
+    /**
+     * `writeRelays()` doesn't vet schemes; and a relay that names an internal host is refused
+     * here. A list whose every write relay is refused is [WriteRelays.State.REFUSED], not "none":
+     * the owner's newest schedule is on relays the service won't ask, so the index can't stand in.
+     */
+    private fun vetted(list: AdvertisedRelayListEvent): WriteRelays {
+        val listed = list.writeRelays().orEmpty()
+        if (listed.isEmpty()) return WriteRelays(emptySet(), WriteRelays.State.NONE)
+        val relays =
+            listed
+                .filter { UrlGuard.refusal(it, setOf("wss")) == null }
+                .mapNotNull { RelayUrlNormalizer.normalizeOrNull(it) }
+                .toSet()
+        return WriteRelays(relays, if (relays.isEmpty()) WriteRelays.State.REFUSED else WriteRelays.State.LISTED)
+    }
 
     /** The newest event matching [filter] by [author] on [relays] plus the index relays. */
     suspend fun newest(
@@ -354,11 +398,26 @@ class RunnerNostr(
      * checks that the newest names exactly this owner's Assistant.
      */
     suspend fun schedule(owner: HexKey): ScheduleRead? {
-        val relays = writeRelays(owner)
-        val read = fetch(relays + index, scheduleFilter(listOf(owner)))
+        val list = writeRelayList(owner)
+        val read = fetch(list.relays + index, scheduleFilter(listOf(owner)))
         val newest = newestOf(read.events.filter { it.pubKey == owner && ObserverSchedule.isObserverSchedule(it) }) as? ScheduledTaskEvent
-        return newest?.let { ScheduleRead(it, hasQuorum(relays, read.served)) }
+        return newest?.let { ScheduleRead(it, hasQuorum(list, read.served)) }
     }
+
+    /**
+     * More than half of [list]'s relays are among [served]: the index relays only when the
+     * owner is known to list none. Their list unread, or naming only refused relays, is never a
+     * quorum: the index alone would then vouch for a schedule a newer version may have replaced.
+     */
+    private fun hasQuorum(
+        list: WriteRelays,
+        served: Set<NormalizedRelayUrl>,
+    ): Boolean =
+        when (list.state) {
+            WriteRelays.State.LISTED -> hasQuorum(list.relays, served)
+            WriteRelays.State.NONE -> hasQuorum(index, served)
+            WriteRelays.State.UNKNOWN, WriteRelays.State.REFUSED -> false
+        }
 
     /** More than half of [relays] (the index relays when there are none) are among [served]. */
     private fun hasQuorum(

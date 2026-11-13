@@ -415,6 +415,37 @@ class ObserverRunnerTest : RunnerWorld() {
         }
 
     @Test
+    fun anOwnerWhoseRelayListWasNotReadHasNoQuorum() =
+        runTest {
+            world()
+            schedule()
+            // The index serves the schedule but CLOSEs the relay-list read: the owner's relays are
+            // unknown, not "none", and the index alone can't stand in for them.
+            relays.refuses = { relay, filter -> relay == index && filter.kinds == listOf(10002) }
+            assertEquals(RunOutcome.NO_QUORUM, runnerWith().run(owner.pubKey))
+            assertTrue(printer.calls.isEmpty())
+            assertTrue(api.decrypted.isEmpty())
+        }
+
+    @Test
+    fun anOwnerWhoseListedRelaysAreAllRefusedHasNoQuorum() =
+        runTest {
+            world()
+            // Every write relay the owner lists is refused (plain ws, an internal host): none is asked.
+            relays.put(
+                index,
+                owner.signed(
+                    10002,
+                    arrayOf(arrayOf("r", "ws://owner.example", "write"), arrayOf("r", "wss://10.0.0.1", "write")),
+                    createdAt = 2,
+                ),
+            )
+            schedule()
+            assertEquals(RunOutcome.NO_QUORUM, runnerWith().run(owner.pubKey))
+            assertTrue(printer.calls.isEmpty())
+        }
+
+    @Test
     fun aScheduleChangedRightBeforeSpendingIsNotPrinted() =
         runTest {
             world()
