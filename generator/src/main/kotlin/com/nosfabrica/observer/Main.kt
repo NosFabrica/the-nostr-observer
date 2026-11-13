@@ -33,7 +33,7 @@ private val USAGE =
 
     Probes the reader's ranking, pulls the last 24 hours through it and writes the digest the
     writer would read to <dir>/observer-<code>.digest.md (default: editions/). It never calls
-    a model: a paper is printed by the reader's own clients, or by their Assistant (runner/).
+    a model: a paper is printed by the reader's own clients, or by their Assistant (service/).
     """.trimIndent()
 
 fun main(args: Array<String>) {

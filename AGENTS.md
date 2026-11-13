@@ -11,9 +11,13 @@ repo.
 - `generator/`: the Observer's engine, a library. A JVM port of Amethyst's
   `commons/src/commonMain/kotlin/com/vitorpamplona/amethyst/commons/frontpage/` (plus its
   `jvmAndroid` actuals). It has a `main` for a manual, local, dry-run print.
-- `runner/`: the Brainstorm Assistant's print worker, a container on Brainstorm's servers.
-  It holds no nsec and signs and decrypts through brainstorm_server's
-  `/internal/observerRunner/*`. `runner/README.md` has the contract and the deployment.
+- `service/`: the Brainstorm Assistant's Observer task service (`observer-service`), a
+  container on Brainstorm's servers that assistant-runner wakes with `POST /v1/run` for one
+  owner. It reads the Assistant's key from brainstorm_server's `brainstorm_nsec` and Fernet key
+  file (`:core`'s `AssistantKeys`), decrypts and signs as the Assistant with the allowlist the
+  server enforced (`LocalAssistant`), and keeps its runs and unpublished papers in Postgres
+  (`assistant_runner.*`). It never calls brainstorm_server. `service/README.md` has what a wake
+  does and the deployment.
 
 - `.claude/skills/`: the two Claude Code skills, still in use. `nostr-observer` prints a
   paper with Claude Code as the writer and publishes it as a claude.ai artifact;
@@ -30,7 +34,7 @@ and its measurements are in git up to `0901b92`.
     ./gradlew build --max-workers=2           # compile + test + spotlessCheck
     ./gradlew spotlessApply                   # before every commit
     ./gradlew :generator:run --args="<npub> --dry-run"
-    ./gradlew :runner:installDist             # the worker; see runner/README.md
+    ./gradlew :service:installDist            # the task service; see service/README.md
 
 Other agents build Quartz and Amethyst on the same machine: one Gradle invocation at a time.
 
@@ -45,10 +49,14 @@ Other agents build Quartz and Amethyst on the same machine: one Gradle invocatio
   inserts the house stylesheet, as Amethyst's does); only checked pages are shown or published; hotlinked art; no NSFW
   classification; the name is The Observer.
 - **Never log a key or a plaintext.** Not the AI key, not a decrypted schedule, not a
-  decrypted kind 12000, not a ciphertext. Log owner, kind and outcome. `askedOf` names a
-  provider by host only. The runner's tests assert this on captured logs.
-- **Never call a real model, relay or Blossom server from a test.** Tests fake the HTTP
-  layer (OkHttp interceptors), the relay client (`INostrClient`) and the server API.
+  decrypted kind 12000, not a ciphertext, not the Assistant's nsec or a Fernet key or token.
+  Log owner, kind and outcome. `askedOf` names a provider by host only. The service's tests
+  assert this on captured logs.
+- **Never call a real model, relay, Blossom server or database from a test.** Tests fake the
+  HTTP layer (OkHttp interceptors), the relay client (`INostrClient`) and the key table
+  (`MemoryDirectory`), and use `:core`'s in-memory stores. Postgres tests use `:core`'s
+  `TestPostgres` (a throwaway `initdb` cluster, or `TEST_DATABASE_URL`) and are skipped, saying
+  so, when there is neither.
 - **Only the owner's Blossom servers.** No kind 10063 means no publish, never a fallback.
 - **Quartz** comes from JitPack pinned by a full commit hash (`gradle/libs.versions.toml`).
   Hashes carry no order, so every module `force()`s the pin; the only relation between two

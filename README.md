@@ -19,9 +19,10 @@ Assistant can print it for you.
   the editorial brief and house stylesheet, the writer (any OpenAI-compatible endpoint your
   NIP-FA key names), the page checks, and the publisher for the Observer site. It follows
   Amethyst's copy, which is the reference. A small CLI does a local dry run.
-- **`runner/`**: the Brainstorm Assistant's print worker. It runs on Brainstorm's servers,
-  beside brainstorm_server, holds no private key, and prints for readers whose schedule names
-  their Assistant. See [`runner/README.md`](runner/README.md).
+- **`service/`**: the Brainstorm Assistant's Observer task service. It runs on Brainstorm's
+  servers, beside brainstorm_server, and prints for readers whose schedule names their
+  Assistant when [assistant-runner](https://github.com/NosFabrica/assistant-runner) wakes it for
+  one of them (`POST /v1/run`). See [`service/README.md`](service/README.md).
 
 The design is [`docs/PLAN.md`](docs/PLAN.md).
 

@@ -1,0 +1,553 @@
+package com.nosfabrica.observer.service
+
+import com.nosfabrica.assistant.core.KeyFailure
+import com.nosfabrica.assistant.core.MemoryRunStore
+import com.nosfabrica.assistant.core.RunStore
+import com.nosfabrica.assistant.core.capturingLogs
+import com.nosfabrica.observer.frontpage.WriterException
+import com.nosfabrica.observer.frontpage.WriterFailure
+import com.vitorpamplona.quartz.nip01Core.core.Event
+import com.vitorpamplona.quartz.nip01Core.core.HexKey
+import com.vitorpamplona.quartz.nip01Core.crypto.verify
+import com.vitorpamplona.quartz.nip01Core.relay.filters.Filter
+import com.vitorpamplona.quartz.nip01Core.relay.normalizer.NormalizedRelayUrl
+import com.vitorpamplona.quartz.nip01Core.signers.NostrSignerInternal
+import com.vitorpamplona.quartz.nip5aStaticWebsites.observer.ObserverEdition
+import com.vitorpamplona.quartz.nip5aStaticWebsites.observer.ObserverSite
+import com.vitorpamplona.quartz.nipFAAgentKeys.tags.AgentKeyTag
+import com.vitorpamplona.quartz.nipFBScheduledTasks.ScheduledTask
+import com.vitorpamplona.quartz.nipFBScheduledTasks.ScheduledTaskClaims.OwnRun
+import com.vitorpamplona.quartz.nipFBScheduledTasks.ScheduledTaskEvent
+import com.vitorpamplona.quartz.utils.EventFactory
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.test.runTest
+import java.sql.SQLException
+import java.time.Instant
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
+
+class ObserverRunnerTest : RunnerWorld() {
+    @Test
+    fun printsWithTheParamsAndPublishesTheAssistantsSiteForTheOwner() =
+        runTest {
+            world()
+            schedule()
+            assertEquals(RunOutcome.PRINTED, runner.run(owner.pubKey))
+
+            // `key` = URL + last 4 picks the second OpenRouter key, `model` the model.
+            assertEquals(listOf(Triple(secondOpenRouter, "anthropic/claude-sonnet-4.5", owner.pubKey)), printer.calls)
+
+            val (site, to) = relays.published.single()
+            assertEquals(setOf(assistantRelay), to)
+            assertEquals(35128, site.kind)
+            assertEquals(assistant.pubKey, site.pubKey)
+            assertTrue(site.verify())
+            assertTrue(ObserverSite.isRunnerSiteFor(site, assistant.pubKey, owner.pubKey))
+            // What went out is what the server signed (its client tag in), never what was sent.
+            assertTrue(site.tags.any { it.size > 1 && it[0] == "client" && it[1] == "Brainstorm" })
+            assertTrue(site.tags.any { it.size > 2 && it[0] == "path" && it[1] == "/$day.html" })
+            assertEquals("Vitor's Observer", site.tags.first { it[0] == "title" }[1])
+            assertEquals(listOf(35128), api.signedKinds.filter { it == 35128 })
+        }
+
+    @Test
+    fun anInterruptedRunIsNeverPrintedAgain() =
+        runTest {
+            world()
+            schedule()
+            // A run that started and never ended (the service died mid-print): it may have reached
+            // the model, so the next wake doesn't risk paying for the same morning twice.
+            runs.claim(ObserverRunner.TASK, owner.pubKey, six)
+            assertEquals(OwnRun.DIED, runs.ownRun(ObserverRunner.TASK, owner.pubKey, six))
+            assertEquals(RunOutcome.ATTEMPTED, runner.run(owner.pubKey))
+            assertTrue(printer.calls.isEmpty())
+            assertTrue(relays.published.isEmpty())
+        }
+
+    @Test
+    fun uploadsGoOnlyToTheOwnersBlossomServers() =
+        runTest {
+            world()
+            schedule()
+            runner.run(owner.pubKey)
+            assertEquals(setOf("blossom.owner.example", "media.owner.example"), blossom.hostsWritten())
+            assertFalse(blossom.requests.any { "assistant-own.example" in it })
+            // One 24242 per file (the page, the archive, editions.json), each signed through the server.
+            assertEquals(3, api.signedKinds.count { it == 24242 })
+        }
+
+    @Test
+    fun noBlossomServerOfTheOwnersMeansNoPrint() =
+        runTest {
+            world()
+            relays.held[ownerRelay]!!.removeAll { it.kind == 10063 }
+            schedule()
+            assertEquals(RunOutcome.NO_SERVERS, runner.run(owner.pubKey))
+            assertTrue(printer.calls.isEmpty())
+            assertTrue(blossom.requests.isEmpty())
+        }
+
+    @Test
+    fun aScheduleByAnyoneButTheOwnerIsRejected() =
+        runTest {
+            world()
+            // A stranger (who has an Assistant of their own) names the owner's Assistant.
+            schedule(task(), by = stranger)
+            assertEquals(RunOutcome.REJECTED, runner.run(stranger.pubKey))
+            assertTrue(api.decrypted.isEmpty())
+            assertTrue(printer.calls.isEmpty())
+            assertTrue(relays.published.isEmpty())
+        }
+
+    @Test
+    fun aWakeForSomeoneWithNoAssistantDoesNothing() =
+        runTest {
+            world()
+            val nobody = newSigner()
+            relays.put(index, nobody.signed(10002, arrayOf(arrayOf("r", ownerRelay.url, "write")), createdAt = 1))
+            schedule(task(), by = nobody)
+            // A wake for someone `brainstorm_nsec` holds no Assistant for reads no relay and decrypts nothing.
+            assertEquals(RunOutcome.NO_ASSISTANT, runner.run(nobody.pubKey))
+            assertTrue(api.decrypted.isEmpty())
+            assertTrue(relays.asked.isEmpty())
+            assertTrue(printer.calls.isEmpty())
+        }
+
+    @Test
+    fun twoPTagsMeansNothingRuns() =
+        runTest {
+            world()
+            val both = ScheduledTask(task().publicTags + arrayOf(arrayOf("p", strangersAssistant.pubKey)), task().privateTags)
+            schedule(both)
+            assertEquals(RunOutcome.RUNNER_CONFLICT, runner.run(owner.pubKey))
+            assertTrue(api.decrypted.isEmpty())
+            assertTrue(printer.calls.isEmpty())
+        }
+
+    @Test
+    fun alreadyPrintedOnTheOwnersSiteMeansNoPrint() =
+        runTest {
+            world()
+            schedule()
+            val edition = ObserverEdition(day = day, path = "/$day.html", sha256 = "c".repeat(64))
+            val template =
+                ObserverSite.build(
+                    listOf(edition),
+                    "d".repeat(64),
+                    "e".repeat(64),
+                    "Vitor",
+                    listOf("https://blossom.owner.example"),
+                    now - 600,
+                )
+            relays.put(ownerRelay, typed(owner.sign(template)))
+            assertEquals(RunOutcome.ALREADY_PRINTED, runner.run(owner.pubKey))
+            assertTrue(printer.calls.isEmpty())
+        }
+
+    @Test
+    fun alreadyPrintedOnTheAssistantsSiteMeansNoPrint() =
+        runTest {
+            world()
+            schedule()
+            val edition = ObserverEdition(day = day, path = "/$day.html", sha256 = "c".repeat(64), printedAt = now - 900)
+            val template =
+                ObserverSite.build(
+                    listOf(edition),
+                    "d".repeat(64),
+                    "e".repeat(64),
+                    "Vitor",
+                    listOf("https://blossom.owner.example"),
+                    now - 600,
+                    forReader = owner.pubKey,
+                )
+            relays.put(assistantRelay, typed(assistant.sign(template)))
+            assertEquals(RunOutcome.ALREADY_PRINTED, runner.run(owner.pubKey))
+            assertTrue(printer.calls.isEmpty())
+        }
+
+    @Test
+    fun aSiteOfAnotherKeyTaggingTheOwnerDoesNotCount() =
+        runTest {
+            world()
+            schedule()
+            val edition = ObserverEdition(day = day, path = "/$day.html", sha256 = "c".repeat(64), printedAt = now - 900)
+            val template =
+                ObserverSite.build(
+                    listOf(edition),
+                    "d".repeat(64),
+                    "e".repeat(64),
+                    "Vitor",
+                    emptyList(),
+                    now - 600,
+                    forReader = owner.pubKey,
+                )
+            relays.put(assistantRelay, typed(stranger.sign(template)))
+            assertEquals(RunOutcome.PRINTED, runner.run(owner.pubKey))
+        }
+
+    @Test
+    fun yesterdaysEditionDoesNotCoverThisMorning() =
+        runTest {
+            world()
+            schedule()
+            val edition = ObserverEdition(day = "2026-11-11", path = "/2026-11-11.html", sha256 = "c".repeat(64), printedAt = now - 86_400)
+            val template =
+                ObserverSite.build(
+                    listOf(edition),
+                    "d".repeat(64),
+                    "e".repeat(64),
+                    "Vitor",
+                    emptyList(),
+                    now - 80_000,
+                    forReader = owner.pubKey,
+                )
+            relays.put(assistantRelay, typed(assistant.sign(template)))
+            assertEquals(RunOutcome.PRINTED, runner.run(owner.pubKey))
+        }
+
+    @Test
+    fun keyParamWithAnUnknownSuffixTakesTheFirstKeyAtThatUrl() =
+        runTest {
+            world()
+            schedule(task(key = AgentKeyTag("sk-ant-zzzz-nope", "https://api.anthropic.com/v1/")))
+            runner.run(owner.pubKey)
+            assertEquals(anthropic, printer.calls.single().first)
+        }
+
+    @Test
+    fun withoutParamsTheDefaultKeyAndTheBestListedModelPrint() =
+        runTest {
+            world()
+            schedule(task(model = null, key = null))
+            runner.run(owner.pubKey)
+            val (key, model, _) = printer.calls.single()
+            assertEquals(openRouter, key)
+            assertEquals("anthropic/claude-sonnet-4.5", model)
+        }
+
+    @Test
+    fun anUnknownParamIsNotRun() =
+        runTest {
+            world()
+            schedule(task().withParam("size", listOf("broadsheet")))
+            assertEquals(RunOutcome.UNKNOWN_PARAMS, runner.run(owner.pubKey))
+            assertTrue(printer.calls.isEmpty())
+        }
+
+    @Test
+    fun aPausedScheduleIsNotRun() =
+        runTest {
+            world()
+            schedule(task().withEnabled(false, now))
+            assertEquals(RunOutcome.NOT_RUNNABLE, runner.run(owner.pubKey))
+            assertTrue(printer.calls.isEmpty())
+        }
+
+    @Test
+    fun anInternalKeyUrlIsRefusedAndNoOtherKeyIsTried() =
+        runTest {
+            for (url in listOf(
+                "http://localhost:11434/v1",
+                "https://10.0.0.5/v1",
+                "https://ai.internal/v1",
+                "https://[::1]/v1",
+                "https://169.254.169.254/latest",
+            )) {
+                val local = AgentKeyTag("", url)
+                relays.held.clear()
+                printer.calls.clear()
+                world(listOf(local, openRouter))
+                schedule(task(key = local))
+                assertEquals(RunOutcome.REFUSED_URL, runner.run(owner.pubKey), url)
+                assertTrue(printer.calls.isEmpty(), url)
+            }
+        }
+
+    @Test
+    fun aRunThatReachedTheModelIsNotRunAgainButOneThatSpentNothingIs() =
+        runTest {
+            world()
+            schedule()
+            printer.result = { _, _ -> FakePrinter.notReady() }
+            assertEquals(RunOutcome.NOT_READY, runner.run(owner.pubKey))
+            printer.result = FakePrinter.failing(WriterException(WriterFailure.RATE_LIMITED, 429))
+            assertEquals(RunOutcome.WRITER_FAILED, runner.run(owner.pubKey))
+            assertEquals(RunOutcome.ATTEMPTED, runner.run(owner.pubKey))
+            assertEquals(2, printer.calls.size)
+        }
+
+    @Test
+    fun anOwnerTheKeyViewNoLongerHasIsAnOutcome() =
+        runTest {
+            world()
+            schedule()
+            val gone = RecordingAssistant(mapOf(stranger.pubKey to strangersAssistant), { clock })
+            assertEquals(RunOutcome.NO_ASSISTANT, runnerWith(api = gone).run(owner.pubKey))
+            assertTrue(printer.calls.isEmpty())
+        }
+
+    @Test
+    fun anAssistantKeyThatDoesNotOpenIsAnOutcome() =
+        runTest {
+            world()
+            schedule()
+            for (failure in listOf(KeyFailure.NSEC_UNREADABLE, KeyFailure.NSEC_MISMATCH)) {
+                val broken = RecordingAssistant(mapOf(owner.pubKey to assistant), { clock }, mapOf(owner.pubKey to failure))
+                assertEquals(RunOutcome.KEY_UNREADABLE, runnerWith(api = broken).run(owner.pubKey), failure.name)
+            }
+            assertTrue(printer.calls.isEmpty())
+        }
+
+    @Test
+    fun neitherTheKeyNorAPlaintextNorACiphertextIsLogged() =
+        runTest {
+            world()
+            val event = schedule()
+            val keyList = relays.held[assistantRelay]!!.first { it.kind == 12000 }
+            val (_, printedLogs) = capturingLogs { runner.run(owner.pubKey) }
+
+            // Fresh state, and a provider that fails while echoing the key back.
+            relays.published.clear()
+            relays.held[assistantRelay]!!.removeAll { it.kind == 35128 }
+            printer.result = FakePrinter.failing(WriterException(WriterFailure.REJECTED, 401, "invalid key ${secondOpenRouter.key}"))
+            // A new worker: this one remembers the morning is settled.
+            val (_, failedLogs) = capturingLogs { runnerWith(runs = MemoryRunStore()).run(owner.pubKey) }
+
+            for (logs in listOf(printedLogs, failedLogs)) {
+                assertTrue(logs.contains(owner.pubKey), "the owner and the outcome are logged")
+                for (secret in listOf(
+                    openRouter.key,
+                    secondOpenRouter.key,
+                    anthropic.key,
+                    secondOpenRouter.key.takeLast(4).let { "\"$it\"" },
+                )) {
+                    assertFalse(logs.contains(secret), "a key reached the log")
+                }
+                assertFalse(logs.contains("anthropic/claude-sonnet-4.5"), "the schedule's plaintext reached the log")
+                assertFalse(logs.contains("Europe/London"), "the schedule's plaintext reached the log")
+                assertFalse(logs.contains(event.content), "a ciphertext reached the log")
+                assertFalse(logs.contains(keyList.content), "a ciphertext reached the log")
+            }
+            assertTrue(failedLogs.contains("WRITER_FAILED"))
+        }
+
+    @Test
+    fun aPrintThatNeverEndsIsStoppedAndNotRunAgain() =
+        runTest {
+            world()
+            schedule()
+            val hanging = PaperPrinter { _, _, _, _, _ -> awaitCancellation() }
+            assertEquals(RunOutcome.TIMED_OUT, runnerWith(printer = hanging).run(owner.pubKey))
+            // It may have reached the model: never again on its own.
+            assertEquals(OwnRun.ENDED, runs.ownRun(ObserverRunner.TASK, owner.pubKey, Instant.parse("2026-11-12T06:00:00Z").epochSecond))
+            assertEquals(RunOutcome.ATTEMPTED, runner.run(owner.pubKey))
+            assertTrue(relays.published.isEmpty())
+        }
+
+    @Test
+    fun aRecordThatCantBeKeptMeansNoPrint() =
+        runTest {
+            world()
+            schedule()
+            val broken =
+                object : RunStore by runs {
+                    override suspend fun claim(
+                        task: String,
+                        owner: HexKey,
+                        occurrence: Long,
+                        scheduleId: String?,
+                    ): Boolean = throw SQLException("the database is gone")
+                }
+            assertEquals(RunOutcome.RECORDS_UNAVAILABLE, runnerWith(runs = broken).run(owner.pubKey))
+            assertTrue(printer.calls.isEmpty())
+        }
+
+    @Test
+    fun aStoppingWorkerStartsNoPrint() =
+        runTest {
+            world()
+            schedule()
+            assertEquals(RunOutcome.STOPPING, runnerWith(accepting = { false }).run(owner.pubKey))
+            assertTrue(printer.calls.isEmpty())
+            assertEquals(OwnRun.NONE, runs.ownRun(ObserverRunner.TASK, owner.pubKey, Instant.parse("2026-11-12T06:00:00Z").epochSecond))
+        }
+
+    @Test
+    fun takingPrintingBackStopsTheWorkerEvenWhereTheOlderVersionLingers() =
+        runTest {
+            world()
+            // The index still holds the version naming the Assistant; the owner's relay has the newer one without.
+            schedule(createdAt = now - 7_200)
+            schedule(
+                task().let {
+                    ScheduledTask(
+                        it.publicTags
+                            .filterNot { t ->
+                                t[0] == "p"
+                            }.toTypedArray(),
+                        it.privateTags,
+                    )
+                },
+                onIndex = false,
+            )
+            assertEquals(RunOutcome.NOT_NAMED, runner.run(owner.pubKey))
+            assertTrue(printer.calls.isEmpty())
+            assertTrue(api.decrypted.isEmpty())
+        }
+
+    @Test
+    fun tooFewOfTheOwnersRelaysAnsweringMeansNoPrint() =
+        runTest {
+            world()
+            val second = relay("wss://owner-two.example")
+            relays.put(
+                index,
+                owner.signed(10002, arrayOf(arrayOf("r", ownerRelay.url, "write"), arrayOf("r", second.url, "write")), createdAt = 2),
+            )
+            schedule()
+            // One of two answers: not more than half. The newer version may be on the silent one.
+            relays.down = setOf(second)
+            assertEquals(RunOutcome.NO_QUORUM, runner.run(owner.pubKey))
+            assertTrue(printer.calls.isEmpty())
+        }
+
+    @Test
+    fun aScheduleChangedRightBeforeSpendingIsNotPrinted() =
+        runTest {
+            world()
+            schedule()
+            var changed = false
+            // The owner edits the schedule while the worker reads their profile, the last read before the print.
+            val editing =
+                object : RelayAccess by relays {
+                    override suspend fun fetch(
+                        relays: Set<NormalizedRelayUrl>,
+                        filter: Filter,
+                    ): RelayRead {
+                        if (!changed && filter.kinds == listOf(0)) {
+                            changed = true
+                            schedule(task(model = "openai/gpt-4o-mini"), createdAt = now - 60)
+                        }
+                        return this@ObserverRunnerTest.relays.fetch(relays, filter)
+                    }
+                }
+            val r = runnerWith(access = editing)
+            assertEquals(RunOutcome.SCHEDULE_CHANGED, r.run(owner.pubKey))
+            assertTrue(printer.calls.isEmpty())
+            assertEquals(OwnRun.NONE, runs.ownRun(ObserverRunner.TASK, owner.pubKey, six))
+            // The next poll decides on the new version.
+            assertEquals(RunOutcome.PRINTED, r.run(owner.pubKey))
+            assertEquals("openai/gpt-4o-mini", printer.calls.single().second)
+        }
+
+    @Test
+    fun aForgedOrFarFutureSiteIsNotRead() =
+        runTest {
+            world()
+            schedule()
+            val edition = ObserverEdition(day = day, path = "/$day.html", sha256 = "c".repeat(64), printedAt = now - 900)
+            // The Assistant's own key, but dated a month ahead: it would win every newest-of read.
+            val ahead =
+                ObserverSite.build(
+                    listOf(edition),
+                    "d".repeat(64),
+                    "e".repeat(64),
+                    "Vitor",
+                    listOf("https://blossom.owner.example"),
+                    now + 30 * 86_400,
+                    forReader = owner.pubKey,
+                )
+            relays.put(assistantRelay, typed(assistant.sign(ahead)))
+            // And a site claiming to be the owner's, signed by someone else.
+            val real =
+                typed(
+                    stranger.sign(
+                        ObserverSite.build(
+                            listOf(edition),
+                            "d".repeat(64),
+                            "e".repeat(64),
+                            "Vitor",
+                            listOf("https://blossom.owner.example"),
+                            now - 600,
+                        ),
+                    ),
+                )
+            val forged = EventFactory.create<Event>(real.id, owner.pubKey, real.createdAt, real.kind, real.tags, real.content, real.sig)
+            relays.put(ownerRelay, forged)
+            assertEquals(RunOutcome.PRINTED, runner.run(owner.pubKey))
+        }
+
+    @Test
+    fun theAssistantsRelaysDownIsUnreadableEvenWhenTheIndexAnswers() =
+        runTest {
+            world()
+            schedule()
+            relays.down = setOf(assistantRelay)
+            assertEquals(RunOutcome.SITE_UNREADABLE, runner.run(owner.pubKey))
+            assertTrue(printer.calls.isEmpty())
+        }
+
+    @Test
+    fun aSettledMorningIsNotReadAgainEveryPoll() =
+        runTest {
+            world()
+            schedule()
+            val edition = ObserverEdition(day = day, path = "/$day.html", sha256 = "c".repeat(64), printedAt = now - 900)
+            relays.put(
+                ownerRelay,
+                typed(
+                    owner.sign(
+                        ObserverSite.build(
+                            listOf(edition),
+                            "d".repeat(64),
+                            "e".repeat(64),
+                            "Vitor",
+                            listOf("https://blossom.owner.example"),
+                            now - 600,
+                        ),
+                    ),
+                ),
+            )
+            assertEquals(RunOutcome.ALREADY_PRINTED, runner.run(owner.pubKey))
+            val siteReads = relays.asked.count { it.second.kinds == listOf(35128) }
+            val relayListReads = relays.asked.count { it.second.kinds == listOf(10002) }
+            assertEquals(RunOutcome.ALREADY_PRINTED, runner.run(owner.pubKey))
+            assertEquals(siteReads, relays.asked.count { it.second.kinds == listOf(35128) }, "the sites were read again")
+            assertEquals(relayListReads, relays.asked.count { it.second.kinds == listOf(10002) }, "the relay lists were read again")
+            // Decrypted once: the second poll used the plaintext it had.
+            assertEquals(1, api.decrypted.count { it.second == 34817 })
+        }
+
+    @Test
+    fun aPaperThatCouldNotBePublishedIsPublishedLaterAndNeverPrintedAgain() =
+        runTest {
+            world()
+            schedule()
+            blossom.down = true
+            assertEquals(RunOutcome.PUBLISH_PENDING, runner.run(owner.pubKey))
+            assertTrue(relays.published.isEmpty())
+            blossom.down = false
+            runner.run(owner.pubKey)
+            assertEquals(1, printer.calls.size, "printed once")
+            val site = relays.published.single().first
+            assertTrue(ObserverSite.isRunnerSiteFor(site, assistant.pubKey, owner.pubKey))
+            // And dated by the occurrence it is for, never by when it was printed or published.
+            val bytes = blossom.stored.values.first { String(it).contains("\"editions\"") }
+            assertTrue(String(bytes).contains("\"printedAt\":$six"), String(bytes))
+        }
+
+    @Test
+    fun aKeyParamTheAssistantLacksWithAModelFailsAndIsNotRetried() =
+        runTest {
+            world()
+            schedule(task(key = AgentKeyTag("sk-other-9999", "https://api.example.com/v1")))
+            assertEquals(RunOutcome.KEY_NOT_GIVEN, runner.run(owner.pubKey))
+            assertTrue(printer.calls.isEmpty())
+            val keyReads = api.decrypted.count { it.second == 12000 }
+            assertEquals(RunOutcome.KEY_NOT_GIVEN, runner.run(owner.pubKey))
+            assertEquals(keyReads, api.decrypted.count { it.second == 12000 })
+        }
+}

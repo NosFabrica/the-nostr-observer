@@ -10,7 +10,7 @@ pluginManagement {
 rootProject.name = "the-nostr-observer"
 
 include(":generator")
-include(":runner")
+include(":service")
 
 dependencyResolutionManagement {
     repositories {

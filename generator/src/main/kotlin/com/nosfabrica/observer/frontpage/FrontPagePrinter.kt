@@ -37,7 +37,7 @@ import kotlin.concurrent.Volatile
 /*
  * The account-free half of Amethyst's FrontPagePrinter.kt. The `FrontPagePrinter` class itself
  * (one account's print, its local store, notifications, the per-device morning claim) is the
- * app's, and is not ported: the Assistant's worker (`runner/`) is this repo's printer.
+ * app's, and is not ported: the Assistant's task service (`service/`) is this repo's printer.
  * [FrontPageGate] and [FrontPageRun] come from Amethyst's FrontPageViewModel.kt. Not ported
  * either: `unattendedBlocker` (a device's signer), `FrontPageNotifier`, `observerSitesOf` (its
  * `ObserverSites` is FrontPageMorning's), `FrontPageSchedule` and `FrontPagePrinters`.

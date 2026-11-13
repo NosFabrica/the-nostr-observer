@@ -8,6 +8,30 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+
+    # The Postgres the service's store tests run against (:core's TestPostgres reads
+    # TEST_DATABASE_URL when it can't start a cluster of its own). Nothing else in the build
+    # talks to a network service.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: observer_test
+          POSTGRES_PASSWORD: observer_test
+          POSTGRES_DB: observer_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U observer_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      TEST_DATABASE_URL: jdbc:postgresql://localhost:5432/observer_test
+      TEST_DATABASE_USER: observer_test
+      TEST_DATABASE_PASSWORD: observer_test
+
     steps:
       # Node 20 is gone from the runners; every action here is pinned to a
       # major that ships a node24 entry point.
@@ -20,6 +44,9 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v6
 
+      # assistant-runner's :core resolves from JitPack, which can't build it while that
+      # repository is private: until it is public (or a checkout of it is added here, with a
+      # token that can read it), this step fails to resolve the pin. See AGENTS.md.
       # `build` is compile + test + spotlessCheck, so formatting alone fails
       # here exactly as it does in the pre-commit hook. Nothing in it talks to
       # a model, a relay or a Blossom server: every test passes with no network.
