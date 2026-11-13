@@ -72,7 +72,7 @@ class RoutstrRunnerTest : RunnerWorld() {
             assertEquals(RunOutcome.INSUFFICIENT_BALANCE, worker.poll()[owner.pubKey])
             assertTrue(printer.calls.isEmpty())
             // Nothing was spent: the morning is still open.
-            assertEquals(OwnRun.NONE, records.ownRun(owner.pubKey, six))
+            assertEquals(OwnRun.NONE, runs.ownRun(ObserverRunner.TASK, owner.pubKey, six))
             node.balanceMsats = 600_000
             assertEquals(RunOutcome.INSUFFICIENT_BALANCE, worker.poll()[owner.pubKey], "settled for the hour")
             clock += ObserverRunner.FIXABLE_RETRY_SECONDS
@@ -156,7 +156,7 @@ class RoutstrRunnerTest : RunnerWorld() {
                     ),
                 )
             assertEquals(RunOutcome.INSUFFICIENT_BALANCE, worker.poll()[owner.pubKey])
-            assertEquals(OwnRun.ENDED, records.ownRun(owner.pubKey, six))
+            assertEquals(OwnRun.ENDED, runs.ownRun(ObserverRunner.TASK, owner.pubKey, six))
             clock += ObserverRunner.FIXABLE_RETRY_SECONDS
             assertEquals(RunOutcome.ATTEMPTED, worker.poll()[owner.pubKey])
             assertEquals(1, printer.calls.size)
@@ -174,7 +174,7 @@ class RoutstrRunnerTest : RunnerWorld() {
                     ),
                 )
             assertEquals(RunOutcome.CHARGED_NO_ANSWER, worker.poll()[owner.pubKey])
-            assertEquals(OwnRun.ENDED, records.ownRun(owner.pubKey, six))
+            assertEquals(OwnRun.ENDED, runs.ownRun(ObserverRunner.TASK, owner.pubKey, six))
             clock += ObserverRunner.FIXABLE_RETRY_SECONDS
             assertEquals(RunOutcome.ATTEMPTED, worker.poll()[owner.pubKey])
             assertEquals(1, printer.calls.size)
@@ -187,7 +187,7 @@ class RoutstrRunnerTest : RunnerWorld() {
             printer.result =
                 FakePrinter.failing(writerExceptionFor(424, """{"error":{"message":"upstream down","code":"UPSTREAM_UNAVAILABLE"}}"""))
             assertEquals(RunOutcome.UPSTREAM_UNAVAILABLE, worker.poll()[owner.pubKey])
-            assertEquals(OwnRun.NONE, records.ownRun(owner.pubKey, six))
+            assertEquals(OwnRun.NONE, runs.ownRun(ObserverRunner.TASK, owner.pubKey, six))
             assertEquals(RunOutcome.UPSTREAM_UNAVAILABLE, worker.poll()[owner.pubKey], "settled for the hour")
             printer.result = { _, _ -> FakePrinter.printed() }
             clock += ObserverRunner.FIXABLE_RETRY_SECONDS
@@ -201,7 +201,7 @@ class RoutstrRunnerTest : RunnerWorld() {
             val worker = routstrWorld(FakeNode(balanceMsats = 1_000_000))
             printer.result = { _, _ -> throw AfterAnswerException(WriterException(WriterFailure.UPSTREAM_DOWN, 424)) }
             assertEquals(RunOutcome.WRITER_FAILED, worker.poll()[owner.pubKey])
-            assertEquals(OwnRun.ENDED, records.ownRun(owner.pubKey, six))
+            assertEquals(OwnRun.ENDED, runs.ownRun(ObserverRunner.TASK, owner.pubKey, six))
         }
 
     @Test

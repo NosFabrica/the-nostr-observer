@@ -1,6 +1,8 @@
 package com.nosfabrica.observer.runner
 
 import com.nosfabrica.assistant.core.KeyFailure
+import com.nosfabrica.assistant.core.MemoryRunStore
+import com.nosfabrica.assistant.core.RunStore
 import com.nosfabrica.assistant.core.capturingLogs
 import com.nosfabrica.observer.frontpage.WriterException
 import com.nosfabrica.observer.frontpage.WriterFailure
@@ -20,6 +22,7 @@ import com.vitorpamplona.quartz.utils.EventFactory
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.test.runTest
+import java.sql.SQLException
 import java.time.Instant
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -55,10 +58,10 @@ class ObserverRunnerTest : RunnerWorld() {
         runTest {
             world()
             schedule()
-            // A run that started and never ended (the worker died mid-print): it may have reached
-            // the model, so the next poll doesn't risk paying for the same morning twice.
-            records.started(owner.pubKey, Instant.parse("2026-11-12T06:00:00Z").epochSecond)
-            assertEquals(OwnRun.ENDED, records.ownRun(owner.pubKey, Instant.parse("2026-11-12T06:00:00Z").epochSecond))
+            // A run that started and never ended (the service died mid-print): it may have reached
+            // the model, so the next wake doesn't risk paying for the same morning twice.
+            runs.claim(ObserverRunner.TASK, owner.pubKey, six)
+            assertEquals(OwnRun.DIED, runs.ownRun(ObserverRunner.TASK, owner.pubKey, six))
             assertEquals(RunOutcome.ATTEMPTED, runner.poll()[owner.pubKey])
             assertTrue(printer.calls.isEmpty())
             assertTrue(relays.published.isEmpty())
@@ -307,12 +310,11 @@ class ObserverRunnerTest : RunnerWorld() {
             val (_, printedLogs) = capturingLogs { runner.poll() }
 
             // Fresh state, and a provider that fails while echoing the key back.
-            records.forget(owner.pubKey, Instant.parse("2026-11-12T06:00:00Z").epochSecond)
             relays.published.clear()
             relays.held[assistantRelay]!!.removeAll { it.kind == 35128 }
             printer.result = FakePrinter.failing(WriterException(WriterFailure.REJECTED, 401, "invalid key ${secondOpenRouter.key}"))
             // A new worker: this one remembers the morning is settled.
-            val (_, failedLogs) = capturingLogs { runnerWith().poll() }
+            val (_, failedLogs) = capturingLogs { runnerWith(runs = MemoryRunStore()).poll() }
 
             for (logs in listOf(printedLogs, failedLogs)) {
                 assertTrue(logs.contains(owner.pubKey), "the owner and the outcome are logged")
@@ -340,7 +342,7 @@ class ObserverRunnerTest : RunnerWorld() {
             val hanging = PaperPrinter { _, _, _, _, _ -> awaitCancellation() }
             assertEquals(RunOutcome.TIMED_OUT, runnerWith(printer = hanging).poll()[owner.pubKey])
             // It may have reached the model: never again on its own.
-            assertEquals(OwnRun.ENDED, records.ownRun(owner.pubKey, Instant.parse("2026-11-12T06:00:00Z").epochSecond))
+            assertEquals(OwnRun.ENDED, runs.ownRun(ObserverRunner.TASK, owner.pubKey, Instant.parse("2026-11-12T06:00:00Z").epochSecond))
             assertEquals(RunOutcome.ATTEMPTED, runner.poll()[owner.pubKey])
             assertTrue(relays.published.isEmpty())
         }
@@ -390,13 +392,15 @@ class ObserverRunnerTest : RunnerWorld() {
             world()
             schedule()
             val broken =
-                object : RunRecords by records {
-                    override fun started(
+                object : RunStore by runs {
+                    override suspend fun claim(
+                        task: String,
                         owner: HexKey,
                         occurrence: Long,
-                    ) = throw RunRecordsException("disk full")
+                        scheduleId: String?,
+                    ): Boolean = throw SQLException("the database is gone")
                 }
-            assertEquals(RunOutcome.RECORDS_UNAVAILABLE, runnerWith(records = broken).poll()[owner.pubKey])
+            assertEquals(RunOutcome.RECORDS_UNAVAILABLE, runnerWith(runs = broken).poll()[owner.pubKey])
             assertTrue(printer.calls.isEmpty())
         }
 
@@ -407,7 +411,7 @@ class ObserverRunnerTest : RunnerWorld() {
             schedule()
             assertEquals(RunOutcome.STOPPING, runnerWith(accepting = { false }).poll()[owner.pubKey])
             assertTrue(printer.calls.isEmpty())
-            assertEquals(OwnRun.NONE, records.ownRun(owner.pubKey, Instant.parse("2026-11-12T06:00:00Z").epochSecond))
+            assertEquals(OwnRun.NONE, runs.ownRun(ObserverRunner.TASK, owner.pubKey, Instant.parse("2026-11-12T06:00:00Z").epochSecond))
         }
 
     @Test
@@ -472,7 +476,7 @@ class ObserverRunnerTest : RunnerWorld() {
             val r = runnerWith(access = editing)
             assertEquals(RunOutcome.SCHEDULE_CHANGED, r.poll()[owner.pubKey])
             assertTrue(printer.calls.isEmpty())
-            assertEquals(OwnRun.NONE, records.ownRun(owner.pubKey, six))
+            assertEquals(OwnRun.NONE, runs.ownRun(ObserverRunner.TASK, owner.pubKey, six))
             // The next poll decides on the new version.
             assertEquals(RunOutcome.PRINTED, r.poll()[owner.pubKey])
             assertEquals("openai/gpt-4o-mini", printer.calls.single().second)

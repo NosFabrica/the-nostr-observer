@@ -1,6 +1,9 @@
 package com.nosfabrica.observer.runner
 
 import com.nosfabrica.assistant.core.AssistantPair
+import com.nosfabrica.assistant.core.MemoryPendingStore
+import com.nosfabrica.assistant.core.PendingStore
+import com.nosfabrica.assistant.core.RunStore
 import com.nosfabrica.observer.frontpage.AgentModel
 import com.nosfabrica.observer.frontpage.EditionClock
 import com.nosfabrica.observer.frontpage.EditionContext
@@ -170,7 +173,7 @@ enum class RunOutcome {
     /** The print ran past [ObserverRunner.PRINT_TIMEOUT_SECONDS]: stopped, and (it may have spent) not run again. */
     TIMED_OUT,
 
-    /** The run records can't be written or read ([RunRecordsException]): nothing is printed until an operator looks. */
+    /** The `runs` table can't be read or the claim can't be written: a start that isn't written down isn't a start, so nothing is printed. */
     RECORDS_UNAVAILABLE,
 
     /** The worker is shutting down: no new print starts. */
@@ -318,7 +321,8 @@ class ObserverRunner(
     private val nostr: RunnerNostr,
     private val blossom: BlossomHttp,
     private val printer: PaperPrinter,
-    private val records: RunRecords,
+    /** `assistant_runner.runs`: the claim before spending, its end after. */
+    private val runs: RunStore,
     /** The models an endpoint lists (the engine's `listAgentModels`): the default model, and a Routstr node's prices. */
     private val models: suspend (AgentKeyTag) -> List<AgentModel>,
     private val zoneOf: (String?) -> CronZone? = { it?.let(ZoneIdCronZone::of) },
@@ -329,14 +333,12 @@ class ObserverRunner(
     private val printTimeoutMs: Long = PRINT_TIMEOUT_SECONDS * 1000,
     /** False once the worker is stopping: a run that hasn't started its print yet doesn't. */
     private val accepting: () -> Boolean = { true },
-    /** Papers printed but not yet published ([PendingPaper]). */
-    private val pending: PendingPapers = PendingPapers(null),
+    /** Papers printed but not yet published ([PendingPaper]), in `assistant_runner.pending`. */
+    private val pending: PendingStore = MemoryPendingStore(),
     /** Routstr keys' detection and balance, asked of each key's own node. */
     private val routstr: RoutstrFunds = RoutstrFunds(NoRoutstrNode),
     /** The longest the `/models` listing may take: it is asked before a print, and a stopping worker waits for it. */
     private val modelsTimeoutMs: Long = MODELS_TIMEOUT_MS,
-    /** Where the blocking writes of the records and the pending papers run. */
-    private val diskDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) {
     /**
      * What this worker already settled for an owner's occurrence, so a poll doesn't read both
@@ -397,17 +399,112 @@ class ObserverRunner(
                     }.awaitAll()
             }
         // A pending paper whose owner no longer has an Assistant, or is past its time, goes.
-        pending.all().forEach { paper ->
-            if (paper.owner !in byOwner || now() > paper.until) {
-                onDisk { pending.drop(paper) }
-                report(paper.owner, RunOutcome.PUBLISH_FAILED, "pending paper dropped")
-            }
-        }
+        dropPending(byOwner.keys)
         return ran.toMap(LinkedHashMap())
     }
 
-    /** [block] on the IO dispatcher: the records and the pending papers are synced to disk, a blocking write. */
-    private suspend fun <T> onDisk(block: () -> T): T = withContext(diskDispatcher) { block() }
+    /** Drops the papers past their time, and those of owners not in [owners] (no Assistant any more). */
+    private suspend fun dropPending(owners: Set<HexKey>) {
+        try {
+            pending.dropExpired(now()).takeIf { it > 0 }?.let { Log.i(TAG) { "dropped $it pending papers past their time" } }
+            for (owner in pending.owners(TASK)) {
+                if (owner in owners) continue
+                for (paper in pending.list(TASK, owner)) {
+                    pending.delete(TASK, owner, paper.occurrence)
+                    report(owner, RunOutcome.PUBLISH_FAILED, "pending paper dropped")
+                }
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w(TAG) { "could not prune the pending papers: ${e.javaClass.simpleName}" }
+        }
+    }
+
+    /**
+     * Quartz's runner decision, with this service's own run of the occurrence read from [runs]
+     * (Quartz asks for it synchronously, so the due occurrence is found first, then its row read).
+     */
+    private suspend fun decide(
+        task: ScheduledTask,
+        pair: AssistantPair,
+        zone: CronZone,
+        at: Long,
+        alreadyDone: (Long) -> Boolean = { false },
+    ): ScheduledTaskClaims.RunnerDecision {
+        val probe = ScheduledTaskClaims.decideAsRunner(task, ObserverSchedule.TASK, pair.assistant, zone, at)
+        val due = probe.occurrence ?: return probe
+        val own =
+            try {
+                runs.ownRun(TASK, pair.owner, due)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                stop(pair.owner, RunOutcome.RECORDS_UNAVAILABLE, e.javaClass.simpleName)
+            }
+        return ScheduledTaskClaims.decideAsRunner(
+            task,
+            ObserverSchedule.TASK,
+            pair.assistant,
+            zone,
+            at,
+            ownRun = { if (it == due) own else ScheduledTaskClaims.OwnRun.NONE },
+            alreadyDone = alreadyDone,
+        )
+    }
+
+    /** Ends a claimed run with [outcome]. A failure is logged: the row stays `started`, which is never run again either. */
+    private suspend fun endRun(
+        owner: HexKey,
+        occurrence: Long,
+        outcome: RunOutcome,
+    ) {
+        try {
+            runs.end(TASK, owner, occurrence, outcome.name)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w(TAG) { "owner=$owner could not end the run: ${e.javaClass.simpleName}" }
+        }
+    }
+
+    /**
+     * Forgets a claimed run that spent nothing, so a later wake may try again. A failure leaves
+     * the row `started`, which is never run again: that costs a paper, never a second payment.
+     */
+    private suspend fun forgetRun(
+        owner: HexKey,
+        occurrence: Long,
+    ) {
+        try {
+            runs.forget(TASK, owner, occurrence)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w(TAG) { "owner=$owner could not forget the run: ${e.javaClass.simpleName}" }
+        }
+    }
+
+    /** [owner]'s papers waiting, oldest first; none when the store can't be read (they wait for the next try). */
+    private suspend fun waiting(owner: HexKey): List<PendingPaper> =
+        try {
+            pending.list(TASK, owner).mapNotNull { PendingPaper.of(it) }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w(TAG) { "owner=$owner could not read the pending papers: ${e.javaClass.simpleName}" }
+            emptyList()
+        }
+
+    private suspend fun dropPaper(paper: PendingPaper) {
+        try {
+            pending.delete(TASK, paper.owner, paper.occurrence)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w(TAG) { "owner=${paper.owner} could not delete a pending paper: ${e.javaClass.simpleName}" }
+        }
+    }
 
     /** Ends a schedule's run with [outcome], already reported. */
     private class Stop(
@@ -458,17 +555,14 @@ class ObserverRunner(
 
         suspend fun assistantSite() = AssistantSiteIO(owner, pair.assistant, api, nostr, assistantRelays, servers(), blossom, now)
         // Papers already paid for go out first, before anything else is decided.
-        pending.of(owner).takeIf { it.isNotEmpty() }?.let { publishPending(pair, it, assistantSite()) }
+        waiting(owner).takeIf { it.isNotEmpty() }?.let { publishPending(pair, it, assistantSite()) }
 
         val task = ScheduledTask(event.tags, decryptTags(pair, event))
         if (!ObserverParams.understands(task)) return report(owner, RunOutcome.UNKNOWN_PARAMS)
         val zone = zoneOf(task.tz) ?: return report(owner, RunOutcome.UNKNOWN_ZONE)
         val at = now()
 
-        val first =
-            ScheduledTaskClaims.decideAsRunner(task, ObserverSchedule.TASK, pair.assistant, zone, at, ownRun = {
-                records.ownRun(owner, it)
-            })
+        val first = decide(task, pair, zone, at)
         if (!first.shouldRun) return report(owner, verdictOutcome(first.verdict))
         val occurrence = first.occurrence!!
         settled[owner]?.let { s ->
@@ -506,17 +600,7 @@ class ObserverRunner(
         // The owner's site unreadable: decide from the Assistant's own (and its records), as a device decides from its store.
         val readerRead = editionsOn(readerSite, owner) as? SiteEditions.Read
         val readerEditions = readerRead?.editions.orEmpty()
-        val second =
-            ScheduledTaskClaims.decideAsRunner(
-                task,
-                ObserverSchedule.TASK,
-                pair.assistant,
-                zone,
-                at,
-                ownRun = { records.ownRun(owner, it) },
-            ) {
-                ObserverSite.alreadyPrinted(readerEditions, runnerEditions, it, zone)
-            }
+        val second = decide(task, pair, zone, at) { ObserverSite.alreadyPrinted(readerEditions, runnerEditions, it, zone) }
         if (!second.shouldRun) {
             val outcome = verdictOutcome(second.verdict)
             return if (outcome == RunOutcome.ALREADY_PRINTED) settle(outcome) else report(owner, outcome)
@@ -571,42 +655,85 @@ class ObserverRunner(
         val again = nostr.schedule(owner)
         if (again == null || !again.quorum) return report(owner, RunOutcome.NO_QUORUM, "re-read")
         if (again.event.id != event.id) return report(owner, RunOutcome.SCHEDULE_CHANGED)
-        try {
-            onDisk { records.started(owner, occurrence) }
-        } catch (e: RunRecordsException) {
-            // Not written down, so not started: printing now could pay for this morning twice after a restart.
-            return report(owner, RunOutcome.RECORDS_UNAVAILABLE, e.message)
+        // The claim, before anything is spent: only the caller that inserts the row runs the occurrence.
+        val claimed =
+            try {
+                runs.claim(TASK, owner, occurrence, event.id)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // Not written down, so not started: printing now could pay for this morning twice.
+                return report(owner, RunOutcome.RECORDS_UNAVAILABLE, e.javaClass.simpleName)
+            }
+        // Another replica (or an earlier wake) holds the row: it runs it, or ran it.
+        if (!claimed) return report(owner, RunOutcome.ATTEMPTED, "claimed")
+        return try {
+            printClaimed(pair, occurrence, zone, key, model, name, options, assistantSite, ::settle)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // It may have spent: ended, never run again on its own.
+            endRun(owner, occurrence, RunOutcome.ERROR)
+            throw e
         }
+    }
+
+    /** The print of a claimed occurrence, and its publish: every path ends or forgets the claim. */
+    private suspend fun printClaimed(
+        pair: AssistantPair,
+        occurrence: Long,
+        zone: CronZone,
+        key: AgentKeyTag,
+        model: String,
+        name: String,
+        options: PrintOptions,
+        assistantSite: AssistantSiteIO,
+        settle: (RunOutcome, String?) -> RunOutcome,
+    ): RunOutcome {
+        val owner = pair.owner
         val result =
             try {
                 withTimeout(printTimeoutMs) { printer.print(key, model, owner, name, options) }
             } catch (e: TimeoutCancellationException) {
-                onDisk { records.ended(owner, occurrence) }
-                return settle(RunOutcome.TIMED_OUT)
+                endRun(owner, occurrence, RunOutcome.TIMED_OUT)
+                return settle(RunOutcome.TIMED_OUT, null)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: WriterException) {
-                return writerFailed(e, answered = false, owner, occurrence, ::settle)
+                return writerFailed(e, answered = false, owner, occurrence, settle)
             } catch (e: AfterAnswerException) {
-                return writerFailed(e.writer, answered = true, owner, occurrence, ::settle)
+                return writerFailed(e.writer, answered = true, owner, occurrence, settle)
             }
         return when (result) {
             is PrintResult.NotReady -> {
-                onDisk { records.forget(owner, occurrence) }
+                forgetRun(owner, occurrence)
                 report(owner, RunOutcome.NOT_READY, result.verdict.name)
             }
 
             is PrintResult.Refused -> {
-                onDisk { records.ended(owner, occurrence) }
+                endRun(owner, occurrence, RunOutcome.PAGE_REFUSED)
                 settle(RunOutcome.PAGE_REFUSED, "${result.violations.size} problems")
             }
 
             is PrintResult.Printed -> {
                 val paper = pendingFor(owner, occurrence, zone, result, model, name)
-                // Kept before it is published: a worker stopped mid-publish still has the paid paper.
-                onDisk { pending.keep(paper) }
-                onDisk { records.ended(owner, occurrence) }
-                settle(publish(pair, pending.of(owner), assistantSite))
+                // Kept before it is published: a service stopped mid-publish still has the paid paper.
+                val kept =
+                    try {
+                        pending.put(paper.toPending())
+                        true
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        Log.w(TAG) { "owner=$owner could not keep the paper before publishing it: ${e.javaClass.simpleName}" }
+                        false
+                    }
+                // An older paper still waiting goes out with it, in the same site event.
+                val papers = (waiting(owner).filter { it.occurrence != occurrence } + paper).sortedBy { it.occurrence }
+                val outcome = publish(pair, papers, assistantSite)
+                if (!kept && outcome != RunOutcome.PRINTED) Log.w(TAG) { "owner=$owner a paid paper was neither kept nor published" }
+                endRun(owner, occurrence, outcome)
+                settle(outcome, null)
             }
         }
     }
@@ -626,15 +753,17 @@ class ObserverRunner(
         // The failure's name and status only: what the provider said may echo the request.
         val detail = listOfNotNull(e.failure.name, e.status?.toString(), "after an answer".takeIf { answered }).joinToString(" ")
         if (e.failure == WriterFailure.UPSTREAM_DOWN && !answered) {
-            onDisk { records.forget(owner, occurrence) }
+            forgetRun(owner, occurrence)
             return settle(RunOutcome.UPSTREAM_UNAVAILABLE, detail)
         }
-        onDisk { records.ended(owner, occurrence) }
-        return when {
-            e.failure == WriterFailure.SETTLEMENT_FAILED -> settle(RunOutcome.CHARGED_NO_ANSWER, detail)
-            e.failure == WriterFailure.LOW_BALANCE || e.status == 402 -> settle(RunOutcome.INSUFFICIENT_BALANCE, detail)
-            else -> settle(RunOutcome.WRITER_FAILED, detail)
-        }
+        val outcome =
+            when {
+                e.failure == WriterFailure.SETTLEMENT_FAILED -> RunOutcome.CHARGED_NO_ANSWER
+                e.failure == WriterFailure.LOW_BALANCE || e.status == 402 -> RunOutcome.INSUFFICIENT_BALANCE
+                else -> RunOutcome.WRITER_FAILED
+            }
+        endRun(owner, occurrence, outcome)
+        return settle(outcome, detail)
     }
 
     /**
@@ -666,7 +795,7 @@ class ObserverRunner(
             sha256 = publishedSha256(html),
             html = html,
             readerName = name,
-            until = now() + PendingPapers.RETRY_SECONDS,
+            until = now() + PendingPaper.RETRY_SECONDS,
         )
     }
 
@@ -699,7 +828,7 @@ class ObserverRunner(
                 e.javaClass.simpleName
             }
         if (failure == null) {
-            onDisk { papers.forEach(pending::drop) }
+            papers.forEach { dropPaper(it) }
             return RunOutcome.PRINTED
         }
         Log.i(TAG) { "owner=${pair.owner} publish failed ($failure): ${papers.size} kept to publish again" }
@@ -714,7 +843,7 @@ class ObserverRunner(
     ) {
         val (live, expired) = papers.partition { now() <= it.until }
         expired.forEach {
-            onDisk { pending.drop(it) }
+            dropPaper(it)
             report(pair.owner, RunOutcome.PUBLISH_FAILED, "pending paper dropped")
         }
         if (live.isEmpty()) return
@@ -809,7 +938,14 @@ class ObserverRunner(
         val today = ObserverSite.utcDay(occurrence)
         val read = sites.mapNotNull { (io, site) -> site?.let { io to it } }
         val editions = read.flatMap { it.second.editions }
-        val ranDays = records.occurrences(owner).map { ObserverSite.utcDay(it) }
+        val ranDays =
+            try {
+                runs.occurrences(TASK, owner).map { ObserverSite.utcDay(it) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                emptyList()
+            }
         val newest =
             read
                 .flatMap { (io, site) -> site.editions.filter { it.day != today }.map { Triple(io, site.servers, it) } }
@@ -920,6 +1056,9 @@ class ObserverRunner(
 
     companion object {
         private const val TAG = "ObserverRunner"
+
+        /** The task this service runs: the schedules' `task`, and its rows in `assistant_runner`. */
+        const val TASK = ObserverSchedule.TASK
 
         /** Owners run at once ([poll]). */
         const val PARALLELISM = 4

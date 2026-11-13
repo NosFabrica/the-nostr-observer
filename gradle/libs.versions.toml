@@ -23,7 +23,7 @@ cryptoKmp = "2.1.0"
 # so every module force()s it. It pins Quartz too: keep the two `quartz` pins equal. The
 # repository is private, so JitPack can't build it yet: `settings.gradle.kts` substitutes a
 # checkout (`-PassistantRunnerDir`, or `../assistant-runner`) until it is public.
-assistantRunner = "4476b8e845ff16d9c531bbe049407314ff0b6cfd"
+assistantRunner = "0abcca0c722ccdb88cdd1797bcbbd796e836faf4"
 
 coroutines = "1.11.0"
 serialization = "1.12.0"

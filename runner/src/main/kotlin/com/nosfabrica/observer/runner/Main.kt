@@ -3,6 +3,9 @@ package com.nosfabrica.observer.runner
 import com.nosfabrica.assistant.core.AssistantKeys
 import com.nosfabrica.assistant.core.Db
 import com.nosfabrica.assistant.core.FernetKeyFile
+import com.nosfabrica.assistant.core.Migrations
+import com.nosfabrica.assistant.core.PostgresPendingStore
+import com.nosfabrica.assistant.core.PostgresRunStore
 import com.nosfabrica.observer.frontpage.IRoleBasedHttpClientBuilder
 import com.nosfabrica.observer.frontpage.JsoupPaperBoundary
 import com.nosfabrica.observer.frontpage.listAgentModels
@@ -18,8 +21,6 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import okhttp3.OkHttpClient
-import java.io.File
-import java.io.IOException
 import java.nio.file.Path
 import java.nio.file.Paths
 import java.util.concurrent.CountDownLatch
@@ -35,7 +36,6 @@ class RunnerConfig(
     val pollSeconds: Long,
     val indexRelays: List<String>,
     val searchRelay: String,
-    val stateFile: File?,
     /** brainstorm_server's Fernet key file, which opens the Assistants' nsecs. */
     val keysFile: Path = Paths.get(FernetKeyFile.DEFAULT_PATH),
     /** On SIGTERM, how long the print under way may still take before the process exits anyway. */
@@ -59,7 +59,6 @@ class RunnerConfig(
                         ?.takeIf { it.isNotEmpty() }
                         ?: listOf(search),
                 searchRelay = search,
-                stateFile = env["OBSERVER_RUNNER_STATE"]?.trim()?.takeIf { it.isNotEmpty() }?.let(::File),
                 keysFile = Paths.get(env["NSEC_KEYS_FILE"]?.trim()?.takeIf { it.isNotEmpty() } ?: FernetKeyFile.DEFAULT_PATH),
                 graceSeconds = env["OBSERVER_RUNNER_GRACE_SECONDS"]?.toLongOrNull()?.coerceAtLeast(0) ?: DEFAULT_GRACE_SECONDS,
             )
@@ -82,23 +81,13 @@ fun main() {
         }
     Log.minLevel = LogLevel.INFO
 
-    // One worker per state file: a second pod (an overlapping deploy) would print the same mornings.
-    val lock =
-        config.stateFile?.let {
-            try {
-                StateLock.acquire(it) ?: run {
-                    System.err.println("observer-runner: another worker holds ${it.path}.lock; exiting")
-                    exitProcess(3)
-                }
-            } catch (e: IOException) {
-                System.err.println("observer-runner: can't lock ${it.path}.lock: ${e.javaClass.simpleName}")
-                exitProcess(3)
-            }
-        }
-    if (lock ==
-        null
-    ) {
-        Log.w("ObserverRunner") { "OBSERVER_RUNNER_STATE is unset: the run records live in memory, and a restart forgets them" }
+    // The `assistant_runner` schema: whichever process starts first applies what is missing.
+    try {
+        runBlocking { Migrations.migrate(db) }.takeIf { it.isNotEmpty() }?.let { Log.i("ObserverRunner") { "migrated: $it" } }
+    } catch (e: Exception) {
+        // The class only: a driver's message may carry the URL.
+        System.err.println("observer-runner: can't migrate the assistant_runner schema: ${e.javaClass.simpleName}")
+        exitProcess(3)
     }
 
     val base =
@@ -150,11 +139,11 @@ fun main() {
             nostr = nostr,
             blossom = BlossomHttp(blossomClient),
             printer = PressPrinter(client, search, http, JsoupPaperBoundary),
-            records = FileRunRecords(config.stateFile),
+            runs = PostgresRunStore(db),
             models = { http.listAgentModels(it) },
             accepting = { !stopping.get() },
-            // Beside the run records, on the same volume: a paid paper survives a restart.
-            pending = PendingPapers(config.stateFile?.let { File(it.absoluteFile.parentFile, "pending") }),
+            // In Postgres beside the runs: a paid paper survives a restart.
+            pending = PostgresPendingStore(db),
             // Only ever the key's own node; through the same guarded client as the print.
             routstr = RoutstrFunds(HttpRoutstrNode(http)),
         )
@@ -192,6 +181,5 @@ fun main() {
         }
     } finally {
         idle.countDown()
-        lock?.release()
     }
 }

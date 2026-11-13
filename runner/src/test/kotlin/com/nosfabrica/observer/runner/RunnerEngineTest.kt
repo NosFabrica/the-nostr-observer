@@ -317,8 +317,8 @@ class RunnerEngineTest : RunnerWorld() {
                 assistantsSite = false,
             )
             // A run the worker remembers on a day neither site shows (its paper never went out).
-            records.started(owner.pubKey, six - 7 * 86_400)
-            records.ended(owner.pubKey, six - 7 * 86_400)
+            runs.claim(ObserverRunner.TASK, owner.pubKey, six - 7 * 86_400)
+            runs.end(ObserverRunner.TASK, owner.pubKey, six - 7 * 86_400, RunOutcome.PRINTED.name)
 
             assertEquals(RunOutcome.PRINTED, runner.poll()[owner.pubKey])
             val context: EditionContext = printer.options.single().context

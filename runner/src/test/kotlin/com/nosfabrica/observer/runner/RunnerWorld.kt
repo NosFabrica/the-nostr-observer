@@ -1,12 +1,15 @@
 package com.nosfabrica.observer.runner
 
+import com.nosfabrica.assistant.core.MemoryPendingStore
+import com.nosfabrica.assistant.core.MemoryRunStore
+import com.nosfabrica.assistant.core.PendingStore
+import com.nosfabrica.assistant.core.RunStore
 import com.nosfabrica.observer.frontpage.AgentModel
 import com.vitorpamplona.quartz.nip01Core.core.Event
 import com.vitorpamplona.quartz.nip01Core.signers.NostrSignerInternal
 import com.vitorpamplona.quartz.nipFAAgentKeys.tags.AgentKeyTag
 import com.vitorpamplona.quartz.nipFBScheduledTasks.ScheduledTask
 import com.vitorpamplona.quartz.nipFBScheduledTasks.ScheduledTaskEvent
-import kotlinx.coroutines.Dispatchers
 import java.time.Instant
 
 /**
@@ -40,7 +43,7 @@ abstract class RunnerWorld {
     protected val relays = FakeRelays()
     protected val blossom = FakeBlossom()
     protected val printer = FakePrinter()
-    protected val records = FileRunRecords(null)
+    protected val runs = MemoryRunStore()
     protected val api = RecordingAssistant(mapOf(owner.pubKey to assistant, stranger.pubKey to strangersAssistant), { clock })
     protected var listedModels = listed("openai/gpt-4o-mini", "anthropic/claude-sonnet-4.5", "text-embedding-3")
 
@@ -51,10 +54,9 @@ abstract class RunnerWorld {
             nostr = RunnerNostr(relays, setOf(index), null),
             blossom = BlossomHttp(blossom.client),
             printer = printer,
-            records = records,
+            runs = runs,
             models = { listedModels },
             now = { clock },
-            diskDispatcher = Dispatchers.Unconfined,
         )
 
     protected suspend fun world(keys: List<AgentKeyTag> = listOf(openRouter, secondOpenRouter, anthropic)) {
@@ -111,11 +113,11 @@ abstract class RunnerWorld {
 
     protected fun runnerWith(
         printer: PaperPrinter = this.printer,
-        records: RunRecords = this.records,
+        runs: RunStore = this.runs,
         accepting: () -> Boolean = { true },
         access: RelayAccess = relays,
         api: AssistantSigner = this.api,
-        pending: PendingPapers = PendingPapers(null),
+        pending: PendingStore = MemoryPendingStore(),
         routstr: RoutstrFunds = RoutstrFunds(NoRoutstrNode),
         parallelism: Int = ObserverRunner.PARALLELISM,
         models: suspend (AgentKeyTag) -> List<AgentModel> = { listedModels },
@@ -126,14 +128,12 @@ abstract class RunnerWorld {
         nostr = nostr,
         blossom = BlossomHttp(blossom.client),
         printer = printer,
-        records = records,
+        runs = runs,
         models = models,
         now = { clock },
         parallelism = parallelism,
         accepting = accepting,
         pending = pending,
         routstr = routstr,
-        // On the test's own thread: a write on a real dispatcher lets virtual time run past every timeout.
-        diskDispatcher = Dispatchers.Unconfined,
     )
 }

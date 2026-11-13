@@ -1,5 +1,6 @@
 package com.nosfabrica.observer.runner
 
+import com.nosfabrica.assistant.core.MemoryPendingStore
 import com.vitorpamplona.quartz.nip01Core.core.Event
 import com.vitorpamplona.quartz.nip01Core.relay.filters.Filter
 import com.vitorpamplona.quartz.nip01Core.relay.normalizer.NormalizedRelayUrl
@@ -10,7 +11,6 @@ import com.vitorpamplona.quartz.nipFBScheduledTasks.ScheduledTaskEvent
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withTimeoutOrNull
-import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
@@ -67,16 +67,15 @@ class RunnerBoundsTest : RunnerWorld() {
                         relays: Set<NormalizedRelayUrl>,
                     ): Int = awaitCancellation()
                 }
-            val dir = Files.createTempDirectory("pending").toFile()
-            assertNull(withTimeoutOrNull(60_000) { runnerWith(access = stuck, pending = PendingPapers(dir)).poll() })
+            val pending = MemoryPendingStore()
+            assertNull(withTimeoutOrNull(60_000) { runnerWith(access = stuck, pending = pending).poll() })
             assertEquals(1, printer.calls.size)
-            // A restart finds it, and publishes it without printing again.
-            val restarted = PendingPapers(dir)
-            assertEquals(listOf(six), restarted.of(owner.pubKey).map { it.occurrence })
-            runnerWith(pending = restarted).poll()
+            // A restart finds it in the store, and publishes it without printing again.
+            assertEquals(listOf(six), pending.list(ObserverRunner.TASK, owner.pubKey).map { it.occurrence })
+            runnerWith(pending = pending).poll()
             assertEquals(1, printer.calls.size)
             assertTrue(relays.published.any { ObserverSite.isRunnerSiteFor(it.first, assistant.pubKey, owner.pubKey) })
-            assertTrue(restarted.of(owner.pubKey).isEmpty())
+            assertTrue(pending.list(ObserverRunner.TASK, owner.pubKey).isEmpty())
         }
 
     @Test
@@ -102,18 +101,18 @@ class RunnerBoundsTest : RunnerWorld() {
                     readerName = "Vitor",
                     until = now + 3_600,
                 )
-            val pending = PendingPapers(null)
-            pending.keep(yesterday)
+            val pending = MemoryPendingStore()
+            pending.put(yesterday.toPending())
             val worker = runnerWith(pending = pending)
             blossom.down = true
             assertEquals(RunOutcome.PUBLISH_PENDING, worker.poll()[owner.pubKey])
             // Today's paper is kept beside it, not in its place.
-            assertEquals(listOf(six - 86_400, six), pending.of(owner.pubKey).map { it.occurrence })
+            assertEquals(listOf(six - 86_400, six), pending.list(ObserverRunner.TASK, owner.pubKey).map { it.occurrence })
             // Back up: both go out, in one site.
             blossom.down = false
             clock += 600
             worker.poll()
-            assertTrue(pending.of(owner.pubKey).isEmpty())
+            assertTrue(pending.list(ObserverRunner.TASK, owner.pubKey).isEmpty())
             val site = relays.published.last().first
             val paths = site.tags.filter { it.size > 1 && it[0] == "path" }.map { it[1] }
             assertTrue("/2026-11-11.html" in paths && "/2026-11-12.html" in paths, paths.toString())
