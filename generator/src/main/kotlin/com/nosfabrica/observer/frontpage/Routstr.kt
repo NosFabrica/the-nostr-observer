@@ -13,12 +13,13 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.longOrNull
+import kotlin.math.ceil
 
 /*
- * What the engine takes from Amethyst's `commons/routstr` (RoutstrError.kt and RoutstrJson.kt),
- * copied as they are there: the error reading behind [writerExceptionFor], and the shapes the
- * runner reads before it prints with a Routstr key (`/v1/info`, `sats_pricing`,
- * `/v1/balance/info`). The purchase flows (invoices, Cashu) are the apps', never the worker's.
+ * What the engine takes from Amethyst's `commons/routstr` (RoutstrError.kt, RoutstrJson.kt and
+ * RoutstrPricing.kt), copied as they are there: the error reading behind [writerExceptionFor], the
+ * shapes the runner reads before it prints with a Routstr key (`/v1/info`, `sats_pricing`,
+ * `/v1/balance/info`), and the sats an edition is estimated at. The purchase flows (invoices, Cashu) are the apps', never the worker's.
  *
  * What a Routstr node answers, read leniently: every field may be missing, a number may come as a
  * string, and an unknown shape reads as null rather than throwing. Shapes are the live nodes'
@@ -248,5 +249,47 @@ object RoutstrErrors {
             status == 404 -> RoutstrFailure.NOT_FOUND
             else -> RoutstrFailure.HTTP
         }
+    }
+}
+
+/** Routstr prices in sats, with the same token estimate the USD estimate uses. */
+object RoutstrPricing {
+    /**
+     * One Observer edition with [sats]: `prompt_tokens * prompt + completion_tokens * completion
+     * + request` for each of its two calls, rounded up to a whole sat. The tokens are the USD
+     * estimate's ([editionTokens]: a digest of [digestChars], the plan and the page, Deep's
+     * reasoning). Null when the node gives no prices.
+     */
+    fun editionSats(
+        sats: SatsPricing?,
+        digestChars: Int,
+        briefChars: Int = systemPrompt().length,
+        effort: WritingEffort = WritingEffort.STANDARD,
+    ): Long? {
+        val prompt = sats?.prompt ?: return null
+        val completion = sats.completion ?: return null
+        val tokens = editionTokens(digestChars, briefChars, effort)
+        val cost = tokens.input * prompt + tokens.output * completion + 2 * (sats.request ?: 0.0)
+        if (!cost.isFinite() || cost < 0) return null
+        return ceil(cost).toLong()
+    }
+
+    /** [SatsPricing.maxCost] rounded up to a whole sat: what the node reserves before it answers. */
+    fun maxCostSats(sats: SatsPricing?): Long? = sats?.maxCost?.takeIf { it.isFinite() && it >= 0 }?.let { ceil(it).toLong() }
+
+    /**
+     * Whether [balanceMsats] may not cover one edition: under the node's reserve for one request
+     * ([SatsPricing.maxCost]), or under the edition's estimate. False when neither is known.
+     */
+    fun isLow(
+        balanceMsats: Long?,
+        sats: SatsPricing?,
+        estimateSats: Long?,
+    ): Boolean {
+        val balance = balanceMsats ?: return false
+        val maxCost = maxCostSats(sats)
+        if (maxCost != null && balance < maxCost * 1000) return true
+        if (estimateSats != null && balance < estimateSats * 1000) return true
+        return false
     }
 }

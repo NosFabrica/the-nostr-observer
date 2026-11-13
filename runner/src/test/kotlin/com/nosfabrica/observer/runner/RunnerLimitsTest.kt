@@ -115,7 +115,7 @@ class RunnerLimitsTest {
                 runCatching {
                     runBlocking {
                         withTimeout(1_500) {
-                            cancellingCalls(http) { tracked -> tracked.chatComplete(key, "m", listOf(ChatMessage("user", "hi")), {}) }
+                            cancellingCalls(http) { tracked -> tracked.chatComplete(key, "m", listOf(ChatMessage("user", "hi"))) {} }
                         }
                     }
                 }

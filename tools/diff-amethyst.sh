@@ -13,14 +13,20 @@
 #   FrontPageViewModel, FrontPageMorning (the per-device claim), FrontPageSchedule (local
 #   prefs), FrontPagePrintJob, FrontPageModelMemory, ObserverPrefs, ModelChoices (the picker),
 #   ObserverSiteIO's AccountObserverSiteIO, FrontPageEditionStore, and the FrontPagePrinter
-#   class (only its account-free declarations are here). The runner (runner/) is this repo's
-#   printer and its ObserverSiteIO.
+#   class (only its account-free declarations are here; its editionContext, the edition's number,
+#   headlines, standing paper and clock, is the runner's ObserverRunner.editionContext here). The
+#   runner (runner/) is this repo's printer and its ObserverSiteIO.
 #   The ObserverTwoSitesTest case for observerSitesOf (FrontPageMorning's ObserverSites).
+#   FrontPageMorning's setEffort and observerSettingsOnly: WriterRequestTest keeps a private copy
+#   of the latter for its one effort test.
 # Deliberately different:
 #   ObserverPublisher takes `forReader`, for a runner's site (to be upstreamed).
 #   Platform.kt stands in for the bits of Amethyst's commons the engine imports.
-#   Routstr.kt is commons/routstr's RoutstrError.kt and the parts of its RoutstrJson.kt the engine
-#   (writerExceptionFor, sats_pricing) and the runner (/v1/info, /v1/balance/info) read.
+#   Routstr.kt is commons/routstr's RoutstrError.kt, RoutstrPricing.kt (the runner's balance
+#   reserve) and the parts of its RoutstrJson.kt the engine (writerExceptionFor, sats_pricing) and
+#   the runner (/v1/info, /v1/balance/info) read.
+#   chatComplete and listAgentModels are plain JVM functions carrying the expect's KDoc and
+#   defaults (maxTokens = null, effort = STANDARD).
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

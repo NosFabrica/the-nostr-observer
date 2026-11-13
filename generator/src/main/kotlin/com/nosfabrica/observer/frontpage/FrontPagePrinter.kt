@@ -132,6 +132,16 @@ fun gateOf(
         else -> FrontPageGate.READY
     }
 
+/** A call's output limit for [model]: the plan's ([planTokenLimit]) or the page's ([outputTokenLimit]). */
+fun outputLimitFor(
+    model: AgentModel,
+    call: WriteCall,
+): Int =
+    when (call.purpose) {
+        WriteCall.Purpose.PLAN -> planTokenLimit(model)
+        WriteCall.Purpose.PAGE -> outputTokenLimit(model, approxTokens(call.messages.sumOf { it.text.length }))
+    }
+
 /** Opening The Observer reads both sites again, unless they were read less than this long ago (seconds): a rotation or a tab switch isn't news. */
 const val SITE_REREAD_ON_OPEN_SECONDS = 60L
 

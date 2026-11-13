@@ -31,8 +31,8 @@ import com.vitorpamplona.quartz.nip19Bech32.toNpub
 import com.vitorpamplona.quartz.utils.Hex
 
 /*
- * What a front page is made of: the desks, the filters that read them, and the three
- * desks whose events get a real destination.
+ * What a front page is made of: the desks and the filters that read them. Where an event's
+ * link points is the app's ([PaperLinkSet]), the same for every desk.
  *
  * Ported from NosFabrica/the-nostr-observer @ 0901b92 (MIT, see ./LICENSE.observer):
  * `generator/.../nostr/Pull.kt` and `DeskLink.kt`, matched to Brainstorm's port
@@ -60,12 +60,47 @@ class Desk(
     val kinds: List<Int>,
     val label: String,
     val limit: Int,
+    /** Tag filters the desk's REQ adds (`#t`), or null. */
+    val tags: Map<String, List<String>>? = null,
+    /** How far back the desk reads. Every desk reads the fixed 24-hour window but the Kitchen. */
+    val lookbackSeconds: Long = FRONT_PAGE_WINDOW_SECONDS,
     val keeps: (Event) -> Boolean = { true },
 )
 
 fun Event.firstTagValue(name: String): String? = tags.firstOrNull { it.size > 1 && it[0] == name }?.get(1)
 
 fun Event.tagsNamed(name: String): List<Array<String>> = tags.filter { it.isNotEmpty() && it[0] == name }
+
+/** Whether [event] carries a `t` tag in [values], ignoring case. */
+fun hasHashtag(
+    event: Event,
+    values: Set<String>,
+): Boolean = event.tags.any { it.size > 1 && it[0] == "t" && it[1].trim().lowercase() in values }
+
+/** The hashtags zap.cooking files a recipe under: `zapcooking` now, `nostrcooking` on older ones. */
+val RECIPE_TAGS = setOf("zapcooking", "nostrcooking")
+
+/** Republished copyrighted recipes (an NYT Cooking mirror): never in the Kitchen. */
+val RECIPE_MIRROR_TAGS = setOf("newsarchive", "nytcooking")
+
+/**
+ * The Kitchen reads 30 days back, not 24 hours: the one desk that bends the fixed window.
+ * Community recipes are too sparse for a day (about two dozen a month, measured 2026-11-13), so
+ * the desk offers the best-ranked recipe of the month that hasn't run lately ([pickRecipe]).
+ */
+const val KITCHEN_LOOKBACK_SECONDS = 30L * 24 * 60 * 60
+
+/** A recipe's address, `30023:<pubkey>:<d>`: what the paper remembers it ran ([SavedEdition.recipe]), so an edit doesn't run again. */
+fun recipeAddress(event: Event): String = "${event.kind}:${event.pubKey}:${event.firstTagValue("d").orEmpty()}"
+
+/**
+ * The Kitchen's one recipe: the best-ranked of [ranked] (in the relay's rank order) whose address
+ * isn't among [recent], the recipes run in recent editions. Null when every one has run.
+ */
+fun pickRecipe(
+    ranked: List<Event>,
+    recent: Set<String>,
+): Event? = ranked.firstOrNull { recipeAddress(it) !in recent }
 
 /**
  * The desks, and why each earns a column. ONE REQ PER DESK: merged into one subscription
@@ -86,13 +121,25 @@ val DESKS: List<Desk> =
         Desk("shorts", listOf(22, 34236), "Short videos", 40),
         Desk("files", listOf(1063), "File metadata", 50),
         Desk("highlights", listOf(9802), "Highlights", 50),
-        Desk("articles", listOf(30023), "Long-form", 100),
+        // Recipes are long-form too: they run in the Kitchen, never in both.
+        Desk("articles", listOf(30023), "Long-form", 100) { !hasHashtag(it, RECIPE_TAGS) },
         Desk("classifieds", listOf(30402), "Classifieds", 30),
         Desk("wiki", listOf(30818), "Wiki entries", 30),
         // 31922 is NIP-52's all-day half and 31923 the timed half; one alone drops events.
         Desk("calendar", listOf(31922, 31923), "Calendar events", 100),
         Desk("apps", listOf(32267), "App releases", 30),
         Desk("git", listOf(30617), "Code repositories", 30),
+        // zap.cooking's recipes, ranked like every desk, over 30 days ([KITCHEN_LOOKBACK_SECONDS]),
+        // without the NYT Cooking mirror. The print keeps one ([pickRecipe]).
+        Desk(
+            "kitchen",
+            listOf(30023),
+            "Kitchen",
+            30,
+            keeps = { hasHashtag(it, RECIPE_TAGS) && !hasHashtag(it, RECIPE_MIRROR_TAGS) },
+            tags = mapOf("t" to RECIPE_TAGS.toList()),
+            lookbackSeconds = KITCHEN_LOOKBACK_SECONDS,
+        ),
     )
 
 /**
@@ -108,8 +155,10 @@ fun deskFilter(
     limit: Int,
     observerHex: HexKey?,
     floor: Int,
+    tags: Map<String, List<String>>? = null,
 ) = Filter(
     kinds = kinds,
+    tags = tags,
     since = since,
     // BOTH ends: `until` was once carried through and never put into a filter.
     until = until,
@@ -182,75 +231,8 @@ fun fromNpub(value: String): HexKey? {
     return entity.hex.lowercase().takeIf { isEventIdHex(it) }
 }
 
-/*
- * A byline's link to its author. Beyond the Observer, which prints names and links no one:
- * the digest gives the writer event ids and never pubkeys, so the writer names an author by
- * one of their posts ([PROFILE_WRITER]) and resolve turns it into the author's own npub page
- * ([PROFILE_LINK]). Only someone who wrote a post this edition read may be linked.
- */
-const val PROFILE_HOST_PATH = "https://jumble.social/users/"
-val PROFILE_WRITER = Regex("^https://jumble\\.social/users/([0-9a-fA-F]{64})(?:[/?#].*)?$")
-val PROFILE_LINK = Regex("^https://jumble\\.social/users/(npub1[0-9a-zA-Z]+)(?:[/?#].*)?$", RegexOption.IGNORE_CASE)
-
-fun toProfileLink(pubkey: HexKey) = PROFILE_HOST_PATH + npubOf(pubkey)
-
 /** What a person is called when they have published no name. Never hex. */
 fun shortNpub(hex: HexKey): String {
     val npub = npubOf(hex)
     return npub.take(10) + "…" + npub.takeLast(4)
 }
-
-/**
- * A desk whose events get a real destination. The digest hands the writer
- * [writerUrl] (event id hex on the host) and resolve re-encodes it to the host's naddr
- * page. Only events with a `d` tag qualify.
- */
-class DeskLink(
-    val kinds: Set<Int>,
-    /** The digest's line name (`watch:`), and resolve's name for an encoded link. */
-    val line: String,
-    val change: ResolveChange.Kind,
-    host: String,
-    writerPath: String,
-    naddrPath: String,
-) {
-    private val writerPrefix = "https://$host$writerPath"
-    private val naddrPrefix = "https://$host$naddrPath"
-    val writer = Regex("^" + Regex.escape(writerPrefix) + "([0-9a-fA-F]{64})(?:[/?#].*)?$", RegexOption.IGNORE_CASE)
-    val naddr = Regex("^" + Regex.escape(naddrPrefix) + "(naddr1[0-9a-zA-Z]+)(?:[/?#].*)?$", RegexOption.IGNORE_CASE)
-
-    fun writerUrl(eventId: String): String {
-        val id = eventId.lowercase()
-        require(isEventIdHex(id)) { "Not an event id" }
-        return writerPrefix + id
-    }
-
-    /**
-     * The host's naddr page for [event], or null when it has none: not this desk's kind, no `d`
-     * tag, or an address that won't encode (a `d` tag over 255 bytes). Never throws: the corpus
-     * is written by anyone, and nothing in resolve or check may fail on it.
-     */
-    fun canonicalUrlOrNull(event: Event): String? {
-        val d = event.firstTagValue("d") ?: return null
-        if (event.kind !in kinds || d.encodeToByteArray().size > 255) return null
-        val naddr =
-            try {
-                NAddress.createOrNull(event.kind, event.pubKey, d, emptyList())
-            } catch (e: Exception) {
-                null
-            } ?: return null
-        return naddrPrefix + naddr
-    }
-}
-
-/**
- * Live now to zap.stream, Classifieds to Shopstr, Calendar to njump. Calendar goes to
- * njump because jumble.social has no calendar view and an nevent would freeze one
- * revision of a replaceable event.
- */
-val DESK_LINKS: Map<String, DeskLink> =
-    linkedMapOf(
-        "live" to DeskLink(setOf(30311), "watch", ResolveChange.Kind.STREAM, "zap.stream", "/stream/", "/"),
-        "classifieds" to DeskLink(setOf(30402), "listing", ResolveChange.Kind.LISTING, "shopstr.store", "/listing/", "/listing/"),
-        "calendar" to DeskLink(setOf(31922, 31923), "calendar", ResolveChange.Kind.CALENDAR, "njump.me", "/", "/"),
-    )

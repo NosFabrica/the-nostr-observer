@@ -85,19 +85,32 @@ private val JSON = "application/json".toMediaType()
 /**
  * One Chat Completions call, streamed so the reader sees the model think and the page arrive
  * ([onEvent]: sent, first byte, reasoning, text); non-streamed when the provider refuses a stream,
- * said with [WriterEvent.AllAtOnce] before the whole answer comes.
+ * said with [WriterEvent.AllAtOnce] before the whole answer comes. [maxTokens] and [effort] go
+ * out as [chatRequestBody] maps them; a provider that refuses the request outright (400 or 422)
+ * while it carries them is asked once more without them, as before they existed.
  * @throws WriterException
  */
 suspend fun IRoleBasedHttpClientBuilder.chatComplete(
     key: AgentKeyTag,
     model: String,
     messages: List<ChatMessage>,
+    maxTokens: Int? = null,
+    effort: WritingEffort = WritingEffort.STANDARD,
     onEvent: (WriterEvent) -> Unit,
 ): Written =
     withContext(Dispatchers.IO) {
         val url = root(key) + "/chat/completions"
 
-        fun call(stream: Boolean) = request(url) { post(chatRequestBody(key.url, model, messages, stream).toRequestBody(JSON)).auth(key) }
+        /** [plain]: without the limit (Anthropic keeps its required one) and without Deep. */
+        fun call(
+            stream: Boolean,
+            plain: Boolean = false,
+        ) = request(url) {
+            val body = if (plain) chatRequestBody(key.url, model, messages, stream) else chatRequestBody(key.url, model, messages, stream, maxTokens, effort)
+            post(body.toRequestBody(JSON)).auth(key)
+        }
+        // What a provider might refuse that the request before them didn't carry.
+        val extras = (maxTokens != null && !isAnthropic(key.url)) || effort != WritingEffort.STANDARD
 
         try {
             // A page takes minutes to write: no read timeout between streamed chunks of that size.
@@ -119,6 +132,12 @@ suspend fun IRoleBasedHttpClientBuilder.chatComplete(
             onEvent(WriterEvent.Sent(streaming = false))
             onEvent(WriterEvent.AllAtOnce)
             client.newCall(call(stream = false)).executeAsync().use { response ->
+                if (response.isSuccessful) return@withContext readCompletion(response.body.string()).also { onEvent(WriterEvent.Text(it.text, it.text.length)) }
+                if (!extras || response.code !in setOf(400, 422)) throw failure(response)
+            }
+            // Refused with the limit or Deep: once more as the plain request every provider took.
+            onEvent(WriterEvent.Sent(streaming = false))
+            client.newCall(call(stream = false, plain = true)).executeAsync().use { response ->
                 if (!response.isSuccessful) throw failure(response)
                 readCompletion(response.body.string()).also { onEvent(WriterEvent.Text(it.text, it.text.length)) }
             }

@@ -201,7 +201,7 @@ class PressPrinter(
                     client,
                     searchRelay,
                     boundary,
-                    { messages, onEvent -> tracked.chatComplete(key, model, messages, onEvent).also { answered++ } },
+                    { call, onEvent -> tracked.chatComplete(key, model, call.messages, onEvent = onEvent).also { answered++ } },
                 ).print(owner, readerName)
             } catch (e: WriterException) {
                 // The repair round failed after the first page was paid for: never "nothing spent".
