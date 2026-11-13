@@ -58,11 +58,23 @@ file.
 |---|---|
 | 1 | Asks for your npub — it becomes the `observer:<pubkey>` token the relay ranks by |
 | 2 | `readiness.mjs` — four links, first unmet one wins, with the fix for that one |
-| 3 | `corpus.mjs` — fourteen desks plus an unranked control run, over a fixed 24-hour window |
+| 3 | `corpus.mjs` — fifteen desks plus an unranked control run, over a fixed 24-hour window (the Kitchen alone reads 30 days) |
 | 4 | Writes the page against `reference/editorial.md` and `reference/house.css` |
 | 5 | `resolve.mjs` — art ids to real URLs, citations to jumble.social, desk links to their hosts, every other link unwrapped |
 | 6 | `validate.mjs` — every quote verbatim, every picture from the shortlist, no link to the open web |
 | 7 | `embed.mjs` builds an artifact copy with the pictures inlined, since the artifact viewer blocks remote hosts; the HTML is saved and that copy published |
+
+## The Kitchen
+
+The paper's recipe comes from Nostr, never from an outside service. The Kitchen
+desk reads kind 30023 posts tagged `zapcooking` (zap.cooking's tag) or
+`nostrcooking` (the older one), ranked through your lens like every desk. It is
+the one desk that reads 30 days back instead of 24 hours: measured on
+search.brainstorm.world in November 2026, a month held 176 tagged recipes, 152
+of them an NYT Cooking mirror (`newsarchive` + `nytcooking`, left out), so about
+two dozen community recipes. A recipe cited in one of your last 14 editions in
+`editions/` is not offered again. The paper runs at most one; if the desk is
+empty, it runs none.
 
 ## If it says NOT READY
 
@@ -84,11 +96,11 @@ Four layers, and only the first two can run in CI.
 node --test ".claude/skills/nostr-observer/test/*.test.mjs"
 ```
 
-95 tests. bech32 against the NIP-19 worked example, the readiness chain in
+105 tests. bech32 against the NIP-19 worked example, the readiness chain in
 every state it can reach, query construction, the relay auth gate, socket
 sharing, the digest budget, the artifact embed step, the verified
-zap.stream / Shopstr / njump link encodings, and the boundary from both
-sides.
+zap.stream / Shopstr / njump link encodings, the Kitchen desk, and the
+boundary from both sides.
 
 **2. The relay client against a relay that misbehaves on purpose.**
 
