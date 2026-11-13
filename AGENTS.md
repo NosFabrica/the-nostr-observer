@@ -15,9 +15,14 @@ repo.
   It holds no nsec and signs and decrypts through brainstorm_server's
   `/internal/observerRunner/*`. `runner/README.md` has the contract and the deployment.
 
-The first design (a web app with sign-in, NosFabrica's own Anthropic key, a bunker
-countersigning the publish, its own SQLite store, and two Claude Code skills that printed to an
-artifact and deployed to Vercel) was removed on 2026-11-12. It was never deployed. Its history
+- `.claude/skills/`: the two Claude Code skills, still in use. `nostr-observer` prints a
+  paper with Claude Code as the writer and publishes it as a claude.ai artifact;
+  `observer-pages` deploys chosen editions to Vercel. Node, tested in CI with
+  `node --test ".claude/skills/*/test/*.test.mjs"` and a fake relay (no network). Their
+  `reference/` brief and stylesheet are edited in place now.
+
+The first design's web app (sign-in, NosFabrica's own Anthropic key, a bunker countersigning
+the publish, its own SQLite store) was removed on 2026-11-12. It was never deployed. Its history
 and its measurements are in git up to `0901b92`.
 
 ## Build

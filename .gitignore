@@ -21,8 +21,11 @@ hs_err_pid*
 local.properties
 *.local.conf
 
-# Local dry runs of the CLI
+# Local dry runs of the CLI, and the skill's printed papers plus corpus/digest
 editions/
+# observer-pages: the public shelf, staged for Vercel
+dist/
+.vercel/
 
 # OS
 .DS_Store

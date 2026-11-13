@@ -26,6 +26,17 @@ jobs:
       - name: Build, test and check formatting
         run: ./gradlew build --no-daemon --console=plain
 
+      # The Claude Code skills are Node, not Kotlin, so gradle never sees them. Their
+      # tests use a fake relay (the AUTH challenge sent before an answer, the
+      # subscription that says nothing) rather than dialling search.brainstorm.world,
+      # so this step holds to the same no-network rule as the build.
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+
+      - name: Test the Claude Code skills
+        run: node --test ".claude/skills/*/test/*.test.mjs"
+
       # `warn`, not `error`: when the build dies before `test` there is nothing
       # to upload, and failing here would bury the real error.
       - name: Publish test results
