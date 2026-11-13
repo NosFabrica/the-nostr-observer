@@ -66,6 +66,34 @@ class WakeServiceTest : RunnerWorld() {
         }
 
     @Test
+    fun aRunThatRecordsNothingButIsFinalForItsOccurrenceIsAnsweredSettledNextTime() =
+        runTest {
+            world()
+            // No Observer schedule at all (the runner woke for another of the owner's schedules of
+            // this task): no `runs` row is written, so without a memory the runner wakes forever.
+            val service = service()
+            assertEquals(WakeAnswer.Accepted(joined = false), service.wake(wake()))
+            service.idle()
+            assertEquals(WakeAnswer.Settled(RunOutcome.NO_SCHEDULE.name), service.wake(wake()))
+            // Another occurrence is a new question.
+            assertEquals(WakeAnswer.Accepted(joined = false), service.wake(wake(occurrence = six + 86_400)))
+        }
+
+    @Test
+    fun aTransientOutcomeIsTriedAgainOnTheNextWake() =
+        runTest {
+            world()
+            schedule()
+            // Too few of the owner's relays answer: the next wake may find them.
+            relays.down = setOf(ownerRelay)
+            val service = service()
+            assertEquals(WakeAnswer.Accepted(joined = false), service.wake(wake()))
+            service.idle()
+            assertEquals(WakeAnswer.Accepted(joined = false), service.wake(wake()))
+            service.idle()
+        }
+
+    @Test
     fun aSecondWakeForAnOwnerAlreadyRunningJoinsThatRun() =
         runTest {
             world()

@@ -5,6 +5,7 @@ import com.nosfabrica.observer.service.state.RunState
 import com.nosfabrica.observer.service.state.RunStore
 import com.vitorpamplona.quartz.nip01Core.core.HexKey
 import com.vitorpamplona.quartz.utils.Log
+import com.vitorpamplona.quartz.utils.TimeUtils
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -12,6 +13,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
+import java.util.concurrent.ConcurrentHashMap
 
 /** What a wake is answered (the trigger contract, v1: assistant-runner's `contract/v1/`). */
 sealed interface WakeAnswer {
@@ -55,6 +57,7 @@ class WakeService(
     /** False once the service is stopping: no wake starts a run, and the retry loop stops. */
     private val accepting: () -> Boolean = { true },
     private val retryAfterSeconds: Long = RETRY_AFTER_SECONDS,
+    private val now: () -> Long = { TimeUtils.now() },
 ) {
     init {
         require(parallelism >= 1) { "PARALLELISM must be at least 1" }
@@ -64,6 +67,19 @@ class WakeService(
 
     /** The owners whose path (a wake's run or a re-publish) is under way, and its job. */
     private val running = HashMap<HexKey, Job>()
+
+    private data class Occurrence(
+        val owner: HexKey,
+        val occurrence: Long,
+    )
+
+    /**
+     * The last outcome of a wake's run that wrote no `runs` row but is final for the wake's
+     * occurrence ([FINAL]), by owner and the occurrence the wake named. Without it the runner,
+     * which settles an occurrence only on a `200`, would wake it every few minutes until the next
+     * one is due. In memory: a restart costs one more run of the wake. Dropped after two days.
+     */
+    private val finals = ConcurrentHashMap<Occurrence, RunOutcome>()
 
     /** How many owners' paths are under way. */
     val busy: Int get() = synchronized(lock) { running.size }
@@ -80,11 +96,20 @@ class WakeService(
         if (!accepting()) return WakeAnswer.Busy(retryAfterSeconds)
         if (synchronized(lock) { request.owner in running }) return WakeAnswer.Accepted(joined = true)
         settled(request)?.let { return WakeAnswer.Settled(it) }
+        val key = Occurrence(request.owner, request.occurrence)
+        finals[key]?.let { return WakeAnswer.Settled(it.name) }
         synchronized(lock) {
             if (!accepting()) return WakeAnswer.Busy(retryAfterSeconds)
             if (request.owner in running) return WakeAnswer.Accepted(joined = true)
             if (running.size >= parallelism) return WakeAnswer.Busy(retryAfterSeconds)
-            launch(request.owner) { runner.run(it) }
+            launch(request.owner) { owner ->
+                runner.run(owner).also { outcome ->
+                    if (outcome in FINAL) {
+                        finals.keys.removeIf { it.occurrence < now() - FINAL_KEEP_SECONDS }
+                        finals[key] = outcome
+                    }
+                }
+            }
         }
         return WakeAnswer.Accepted(joined = false)
     }
@@ -179,6 +204,32 @@ class WakeService(
 
     companion object {
         private const val TAG = "WakeService"
+
+        /**
+         * The outcomes that write no `runs` row but are final for the occurrence a wake named, so
+         * a repeat wake for it is answered `200` with the outcome ([finals]):
+         * - `ALREADY_PRINTED`: the paper is on the owner's site or the Assistant's;
+         * - `NOT_RUNNABLE` (paused, not readable, not this task), `NO_SCHEDULE`, `NOT_NAMED` and
+         *   `UNKNOWN_PARAMS`: what the service reads of the owner's `d=observer` schedule says it
+         *   won't run, though the runner may have woken for another of the owner's schedules of
+         *   this task, which it would keep doing.
+         *
+         * Everything else stays `202` and is looked at again on the next wake: what the owner can
+         * fix or time can (`NO_QUORUM`, `NOT_READY`, `NOT_DUE`, a low balance, no 10063, …), and
+         * `CLAIMED_BY_DEVICE`, since a device's claim may go stale within the occurrence and the
+         * Assistant then takes it over (the runner's own decision holds its wakes back meanwhile).
+         */
+        val FINAL =
+            setOf(
+                RunOutcome.ALREADY_PRINTED,
+                RunOutcome.NOT_RUNNABLE,
+                RunOutcome.NO_SCHEDULE,
+                RunOutcome.NOT_NAMED,
+                RunOutcome.UNKNOWN_PARAMS,
+            )
+
+        /** How long a final outcome is remembered: past two days no wake names its occurrence. */
+        const val FINAL_KEEP_SECONDS = 2 * 86_400L
 
         /** What a busy service asks the runner to wait: about one print's model calls. */
         const val RETRY_AFTER_SECONDS = 60L

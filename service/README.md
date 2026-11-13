@@ -35,6 +35,14 @@ tables: it learns that an occurrence is settled from the `200` this service answ
      `started` one nobody here runs (another replica's, or one that died) with `ATTEMPTED`. One
      cheap read, no relay. The runner takes a `200` as settled and doesn't wake that occurrence
      again (until it restarts, which costs one more wake, answered the same);
+   - `200 {"outcome": …}` too when this process's last run for that owner and that occurrence
+     (as the wake named it) wrote no row but ended in an outcome that is final for it
+     (`WakeService.FINAL`): `ALREADY_PRINTED`, `NOT_RUNNABLE`, `NO_SCHEDULE`, `NOT_NAMED`,
+     `UNKNOWN_PARAMS`. The runner may wake for another of the owner's schedules of this task,
+     while this service reads only `d=observer`, and would otherwise wake every 10 minutes until
+     the next occurrence. Kept in memory for two days. Every other outcome without a row (the
+     transient ones: `NO_QUORUM`, `NOT_READY`, `NOT_DUE`, `CLAIMED_BY_DEVICE`, which may go stale
+     and be taken over, a low balance, no 10063, …) is looked at again on the next wake, `202`;
    - `429` with `Retry-After: 60` when all `PARALLELISM` slots are busy, or the service is
      stopping;
    - otherwise `202` (`{"joined": false}`), and the owner's path runs in the background.
