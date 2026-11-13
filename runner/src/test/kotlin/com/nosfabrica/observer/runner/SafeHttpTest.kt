@@ -3,6 +3,7 @@ package com.nosfabrica.observer.runner
 import okhttp3.Dns
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import java.io.IOException
 import java.net.InetAddress
 import java.net.Proxy
 import kotlin.test.Test
@@ -106,5 +107,39 @@ class SafeHttpTest {
         for (url in listOf("https://10.0.0.5/v1/models", "http://openrouter.ai/v1/models", "https://ai.example.com/v1/models")) {
             assertFailsWith<RefusedUrlException>(url) { client.newCall(Request.Builder().url(url).build()).execute() }
         }
+    }
+
+    @Test
+    fun shortAndOddIpv4LiteralsAreAddressesAndJudgedAsSuch() {
+        // Java and the C resolver read all of these as 127.0.0.1 or 10.0.0.1, and OkHttp dials a
+        // [0-9.]+ host without asking Dns: each must be refused from the URL alone.
+        listOf("127.1", "10.1", "0x7f.1", "2130706433", "017700000001", "0177.0.0.1", "0x7f000001", "127.0.1", "[::ffff:127.0.0.1]")
+            .forEach { assertNotNull(UrlGuard.hostRefusal(it), it) }
+        listOf("127.1", "10.1", "0x7f.1", "2130706433", "017700000001", "[::ffff:127.0.0.1]")
+            .forEach { assertNotNull(UrlGuard.refusal("https://$it/v1"), it) }
+        // A literal that no resolver can read as one address isn't dialled either.
+        listOf("1.2.3.4.5", "0x1ffffffff", "256.1.1.1", "08.1.1.1", "1.2.3.0x").forEach { assertNotNull(UrlGuard.hostRefusal(it), it) }
+        // Public addresses written the short way are still public; names made of hex letters are names.
+        assertNull(UrlGuard.hostRefusal("1.1"))
+        assertNull(UrlGuard.hostRefusal("0x01010101"))
+        assertNull(UrlGuard.hostRefusal("8.8.8.8"))
+        assertNull(UrlGuard.hostRefusal("bad.cafe"))
+        assertNull(UrlGuard.hostRefusal("dead.beef.cafe"))
+    }
+
+    @Test
+    fun theSocketRefusesAnInternalAddressWhateverTheUrlSaid() {
+        // Only the socket layer: no interceptor, no Dns guard. 127.0.0.1 is refused at connect,
+        // before any packet, so nothing is listening and nothing is reached.
+        val client = OkHttpClient.Builder().socketFactory(GuardedSocketFactory()).build()
+        for (url in listOf("http://127.0.0.1:1/", "http://127.1:1/", "http://[::1]:1/")) {
+            val e = assertFailsWith<IOException>(url) { client.newCall(Request.Builder().url(url).build()).execute() }
+            assertTrue(
+                e is RefusedUrlException || e.cause is RefusedUrlException || e.suppressed.any { it is RefusedUrlException },
+                "$url: $e",
+            )
+        }
+        // And the guarded client carries it.
+        assertTrue(guardedClient(OkHttpClient()).socketFactory is GuardedSocketFactory)
     }
 }

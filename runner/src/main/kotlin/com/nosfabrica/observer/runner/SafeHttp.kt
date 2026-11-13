@@ -8,9 +8,13 @@ import java.io.IOException
 import java.net.Inet4Address
 import java.net.Inet6Address
 import java.net.InetAddress
+import java.net.InetSocketAddress
 import java.net.Proxy
+import java.net.Socket
+import java.net.SocketAddress
 import java.net.URI
 import java.net.UnknownHostException
+import javax.net.SocketFactory
 
 /*
  * The worker runs inside Brainstorm's network, and every URL it dials for a reader came from
@@ -18,10 +22,12 @@ import java.net.UnknownHostException
  * servers, their relays. Any of them could name an internal service, by address or by a name
  * that resolves to one, so a reader could make the worker call it (SSRF).
  *
- * Three layers, because each one alone has a hole:
+ * Four layers, because each one alone has a hole:
  * - [UrlGuard.refusal] reads the URL: the scheme, an address literal, an internal-only name.
  * - [GuardedDns] checks every address a name resolves to, at connect time, every time, so a
  *   name that passed a check and then rebinds to 10.0.0.1 is still refused.
+ * - [GuardedSocketFactory] checks the address every socket connects to: OkHttp never asks
+ *   [Dns] about a host that looks like an IPv4 literal (`127.1`), so this is the backstop.
  * - The client follows no redirects, so a public host can't bounce a request inward.
  *
  * The guarded client also dials directly (no proxy): through a proxy, the proxy resolves the
@@ -74,26 +80,74 @@ object UrlGuard {
                 .removeSuffix("]")
                 .trimEnd('.')
         if (h.isEmpty()) return "no host"
-        literalAddress(h)?.let { return if (isInternal(it)) "an internal address" else null }
+        when (val literal = literal(h)) {
+            is Literal.Address -> return if (isInternal(literal.address)) "an internal address" else null
+            Literal.Unreadable -> return "an address no resolver reads the same way"
+            Literal.NotOne -> {}
+        }
         if (h == "localhost" || INTERNAL_SUFFIXES.any { h.endsWith(it) }) return "an internal name"
         // A single label ("redis", "brainstorm-server") is a name only an internal resolver answers.
         if ('.' !in h) return "an internal name"
         return null
     }
 
-    /** [host] as an address when it is an IPv4 or IPv6 literal; never a DNS lookup. */
-    private fun literalAddress(host: String): InetAddress? {
-        val looksV4 = host.all { it.isDigit() || it == '.' } && host.count { it == '.' } == 3
-        val looksV6 = ':' in host
-        // A bare decimal or hex integer ("2130706433", "0x7f000001") is an address to some resolvers.
-        val looksNumeric = host.all { it.isDigit() } || host.startsWith("0x")
-        if (looksNumeric) return InetAddress.getByAddress(byteArrayOf(127, 0, 0, 1))
-        if (!looksV4 && !looksV6) return null
-        return try {
-            InetAddress.getByName(host)
-        } catch (e: UnknownHostException) {
-            InetAddress.getByAddress(byteArrayOf(127, 0, 0, 1))
+    /**
+     * Whether [host] is an address and not a name: an IPv6 literal, or a host whose last label is
+     * a number (WHATWG's "ends in a number": digits, or `0x` and hex digits). Such a host is read
+     * the way `inet_aton` and Java read it: one to four parts, each decimal, octal (a leading 0)
+     * or hex (`0x`), the last filling the bytes left. So `127.1`, `10.1`, `0x7f.1`, `2130706433`
+     * and `017700000001` are all addresses. OkHttp dials a `[0-9.]+` host without asking [Dns],
+     * so this is the only place before the socket that sees them.
+     */
+    private sealed interface Literal {
+        object NotOne : Literal
+
+        object Unreadable : Literal
+
+        class Address(
+            val address: InetAddress,
+        ) : Literal
+    }
+
+    private fun literal(host: String): Literal {
+        if (':' in host) {
+            return try {
+                Literal.Address(InetAddress.getByName(host))
+            } catch (e: UnknownHostException) {
+                Literal.Unreadable
+            }
         }
+        val parts = host.split('.')
+        if (!isNumberPart(parts.last())) return Literal.NotOne
+        if (parts.size > 4) return Literal.Unreadable
+        val values = parts.map { numberValue(it) ?: return Literal.Unreadable }
+        // Every part but the last is one byte; the last fills the bytes left.
+        if (values.dropLast(1).any { it > 255 }) return Literal.Unreadable
+        val lastBytes = 5 - values.size
+        if (values.last() >= (1L shl (8 * lastBytes))) return Literal.Unreadable
+        var n = 0L
+        values.dropLast(1).forEach { n = (n shl 8) or it }
+        n = (n shl (8 * lastBytes)) or values.last()
+        val bytes = ByteArray(4) { i -> ((n shr (8 * (3 - i))) and 0xff).toByte() }
+        return Literal.Address(InetAddress.getByAddress(bytes))
+    }
+
+    /** WHATWG's test for a label that makes the host an IPv4 address: digits, or `0x` and hex digits (none included). */
+    private fun isNumberPart(label: String): Boolean =
+        label.isNotEmpty() &&
+            (label.all { it in '0'..'9' } || (label.startsWith("0x") && label.drop(2).all { it in '0'..'9' || it in 'a'..'f' }))
+
+    /** One part as `inet_aton` reads it, or null when it isn't a number it reads. */
+    private fun numberValue(part: String): Long? {
+        val (digits, radix) =
+            when {
+                part.startsWith("0x") -> part.drop(2) to 16
+                part.length > 1 && part.startsWith("0") -> part.drop(1) to 8
+                else -> part to 10
+            }
+        // At most 32 bits: a longer run of digits can't be an address part (and would overflow).
+        if (digits.isEmpty() || digits.length > 32) return null
+        return digits.toLongOrNull(radix)?.takeIf { it <= 0xffffffffL }
     }
 
     /**
@@ -160,6 +214,51 @@ class GuardedDns(
     }
 }
 
+/**
+ * The last layer: every socket the guarded client opens checks the address it is about to
+ * connect to, whatever the URL said and whichever path got there (a literal OkHttp never sent to
+ * [Dns], a resolver this code doesn't know of, a route OkHttp retries).
+ */
+class GuardedSocketFactory : SocketFactory() {
+    override fun createSocket(): Socket = GuardedSocket()
+
+    override fun createSocket(
+        host: String,
+        port: Int,
+    ): Socket = createSocket().apply { connect(InetSocketAddress(host, port)) }
+
+    override fun createSocket(
+        host: String,
+        port: Int,
+        localHost: InetAddress?,
+        localPort: Int,
+    ): Socket = createSocket().apply { bind(InetSocketAddress(localHost, localPort)).also { connect(InetSocketAddress(host, port)) } }
+
+    override fun createSocket(
+        host: InetAddress,
+        port: Int,
+    ): Socket = createSocket().apply { connect(InetSocketAddress(host, port)) }
+
+    override fun createSocket(
+        address: InetAddress,
+        port: Int,
+        localAddress: InetAddress?,
+        localPort: Int,
+    ): Socket = createSocket().apply { bind(InetSocketAddress(localAddress, localPort)).also { connect(InetSocketAddress(address, port)) } }
+}
+
+/** A socket that won't connect to an internal address ([UrlGuard.isInternal]). */
+private class GuardedSocket : Socket() {
+    override fun connect(
+        endpoint: SocketAddress?,
+        timeout: Int,
+    ) {
+        val address = (endpoint as? InetSocketAddress)?.address ?: throw RefusedUrlException("an unresolved address")
+        if (UrlGuard.isInternal(address)) throw RefusedUrlException("an internal address")
+        super.connect(endpoint, timeout)
+    }
+}
+
 /** Refuses a request whose URL [UrlGuard] refuses, before any connection is made. */
 class UrlGuardInterceptor(
     private val schemes: Set<String> = setOf("https"),
@@ -198,6 +297,7 @@ fun guardedClient(
         .newBuilder()
         .addInterceptor(UrlGuardInterceptor(schemes))
         .dns(dns)
+        .socketFactory(GuardedSocketFactory())
         .followRedirects(false)
         .followSslRedirects(false)
         .proxy(Proxy.NO_PROXY)
