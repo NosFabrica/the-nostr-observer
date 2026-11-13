@@ -7,7 +7,7 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { toHex, toNpub, shortNpub, toNevent, fromNevent, toNaddr, fromNaddr, DESK_LINKS, tagValue, tagsNamed } from '../scripts/nostr.mjs'
+import { toHex, toNpub, shortNpub, toNevent, fromNevent, toNaddr, fromNaddr, tagValue, tagsNamed, isAddressable, eventUrl, writerEventUrl, personUrl } from '../scripts/nostr.mjs'
 
 // The NIP-19 worked example.
 const HEX = '3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d'
@@ -58,7 +58,7 @@ test('an nprofile decodes to the pubkey hex', () => {
 test('an nevent round-trips an event id, and extra TLV fields still yield the id', () => {
   const id = 'a'.repeat(64)
   assert.equal(fromNevent(toNevent(id)), id)
-  // A jumble.social note URL carries relays in the nevent. The id is still
+  // An nevent from another client may carry relays. The id is still
   // type 0; we must not require the encoding to be id-only.
   const jumble = 'nevent1qvzqqqqqqypzqczwjmsfnym2zpyg89vtqs95weewpuzgex9v0yln0llycusz084jqythwumn8ghj7anfw3hhytnwdaehgu339e3k7mf0qy2hwumn8ghj7un9d3shjtnyv9kh2uewd9hj7qpq5sltgs3ufmenvu345j7cq56l6vuklz85rzflmay6mjfsnnzflqmqu8zv28'
   assert.equal(fromNevent(jumble), 'a43eb4423c4ef3367235a4bd80535fd3396f88f41893fdf49adc9309cc49f836')
@@ -79,8 +79,7 @@ test('an naddr round-trips a live stream address', () => {
   assert.match(naddr, /^naddr1/)
   assert.deepEqual(fromNaddr(naddr), { kind: 30311, pubkey, identifier })
   const event = { kind: 30311, pubkey, tags: [['d', identifier]] }
-  assert.equal(DESK_LINKS.live.canonicalUrl(event), `https://zap.stream/${naddr}`)
-  assert.equal(DESK_LINKS.live.writerUrl('a'.repeat(64)), `https://zap.stream/stream/${'a'.repeat(64)}`)
+  assert.equal(eventUrl(event), `https://brainstorm.world/e/${naddr}`)
 })
 
 test('an naddr round-trips a classified listing address', () => {
@@ -90,8 +89,7 @@ test('an naddr round-trips a classified listing address', () => {
   assert.match(naddr, /^naddr1/)
   assert.deepEqual(fromNaddr(naddr), { kind: 30402, pubkey, identifier })
   const event = { kind: 30402, pubkey, tags: [['d', identifier]] }
-  assert.equal(DESK_LINKS.classifieds.canonicalUrl(event), `https://shopstr.store/listing/${naddr}`)
-  assert.equal(DESK_LINKS.classifieds.writerUrl('b'.repeat(64)), `https://shopstr.store/listing/${'b'.repeat(64)}`)
+  assert.equal(eventUrl(event), `https://brainstorm.world/e/${naddr}`)
 })
 
 test('an naddr round-trips a calendar listing address', () => {
@@ -101,6 +99,27 @@ test('an naddr round-trips a calendar listing address', () => {
   assert.match(naddr, /^naddr1/)
   assert.deepEqual(fromNaddr(naddr), { kind: 31923, pubkey, identifier })
   const event = { kind: 31923, pubkey, tags: [['d', identifier]] }
-  assert.equal(DESK_LINKS.calendar.canonicalUrl(event), `https://njump.me/${naddr}`)
-  assert.equal(DESK_LINKS.calendar.writerUrl('c'.repeat(64)), `https://njump.me/${'c'.repeat(64)}`)
+  assert.equal(eventUrl(event), `https://brainstorm.world/e/${naddr}`)
+})
+
+test('Brainstorm: an nevent for a regular event, an naddr for an addressable one', () => {
+  const id = 'd'.repeat(64)
+  const pubkey = 'cc33'.repeat(16)
+  assert.equal(writerEventUrl(id.toUpperCase()), `https://brainstorm.world/e/${id}`)
+  assert.throws(() => writerEventUrl('abc'))
+  assert.equal(eventUrl({ id, kind: 1, pubkey }), `https://brainstorm.world/e/${toNevent(id)}`)
+  for (const kind of [30023, 30311, 30402, 30617, 30818, 31922, 31923, 32267]) {
+    assert.ok(isAddressable(kind), `${kind} is addressable`)
+    assert.equal(eventUrl({ id, kind, pubkey, tags: [['d', 'x']] }),
+      `https://brainstorm.world/e/${toNaddr({ kind, pubkey, identifier: 'x' })}`)
+  }
+  for (const kind of [0, 1, 3, 20, 1063, 9802, 10002, 29999, 40000]) assert.ok(!isAddressable(kind), `${kind} is not`)
+  // No d tag, no address: an nevent would freeze one revision, so there is no link.
+  assert.throws(() => eventUrl({ id, kind: 30023, pubkey, tags: [] }), /no address/)
+})
+
+test('Brainstorm: a person is their npub', () => {
+  const pubkey = 'cc33'.repeat(16)
+  assert.equal(personUrl(pubkey), `https://brainstorm.world/p/${toNpub(pubkey)}`)
+  assert.throws(() => personUrl('aa'))
 })

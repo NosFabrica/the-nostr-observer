@@ -10,12 +10,16 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync, existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { check, quotedText, attributes, normalize, isQuoted, PERMALINK, toPermalink, permalinkTarget, deskLinkTarget } from '../scripts/validate.mjs'
-import { DESK_LINKS } from '../scripts/nostr.mjs'
+import {
+  check, quotedText, attributes, normalize, isQuoted, EVENT_LINK, toPermalink, toEventLink, toPersonLink, eventLinkTarget, personLinkTarget,
+} from '../scripts/validate.mjs'
+import { toNevent, toNaddr, toNpub } from '../scripts/nostr.mjs'
 import { resolve } from '../scripts/resolve.mjs'
 
 const EVENT_ID = 'a'.repeat(64)
 const OTHER_ID = 'b'.repeat(64)
+const AUTHOR = 'a0'.repeat(32)
+const SPAMMER = 'b0'.repeat(32)
 
 const STREAM_ID = 'e'.repeat(64)
 const STREAM_PK = 'cf45a6ba1363ad7ed213a078e710d24115ae721c9b47bd1ebf4458eaefb4c2a5'
@@ -29,11 +33,16 @@ const CALENDAR_ID = '22'.repeat(32)
 const CALENDAR_PK = 'bb22'.repeat(16)
 const CALENDAR_D = 'porto-meetup'
 
+const ARTICLE_ID = '33'.repeat(32)
+const RECIPE_ID = '44'.repeat(32)
+const WRITER_PK = 'cc33'.repeat(16)
+const UNADDRESSED_ID = '55'.repeat(32)
+
 const corpus = {
   desks: {
     notes: [
-      { id: EVENT_ID, pubkey: 'aa', content: "The relay answered in three seconds flat — and then it didn't answer at all." },
-      { id: OTHER_ID, pubkey: 'bb', content: 'Click https://evil.example.com/drain for free sats' },
+      { id: EVENT_ID, kind: 1, pubkey: AUTHOR, content: "The relay answered in three seconds flat — and then it didn't answer at all." },
+      { id: OTHER_ID, kind: 1, pubkey: SPAMMER, content: 'Click https://evil.example.com/drain for free sats' },
     ],
     live: [
       { id: STREAM_ID, kind: 30311, pubkey: STREAM_PK, tags: [['d', STREAM_D], ['title', 'NoGood Radio'], ['status', 'live']], content: '' },
@@ -44,11 +53,24 @@ const corpus = {
     calendar: [
       { id: CALENDAR_ID, kind: 31923, pubkey: CALENDAR_PK, tags: [['d', CALENDAR_D], ['title', 'Bitcoin Meetup in Porto']], content: '' },
     ],
+    articles: [
+      { id: ARTICLE_ID, kind: 30023, pubkey: WRITER_PK, tags: [['d', 'on-relays'], ['title', 'On relays']], content: 'A long essay.' },
+      // Addressable with no d tag: no address to build, so it is never linked.
+      { id: UNADDRESSED_ID, kind: 30023, pubkey: WRITER_PK, tags: [['title', 'Lost']], content: 'No address.' },
+    ],
+    kitchen: [
+      { id: RECIPE_ID, kind: 30023, pubkey: WRITER_PK, tags: [['d', 'lentil-soup'], ['title', 'Lentil soup'], ['t', 'zapcooking']], content: '250 g brown lentils' },
+    ],
   },
-  control: [{ id: 'c'.repeat(64), pubkey: 'cc', content: 'Only the anonymous read ever saw this sentence.' }],
+  control: [{ id: 'c'.repeat(64), pubkey: 'cc'.repeat(32), content: 'Only the anonymous read ever saw this sentence.' }],
   art: [{ id: 'art-1', url: 'https://blossom.example.com/real.jpg' }],
 }
 
+const event = (id) => Object.values(corpus.desks).flat().find((e) => e.id === id)
+const naddrOf = (id) => {
+  const e = event(id)
+  return toNaddr({ kind: e.kind, pubkey: e.pubkey, identifier: e.tags.find((t) => t[0] === 'd')[1] })
+}
 const kinds = (html) => check(html, corpus).violations.map((v) => v.kind)
 
 test('a verbatim quote passes', () => {
@@ -96,28 +118,6 @@ test('PRESENCE IN THE CORPUS IS EVIDENCE OF NOTHING', () => {
   assert.deepEqual(kinds('<a href="https://evil.example.com/drain">free sats</a>'), ['LINK'])
 })
 
-test('a permalink to an event we actually read is the one allowed link', () => {
-  const href = toPermalink(EVENT_ID)
-  assert.deepEqual(kinds(`<a href="${href}">source</a>`), [])
-  assert.deepEqual(kinds(`<a href="${toPermalink('f'.repeat(64))}">source</a>`), ['LINK'],
-    'a well-formed permalink to an event not in the corpus is still refused')
-  assert.deepEqual(kinds(`<a href="https://njump.me/${EVENT_ID}">source</a>`), ['LINK'],
-    'njump.me is no longer the permalink host; resolve rewrites it')
-  assert.deepEqual(kinds(`<a href="https://jumble.social/notes/${EVENT_ID}">source</a>`), ['LINK'],
-    'bare hex in the jumble path is the writer form; resolve encodes it')
-})
-
-test('the permalink is a jumble.social nevent, decoded rather than captured', () => {
-  // The Kotlin regex once allowed `nevent1…` in a branch that captured
-  // nothing, so every such link compared against the empty string and a page
-  // citing its sources normally failed its own check. Decode, or refuse.
-  const href = toPermalink(EVENT_ID)
-  assert.equal(permalinkTarget(href), EVENT_ID)
-  assert.match(href, /^https:\/\/jumble\.social\/notes\/nevent1/)
-  assert.equal(permalinkTarget('https://jumble.social/notes/nevent1qqq'), null)
-  assert.equal(PERMALINK.exec(`https://njump.me/${EVENT_ID}`), null)
-})
-
 test('markup with no sanitizer to strip it is REFUSED', () => {
   for (const bad of [
     '<script>alert(1)</script>',
@@ -147,100 +147,200 @@ test('resolve unwraps a link to the open web but keeps its text, and SAYS SO', (
   assert.deepEqual(changes, [{ kind: 'unwrapped', detail: 'https://evil.example.com/drain' }])
 })
 
-test('resolve encodes a cited event id as a jumble.social nevent permalink', () => {
-  const writer = `https://jumble.social/notes/${EVENT_ID}`
-  const { html, changes } = resolve(`<a href="${writer}">source</a>`, corpus)
-  const canonical = toPermalink(EVENT_ID)
-  assert.match(html, new RegExp(`href="${canonical}"`))
+// --- links: Brainstorm and nothing else -----------------------------------
+
+const resolved = (href, text = 'source') => resolve(`<a href="${href}">${text}</a>`, corpus)
+const hrefOf = (html) => /href="([^"]*)"/.exec(html)?.[1]
+const HINTED = 'nevent1qvzqqqqqqypzqczwjmsfnym2zpyg89vtqs95weewpuzgex9v0yln0llycusz084jqythwumn8ghj7anfw3hhytnwdaehgu339e3k7mf0qy2hwumn8ghj7un9d3shjtnyv9kh2uewd9hj7qpq5sltgs3ufmenvu345j7cq56l6vuklz85rzflmay6mjfsnnzflqmqu8zv28'
+const HINTED_ID = 'a43eb4423c4ef3367235a4bd80535fd3396f88f41893fdf49adc9309cc49f836'
+
+test('a note becomes a Brainstorm nevent', () => {
+  const writer = `https://brainstorm.world/e/${EVENT_ID}`
+  const { html, changes } = resolved(writer)
+  assert.equal(hrefOf(html), `https://brainstorm.world/e/${toNevent(EVENT_ID)}`)
+  assert.equal(hrefOf(html), toPermalink(EVENT_ID))
   assert.match(html, /target="_blank"/)
   assert.match(html, /rel="[^"]*noopener/)
   assert.deepEqual(changes.map((c) => c.kind), ['permalink'])
-  // A leftover njump.me hex URL is upgraded the same way, so an old page
-  // still ships rather than having every citation unwrapped.
-  const legacy = resolve(`<a href="https://njump.me/${EVENT_ID}">source</a>`, corpus)
-  assert.match(legacy.html, new RegExp(`href="${canonical}"`))
-  assert.match(legacy.html, /target="_blank"/)
-})
-
-test('a permalink already in canonical form still opens in a new tab', () => {
-  const canonical = toPermalink(EVENT_ID)
-  const { html, changes } = resolve(`<a href="${canonical}">source</a>`, corpus)
-  assert.match(html, /target="_blank"/)
-  assert.match(html, /rel="[^"]*noopener/)
-  assert.deepEqual(changes.map((c) => c.kind), [])
-})
-
-test('a verified zap.stream watch link is allowed after resolve', () => {
-  const writer = `https://zap.stream/stream/${STREAM_ID}`
-  const canonical = DESK_LINKS.live.canonicalUrl(corpus.desks.live[0])
-  const { html, changes } = resolve(`<a href="${writer}">NoGood Radio</a>`, corpus)
-  assert.match(html, new RegExp(`href="${canonical.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`))
-  assert.match(html, /target="_blank"/)
-  assert.deepEqual(changes.map((c) => c.kind), ['stream'])
   assert.deepEqual(check(html, corpus).violations, [])
-  assert.equal(deskLinkTarget('live', canonical, corpus), STREAM_ID)
-  assert.equal(deskLinkTarget('live', 'https://zap.stream/stream/' + 'f'.repeat(64), corpus), null)
-  assert.deepEqual(kinds(`<a href="${writer}">NoGood Radio</a>`), ['LINK'],
-    'writer form must be encoded before validate')
+  assert.equal(eventLinkTarget(hrefOf(html), corpus), EVENT_ID)
+  assert.deepEqual(kinds(`<a href="${writer}">source</a>`), ['LINK'],
+    'the hex writer form must be encoded before validate')
 })
 
-test('a zap.stream URL copied from a post body is still refused', () => {
-  const invented = DESK_LINKS.live.canonicalUrl({ kind: 30311, pubkey: 'd'.repeat(64), tags: [['d', 'fake-stream']] })
-  assert.deepEqual(kinds(`<a href="${invented}">listen</a>`), ['LINK'])
+test('the permalink is decoded rather than captured', () => {
+  // The Kotlin regex once allowed `nevent1…` in a branch that captured
+  // nothing, so every such link compared against the empty string and a page
+  // citing its sources normally failed its own check. Decode, or refuse.
+  const href = toPermalink(EVENT_ID)
+  assert.equal(eventLinkTarget(href, corpus), EVENT_ID)
+  assert.equal(eventLinkTarget('https://brainstorm.world/e/nevent1qqq', corpus), null)
+  assert.equal(EVENT_LINK.exec(`https://brainstorm.world/e/${EVENT_ID}`), null)
+  assert.deepEqual(kinds(`<a href="${toPermalink('f'.repeat(64))}">source</a>`), ['LINK'],
+    'a well-formed permalink to an event not in the corpus is still refused')
 })
 
-test('a verified Shopstr listing link is allowed after resolve', () => {
-  const writer = `https://shopstr.store/listing/${LISTING_ID}`
-  const canonical = DESK_LINKS.classifieds.canonicalUrl(corpus.desks.classifieds[0])
-  const { html, changes } = resolve(`<a href="${writer}">4 Bars Rough Cut Tallow</a>`, corpus)
-  assert.match(html, new RegExp(`href="${canonical.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`))
-  assert.match(html, /target="_blank"/)
-  assert.deepEqual(changes.map((c) => c.kind), ['listing'])
-  assert.deepEqual(check(html, corpus).violations, [])
-  assert.equal(deskLinkTarget('classifieds', canonical, corpus), LISTING_ID)
-  assert.equal(deskLinkTarget('classifieds', 'https://shopstr.store/listing/' + 'a'.repeat(64), corpus), null)
-  assert.deepEqual(kinds(`<a href="${writer}">4 Bars Rough Cut Tallow</a>`), ['LINK'],
-    'writer form must be encoded before validate')
-})
-
-test('a shopstr URL copied from a post body is still refused', () => {
-  const invented = DESK_LINKS.classifieds.canonicalUrl({ kind: 30402, pubkey: 'd'.repeat(64), tags: [['d', 'fake-listing']] })
-  assert.deepEqual(kinds(`<a href="${invented}">buy</a>`), ['LINK'])
-})
-
-test('a verified njump calendar link is allowed after resolve', () => {
-  const writer = `https://njump.me/${CALENDAR_ID}`
-  const canonical = DESK_LINKS.calendar.canonicalUrl(corpus.desks.calendar[0])
-  const { html, changes } = resolve(`<a href="${writer}">Porto, Portugal</a>`, corpus)
-  assert.match(html, new RegExp(`href="${canonical.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`))
-  assert.match(html, /target="_blank"/)
-  assert.deepEqual(changes.map((c) => c.kind), ['calendar'])
-  assert.deepEqual(check(html, corpus).violations, [])
-  assert.equal(deskLinkTarget('calendar', canonical, corpus), CALENDAR_ID)
-  assert.equal(deskLinkTarget('calendar', 'https://njump.me/' + 'a'.repeat(64), corpus), null)
-  assert.deepEqual(kinds(`<a href="${writer}">Porto, Portugal</a>`), ['LINK'],
-    'writer form must be encoded before validate')
-})
-
-test('a jumble citation of a calendar event is rewritten to an njump naddr', () => {
-  const { html, changes } = resolve(`<a href="https://jumble.social/notes/${CALENDAR_ID}">meetup</a>`, corpus)
-  const canonical = DESK_LINKS.calendar.canonicalUrl(corpus.desks.calendar[0])
-  assert.match(html, new RegExp(`href="${canonical.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`))
-  assert.deepEqual(changes.map((c) => c.kind), ['calendar'])
-})
-
-test('an njump calendar URL copied from a post body is still refused', () => {
-  const invented = DESK_LINKS.calendar.canonicalUrl({ kind: 31923, pubkey: 'd'.repeat(64), tags: [['d', 'fake-meetup']] })
-  assert.deepEqual(kinds(`<a href="${invented}">meetup</a>`), ['LINK'])
-})
-
-test("no desk's link verifies another desk's event", () => {
-  for (const [key, link] of Object.entries(DESK_LINKS)) {
-    const canonical = link.canonicalUrl(corpus.desks[key][0])
-    for (const other of Object.keys(DESK_LINKS).filter((k) => k !== key)) {
-      assert.equal(deskLinkTarget(other, canonical, corpus), null, `${key} link read as ${other}`)
-    }
+test('a link already in canonical form is kept and still opens in a new tab', () => {
+  for (const href of [toPermalink(EVENT_ID), `https://brainstorm.world/e/${naddrOf(ARTICLE_ID)}`, toPersonLink(AUTHOR)]) {
+    const { html, changes } = resolved(href)
+    assert.equal(hrefOf(html), href)
+    assert.match(html, /target="_blank"/)
+    assert.match(html, /rel="[^"]*noopener/)
+    assert.deepEqual(changes, [])
+    assert.deepEqual(check(html, corpus).violations, [])
   }
+})
+
+test('a long-form post and a recipe each become a Brainstorm naddr', () => {
+  for (const id of [ARTICLE_ID, RECIPE_ID]) {
+    const { html, changes } = resolved(`https://brainstorm.world/e/${id}`)
+    assert.equal(hrefOf(html), `https://brainstorm.world/e/${naddrOf(id)}`)
+    assert.equal(hrefOf(html), toEventLink(event(id)))
+    assert.deepEqual(changes.map((c) => c.kind), ['address'])
+    assert.deepEqual(check(html, corpus).violations, [])
+    assert.equal(eventLinkTarget(hrefOf(html), corpus), id)
+  }
+})
+
+test('a calendar entry, a classified and a live stream each become a Brainstorm naddr', () => {
+  for (const id of [CALENDAR_ID, LISTING_ID, STREAM_ID]) {
+    const writer = `https://brainstorm.world/e/${id}`
+    const { html, changes } = resolved(writer, 'the listing')
+    assert.equal(hrefOf(html), `https://brainstorm.world/e/${naddrOf(id)}`)
+    assert.match(html, /target="_blank"/)
+    assert.deepEqual(changes.map((c) => c.kind), ['address'])
+    assert.deepEqual(check(html, corpus).violations, [])
+    assert.deepEqual(kinds(`<a href="${writer}">x</a>`), ['LINK'], 'writer form must be encoded before validate')
+  }
+})
+
+test('an nevent naming an ADDRESSABLE event is refused, and resolve turns it into the naddr', () => {
+  // An nevent freezes one revision of an event whose whole nature is to be
+  // replaced, so the reader clicks through to a meetup whose time has moved.
+  // resolve.mjs writes naddrs; this is the half that makes a regression there
+  // fail closed, and it is what Validator.kt already did for calendar.
+  for (const id of [CALENDAR_ID, LISTING_ID, STREAM_ID, ARTICLE_ID, RECIPE_ID]) {
+    const frozen = `https://brainstorm.world/e/${toNevent(id)}`
+    assert.deepEqual(kinds(`<a href="${frozen}">x</a>`), ['LINK'])
+    const { html, changes } = resolved(frozen)
+    assert.equal(hrefOf(html), `https://brainstorm.world/e/${naddrOf(id)}`)
+    assert.deepEqual(changes.map((c) => c.kind), ['address'])
+  }
+})
+
+test('an naddr must name an address in the corpus, of the same kind', () => {
+  const invented = `https://brainstorm.world/e/${toNaddr({ kind: 30311, pubkey: 'd'.repeat(64), identifier: 'fake-stream' })}`
+  assert.deepEqual(kinds(`<a href="${invented}">listen</a>`), ['LINK'])
+  assert.deepEqual(resolved(invented).changes.map((c) => c.kind), ['unwrapped'])
+  // 31922 and 31923 cannot answer for each other, though pubkey and d match.
+  const allDay = `https://brainstorm.world/e/${toNaddr({ kind: 31922, pubkey: CALENDAR_PK, identifier: CALENDAR_D })}`
+  assert.equal(eventLinkTarget(allDay, corpus), null)
+  // Nor can a regular kind pose as an address.
+  const regular = `https://brainstorm.world/e/${toNaddr({ kind: 1, pubkey: AUTHOR, identifier: '' })}`
+  assert.equal(eventLinkTarget(regular, corpus), null)
+})
+
+test('an addressable event with no d tag has no address, so it is not linked', () => {
+  const { html, changes } = resolved(`https://brainstorm.world/e/${UNADDRESSED_ID}`, 'Lost')
+  assert.equal(html, 'Lost')
+  assert.deepEqual(changes.map((c) => c.kind), ['unwrapped'])
+  assert.deepEqual(kinds(`<a href="https://brainstorm.world/e/${toNevent(UNADDRESSED_ID)}">Lost</a>`), ['LINK'])
+})
+
+test('a byline becomes the author\'s Brainstorm profile, /p/npub', () => {
+  const writer = `https://brainstorm.world/p/${EVENT_ID}`
+  const { html, changes } = resolved(writer, 'Alice')
+  assert.equal(hrefOf(html), `https://brainstorm.world/p/${toNpub(AUTHOR)}`)
+  assert.match(html, /target="_blank"/)
+  assert.deepEqual(changes.map((c) => c.kind), ['person'])
+  assert.deepEqual(check(html, corpus).violations, [])
+  assert.equal(personLinkTarget(hrefOf(html), corpus), AUTHOR)
+  // Any post of theirs works, addressable or not.
+  assert.equal(hrefOf(resolved(`https://brainstorm.world/p/${RECIPE_ID}`).html), toPersonLink(WRITER_PK))
+  assert.deepEqual(kinds(`<a href="${writer}">Alice</a>`), ['LINK'], 'writer form must be encoded before validate')
+})
+
+test('a byline names only someone who wrote something in the corpus', () => {
+  // The hex is an EVENT id. A pubkey in its place is not read as one.
+  assert.deepEqual(resolved(`https://brainstorm.world/p/${AUTHOR}`).changes.map((c) => c.kind), ['unwrapped'])
+  // A post the paper never read.
+  assert.deepEqual(resolved(`https://brainstorm.world/p/${'f'.repeat(64)}`).changes.map((c) => c.kind), ['unwrapped'])
+  // An npub of somebody with nothing on a desk; the control run does not count.
+  const stranger = `https://brainstorm.world/p/${toNpub('d'.repeat(64))}`
+  assert.deepEqual(kinds(`<a href="${stranger}">x</a>`), ['LINK'])
+  assert.deepEqual(resolved(stranger).changes.map((c) => c.kind), ['unwrapped'])
+  assert.deepEqual(kinds(`<a href="https://brainstorm.world/p/${toNpub('cc'.repeat(32))}">x</a>`), ['LINK'])
+})
+
+test('the old jumble.social citations are rewritten to Brainstorm', () => {
+  for (const form of [EVENT_ID, toNevent(EVENT_ID)]) {
+    const { html, changes } = resolved(`https://jumble.social/notes/${form}`)
+    assert.equal(hrefOf(html), toPermalink(EVENT_ID))
+    assert.match(html, /target="_blank"/)
+    assert.deepEqual(changes.map((c) => [c.kind, c.legacy]), [['permalink', true]])
+    assert.deepEqual(check(html, corpus).violations, [])
+  }
+  // A jumble citation of a calendar listing or a recipe becomes its naddr.
+  for (const id of [CALENDAR_ID, RECIPE_ID]) {
+    const { html, changes } = resolved(`https://jumble.social/notes/${id}`)
+    assert.equal(hrefOf(html), `https://brainstorm.world/e/${naddrOf(id)}`)
+    assert.deepEqual(changes.map((c) => [c.kind, c.legacy]), [['address', true]])
+  }
+  // A jumble citation of an event not in the corpus is unwrapped, as before.
+  assert.deepEqual(resolved(`https://jumble.social/notes/${'f'.repeat(64)}`).changes.map((c) => c.kind), ['unwrapped'])
+  // The validator never accepts jumble itself, in either form.
+  assert.deepEqual(kinds(`<a href="https://jumble.social/notes/${toNevent(EVENT_ID)}">s</a>`), ['LINK'])
+  assert.deepEqual(kinds(`<a href="https://jumble.social/notes/${EVENT_ID}">s</a>`), ['LINK'])
+})
+
+test('anything else is refused: the old desk hosts, and every other shape of Brainstorm link', () => {
+  const nevent = toPermalink(EVENT_ID)
+  const naddr = `https://brainstorm.world/e/${naddrOf(STREAM_ID)}`
+  const oldHosts = [
+    // The per-desk hosts the paper used to link to, in writer and naddr form.
+    `https://zap.stream/stream/${STREAM_ID}`, `https://zap.stream/${naddrOf(STREAM_ID)}`,
+    `https://shopstr.store/listing/${LISTING_ID}`, `https://shopstr.store/listing/${naddrOf(LISTING_ID)}`,
+    `https://njump.me/${CALENDAR_ID}`, `https://njump.me/${naddrOf(CALENDAR_ID)}`, `https://njump.me/${EVENT_ID}`,
+    `https://jumble.social/users/${toNpub(AUTHOR)}`,
+  ]
+  const offShape = [
+    // Brainstorm, but not the canonical form.
+    `${nevent}/extra`, `${nevent}?ref=x`, `${naddr}#top`,
+    `http://brainstorm.world/e/${toNevent(EVENT_ID)}`,
+    `https://www.brainstorm.world/e/${toNevent(EVENT_ID)}`,
+    `https://brainstorm.world/a/${naddrOf(STREAM_ID)}`,
+    `https://brainstorm.world/e/${toNpub(AUTHOR)}`,
+    `https://brainstorm.world/p/${toNevent(EVENT_ID)}`,
+    `https://brainstorm.world/p/${AUTHOR}`,
+    `https://brainstorm.world/p/${toNpub(AUTHOR)}/hops`,
+  ]
+  for (const href of [...oldHosts, ...offShape]) {
+    assert.deepEqual(kinds(`<a href="${href}">x</a>`), ['LINK'], `not refused: ${href}`)
+  }
+  // resolve drops the old desk hosts outright: no zap.stream, Shopstr or njump form survives.
+  for (const href of oldHosts) {
+    assert.deepEqual(resolved(href).changes.map((c) => c.kind), ['unwrapped'], `kept: ${href}`)
+  }
+})
+
+test('an nevent carrying relay hints is refused, and resolve re-encodes it to the bare id', () => {
+  const hinted = `https://brainstorm.world/e/${HINTED}`
+  const withId = { desks: { notes: [{ id: HINTED_ID, kind: 1, pubkey: AUTHOR, content: '' }] }, art: [] }
+  assert.equal(eventLinkTarget(hinted, withId), null)
+  const { html } = resolve(`<a href="${hinted}">s</a>`, withId)
+  assert.equal(hrefOf(html), toPermalink(HINTED_ID))
+  assert.deepEqual(check(html, withId).violations, [])
+})
+
+test('resolving twice changes nothing the second time', () => {
+  const page = [EVENT_ID, CALENDAR_ID, RECIPE_ID].map((id) => `<a href="https://brainstorm.world/e/${id}">e</a>`).join('')
+    + `<a href="https://brainstorm.world/p/${STREAM_ID}">who</a>`
+  const once = resolve(page, corpus)
+  assert.deepEqual(once.changes.map((c) => c.kind), ['permalink', 'address', 'address', 'person'])
+  const twice = resolve(once.html, corpus)
+  assert.equal(twice.html, once.html)
+  assert.deepEqual(twice.changes, [])
+  assert.deepEqual(check(twice.html, corpus).violations, [])
 })
 
 test('resolve then validate leaves nothing for validate to complain about', () => {
@@ -309,35 +409,15 @@ test('a real page head is not an attack', async () => {
 
 // --- Audit, 2026-09-21 ------------------------------------------------------
 
-test('a jumble nevent naming a CALENDAR listing is refused, not cited', () => {
-  // An nevent freezes one revision of an event whose whole nature is to be
-  // replaced, so the reader clicks through to a meetup whose time has moved.
-  // resolve.mjs rewrites these to njump naddrs; this is the half that makes a
-  // regression there fail closed, and it is what Validator.kt already did.
-  const frozen = toPermalink(CALENDAR_ID)
-  assert.deepEqual(kinds(`<a href="${frozen}">the meetup</a>`), ['LINK'])
-  // An ordinary note is still citable the normal way.
-  assert.deepEqual(kinds(`<a href="${toPermalink(EVENT_ID)}">source</a>`), [])
-})
-
-test('resolve turns that frozen citation into the njump address', () => {
-  const page = `<a href="${toPermalink(CALENDAR_ID)}">the meetup</a>`
-  const { html, changes } = resolve(page, corpus)
-  assert.deepEqual(changes.map((c) => c.kind), ['calendar'])
-  assert.match(html, /njump\.me\/naddr1/)
-  assert.deepEqual(check(html, corpus).violations, [])
-})
-
 test('a link helper does not read the corpus to answer about a url it cannot parse', () => {
   // The scan used to run BEFORE the regex, so every anchor on the page cost
   // six passes over every desk. Measured at 4,800 events and 528 anchors that
   // was 585 ms in resolve, ~440 ms of it for urls that never matched.
   let reads = 0
   const counted = { get desks () { reads++; return corpus.desks }, art: corpus.art }
-  for (const href of ['https://example.test/x', 'mailto:a@b.c', 'https://njump.me/not-an-naddr']) {
-    deskLinkTarget('live', href, counted)
-    deskLinkTarget('classifieds', href, counted)
-    deskLinkTarget('calendar', href, counted)
+  for (const href of ['https://example.test/x', 'mailto:a@b.c', 'https://brainstorm.world/e/not-an-naddr', `https://brainstorm.world/e/${EVENT_ID}`]) {
+    eventLinkTarget(href, counted)
+    personLinkTarget(href, counted)
   }
   assert.equal(reads, 0)
 })
@@ -345,10 +425,15 @@ test('a link helper does not read the corpus to answer about a url it cannot par
 test('the corpus is indexed once, however many links ask about it', () => {
   let reads = 0
   const counted = { get desks () { reads++; return corpus.desks }, art: corpus.art }
-  const stream = DESK_LINKS.live.canonicalUrl(corpus.desks.live[0])
-  for (let i = 0; i < 50; i++) assert.ok(deskLinkTarget('live', stream, counted))
+  const stream = toEventLink(event(STREAM_ID))
+  const person = toPersonLink(AUTHOR)
+  for (let i = 0; i < 50; i++) {
+    assert.ok(eventLinkTarget(stream, counted))
+    assert.ok(personLinkTarget(person, counted))
+  }
   assert.equal(reads, 1)
 })
+
 
 test('unwrapping an open-web link does not depend on the case of its closing tag', () => {
   // The old search lowercased the WHOLE document once per anchor — 54 MB of

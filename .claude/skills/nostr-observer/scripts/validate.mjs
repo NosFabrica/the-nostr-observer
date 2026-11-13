@@ -23,7 +23,7 @@
 import { readFileSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
 import { tags, attributes as attrsOf, textIn } from './html.mjs'
-import { toNevent, fromNevent, fromNaddr, DESK_LINKS, tagValue } from './nostr.mjs'
+import { toHex, fromNevent, fromNaddr, tagValue, isAddressable, eventUrl, personUrl } from './nostr.mjs'
 
 function arg (name, fallback = null) {
   const at = process.argv.indexOf(name)
@@ -111,70 +111,75 @@ export function isQuoted (raw, haystack) {
 }
 
 /**
- * The one external shape a link may take, after resolve.mjs has run:
- * `https://jumble.social/notes/<nevent1…>` naming an event we read.
+ * The two external shapes a link may take, after resolve.mjs has run:
  *
- * The writer cites `https://jumble.social/notes/<64-hex>` (or, still, a
- * leftover njump.me hex URL). resolve.mjs encodes the nevent. This checker
- * DECODES rather than capturing a regex group: the Kotlin regex once allowed
- * `nevent1…` in a branch that captured nothing, so every such link compared
- * against the empty string and a page citing its sources the normal way
- * failed its own check. Decode, or do not accept the link.
+ *  - `https://brainstorm.world/e/<nevent1…|naddr1…>` naming an event we read:
+ *    an naddr for an addressable kind, an nevent for everything else;
+ *  - `https://brainstorm.world/p/<npub1…>` naming the author of an event we
+ *    read.
+ *
+ * The writer cites `https://brainstorm.world/e/<64-hex>` and bylines
+ * `https://brainstorm.world/p/<64-hex id of one of their posts>`; resolve.mjs
+ * encodes both. This checker DECODES rather than capturing a regex group: the
+ * Kotlin regex once allowed `nevent1…` in a branch that captured nothing, so
+ * every such link compared against the empty string and a page citing its
+ * sources the normal way failed its own check. Decode, or do not accept the
+ * link. Then it re-encodes what it found and requires the page to carry
+ * exactly that: no relay hints the corpus never spoke to, no path or query
+ * after the id, and never an nevent for an addressable event.
  */
-export const PERMALINK = /^https:\/\/jumble\.social\/notes\/(nevent1[0-9a-z]+)(?:[/?#].*)?$/i
+export const EVENT_LINK = /^https:\/\/brainstorm\.world\/e\/((?:nevent1|naddr1)[0-9a-z]+)$/i
+export const PERSON_LINK = /^https:\/\/brainstorm\.world\/p\/(npub1[0-9a-z]+)$/i
 
-export function toPermalink (eventId) {
-  return `https://jumble.social/notes/${toNevent(eventId)}`
+/** The canonical Brainstorm link for an event: what resolve writes and validate accepts. */
+export function toEventLink (event) {
+  return eventUrl(event)
 }
 
-/** Event id hex if `href` is a jumble.social nevent permalink; otherwise null. */
-export function permalinkTarget (href) {
-  const match = PERMALINK.exec(href)
-  if (!match) return null
-  try {
-    return fromNevent(match[1])
-  } catch {
-    return null
-  }
+/** The canonical Brainstorm nevent link for a non-addressable event id. */
+export function toPermalink (eventId) {
+  return eventUrl({ id: eventId })
+}
+
+/** The canonical Brainstorm link for a person. */
+export function toPersonLink (pubkey) {
+  return personUrl(pubkey)
 }
 
 /**
  * The corpus, indexed once per run instead of once per link.
  *
- * Each desk link's list used to be rebuilt on every call — a `.flat()` over
- * every desk, then a filter over every event — and `resolve.mjs` asks every
- * desk link about every anchor on the page. Measured on a busy window
- * (4,800 ranked events, 528 anchors) that was 585 ms in resolve, of which about
- * 440 ms was these scans running for URLs that do not even match the helper's
- * own regex. Nothing reads the corpus until it has been parsed from disk and
- * nothing writes to it afterwards, so it is indexed once and keyed on the
- * object itself; a caller that mutates a corpus mid-run gets a stale index, and
- * no caller does.
+ * The desk-link lists used to be rebuilt on every call — a `.flat()` over
+ * every desk, then a filter over every event — and `resolve.mjs` asks about
+ * every anchor on the page. Measured on a busy window (4,800 ranked events,
+ * 528 anchors) that was 585 ms in resolve, of which about 440 ms was scans
+ * running for URLs that did not even match the helper's own regex. Nothing
+ * reads the corpus until it has been parsed from disk and nothing writes to it
+ * afterwards, so it is indexed once and keyed on the object itself; a caller
+ * that mutates a corpus mid-run gets a stale index, and no caller does.
  *
- * `byAddress` exists because the naddr lookup is the one that runs per matching
- * link, and a linear `find` over every stream is the same mistake one level
- * down. The kind is part of the key, so 31922 and 31923 cannot answer for each
- * other even when a pubkey reuses a d-tag across both.
+ * `byAddress` exists because the naddr lookup runs per matching link, and a
+ * linear `find` over every desk is the same mistake one level down. The kind
+ * is part of the key, so 31922 and 31923 cannot answer for each other even
+ * when a pubkey reuses a d-tag across both. `authors` is everyone who wrote an
+ * event on a desk: the only people a byline may link to.
  */
 const INDEX = new WeakMap()
 
 const lower = (value) => String(value || '').toLowerCase()
-const addressKey = (kind, pubkey, identifier) => `${kind}:${lower(pubkey)}:${identifier}`
+export const addressKey = (kind, pubkey, identifier) => `${kind}:${lower(pubkey)}:${identifier}`
 
 function indexOf (corpus) {
   const found = INDEX.get(corpus)
   if (found) return found
   const events = Object.values(corpus.desks).flat()
-  const of = (predicate) => {
-    const list = events.filter(predicate)
-    return {
-      list,
-      byId: new Map(list.map((e) => [lower(e.id), e])),
-      byAddress: new Map(list.map((e) => [addressKey(e.kind, e.pubkey, tagValue(e, 'd')), e])),
-    }
+  const built = {
+    byId: new Map(events.map((e) => [lower(e.id), e])),
+    byAddress: new Map(events
+      .filter((e) => isAddressable(e.kind) && tagValue(e, 'd') !== null)
+      .map((e) => [addressKey(e.kind, e.pubkey, tagValue(e, 'd')), e])),
+    authors: new Set(events.map((e) => lower(e.pubkey)).filter((pk) => /^[0-9a-f]{64}$/.test(pk))),
   }
-  const built = Object.fromEntries(Object.entries(DESK_LINKS).map(([key, link]) =>
-    [key, of((e) => link.kinds.has(e.kind) && tagValue(e, 'd'))]))
   INDEX.set(corpus, built)
   return built
 }
@@ -185,36 +190,63 @@ export function corpusIndex (corpus) {
 }
 
 /**
- * Event id if `href` is a verified canonical link to an event we read on the
- * desk `key` names (a key of `DESK_LINKS`); otherwise null.
- *
- * The naddr must decode to the same kind + pubkey + d-tag as an event in the
- * corpus — not merely appear in somebody's post. The writer form is not
- * accepted here: resolve.mjs encodes it, and refusing it after resolve is what
- * makes a regression in that step fail closed.
+ * The corpus event that `ref` (hex id, `nevent1…` or `naddr1…`) names, or null.
+ * Lenient about form, for resolve.mjs: it is what turns any of these into the
+ * one canonical link. validate.mjs does not use it to accept anything.
  */
-export function deskLinkTarget (key, href, corpus) {
-  // The regex first: a URL that is not this host's address is the common case
-  // on any page, and it used to cost a full pass over the corpus to find out.
-  const link = DESK_LINKS[key]
-  const naddr = link.naddr.exec(href)
-  if (!naddr) return null
+export function eventNamed (ref, corpus) {
+  const value = lower(ref)
+  const index = indexOf(corpus)
+  if (/^[0-9a-f]{64}$/.test(value)) return index.byId.get(value) || null
   try {
-    const { kind, pubkey, identifier } = fromNaddr(naddr[1])
-    if (!link.kinds.has(kind)) return null
-    const event = indexOf(corpus)[key].byAddress.get(addressKey(kind, pubkey, identifier))
-    return event?.id || null
+    if (value.startsWith('nevent1')) return index.byId.get(fromNevent(value)) || null
+    if (value.startsWith('naddr1')) {
+      const { kind, pubkey, identifier } = fromNaddr(value)
+      if (!isAddressable(kind)) return null
+      return index.byAddress.get(addressKey(kind, pubkey, identifier)) || null
+    }
+  } catch { /* not bech32 that names anything */ }
+  return null
+}
+
+/**
+ * Event id if `href` is the canonical Brainstorm link to an event we read;
+ * otherwise null.
+ *
+ * An naddr must decode to the same kind + pubkey + d-tag as an event in the
+ * corpus — not merely appear in somebody's post. An nevent naming an
+ * ADDRESSABLE event is refused even though the event is in the corpus and the
+ * citation is well formed: it freezes ONE revision of something whose whole
+ * nature is to be replaced, so the reader clicks through to a meetup whose
+ * time has since moved. resolve.mjs writes the naddr; refusing the nevent here
+ * is what makes a regression in that step fail closed. The writer form (hex)
+ * is not accepted either, for the same reason.
+ */
+export function eventLinkTarget (href, corpus) {
+  // The regex first: a URL that is not this shape is the common case on any
+  // page, and it used to cost a full pass over the corpus to find out.
+  const match = EVENT_LINK.exec(href)
+  if (!match) return null
+  const event = eventNamed(match[1], corpus)
+  if (!event) return null
+  try {
+    return toEventLink(event) === href ? lower(event.id) : null
   } catch {
     return null
   }
 }
 
-/** Writer form (`<host>/…/<64-hex>`), for resolve.mjs only. */
-export function deskWriterTarget (key, href, corpus) {
-  const writer = DESK_LINKS[key].writer.exec(href)
-  if (!writer) return null
-  const id = writer[1].toLowerCase()
-  return indexOf(corpus)[key].byId.has(id) ? id : null
+/** Pubkey hex if `href` is the canonical Brainstorm link to the author of an event we read; otherwise null. */
+export function personLinkTarget (href, corpus) {
+  const match = PERSON_LINK.exec(href)
+  if (!match) return null
+  try {
+    const pubkey = toHex(match[1])
+    if (!indexOf(corpus).authors.has(pubkey)) return null
+    return toPersonLink(pubkey) === href ? pubkey : null
+  } catch {
+    return null
+  }
 }
 
 // Things there is no sanitizer to strip, so they are refused instead.
@@ -286,9 +318,7 @@ export function check (html, corpus) {
   // a quote verify against something the edition never had access to.
   const events = Object.values(corpus.desks).flat()
   const haystack = events.map((e) => normalize(e.content || ''))
-  const eventIds = new Set(events.map((e) => e.id))
   const allowedImages = new Set((corpus.art || []).map((a) => a.url))
-  const calendarIds = indexOf(corpus).calendar.byId
 
   const violations = []
   const flag = (kind, detail, excerpt) => violations.push({ kind, detail, excerpt })
@@ -310,17 +340,8 @@ export function check (html, corpus) {
 
   for (const href of attributes(html, 'a', 'href')) {
     if (!/^https?:/i.test(href)) continue
-    const id = permalinkTarget(href)
-    // A jumble nevent naming a CALENDAR listing is refused, though the event is
-    // in the corpus and the citation is well formed. An nevent freezes ONE
-    // revision of an event whose whole nature is to be replaced, so the reader
-    // clicks through to a meetup whose time has since moved. `resolve.mjs`
-    // rewrites these to njump naddrs; refusing them here is what makes a
-    // regression in that step fail closed. `Validator.kt` has had this guard
-    // since the calendar desk landed and this half did not, which is the
-    // two-halves-disagreeing bug the permalink regex already taught us once.
-    if (id && eventIds.has(id) && !calendarIds.has(id)) continue
-    if (Object.keys(DESK_LINKS).some((key) => deskLinkTarget(key, href, corpus))) continue
+    if (eventLinkTarget(href, corpus)) continue
+    if (personLinkTarget(href, corpus)) continue
     // Presence in the corpus is evidence of NOTHING. An earlier version of
     // this rule allowlisted every URL that appeared in the corpus, on the
     // theory that a link nobody posted must have been invented. The corpus
@@ -328,9 +349,9 @@ export function check (html, corpus) {
     // put that URL on the allowlist, and an injected instruction to link
     // every story to it then passed cleanly — a phishing link under the
     // reader's masthead. So the paper does not link to the open web at all,
-    // except verified zap.stream / Shopstr / njump-calendar links for events
-    // in the corpus.
-    flag('LINK', 'only source citations, verified zap.stream watch links, Shopstr listing links, and njump calendar links may be links', href.slice(0, 120))
+    // except Brainstorm pages for events in the corpus and for their authors,
+    // each one derived by resolve.mjs and decoded back here.
+    flag('LINK', 'only Brainstorm links to an event in the corpus (/e/<nevent1|naddr1>) or to its author (/p/<npub1>) may be links', href.slice(0, 120))
   }
 
   return { violations, quotes, events: events.length, images: allowedImages.size }
