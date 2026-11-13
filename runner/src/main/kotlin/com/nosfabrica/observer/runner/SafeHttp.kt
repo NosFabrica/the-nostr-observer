@@ -315,7 +315,7 @@ class ReadBudget(
     val clock: () -> Long = System::currentTimeMillis,
 )
 
-private class ReadMeter(
+internal class ReadMeter(
     private val budget: ReadBudget,
 ) {
     private var windowStart = budget.clock()
@@ -333,7 +333,7 @@ private class ReadMeter(
     }
 }
 
-private class MeteredInputStream(
+internal class MeteredInputStream(
     stream: InputStream,
     private val meter: ReadMeter,
 ) : FilterInputStream(stream) {

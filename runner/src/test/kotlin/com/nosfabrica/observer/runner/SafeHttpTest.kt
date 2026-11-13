@@ -3,6 +3,7 @@ package com.nosfabrica.observer.runner
 import okhttp3.Dns
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import java.io.ByteArrayInputStream
 import java.io.IOException
 import java.net.InetAddress
 import java.net.Proxy
@@ -141,5 +142,18 @@ class SafeHttpTest {
         }
         // And the guarded client carries it.
         assertTrue(guardedClient(OkHttpClient()).socketFactory is GuardedSocketFactory)
+    }
+
+    @Test
+    fun aSocketReadsNoMoreThanItsBudgetPerWindow() {
+        var at = 0L
+        val meter = ReadMeter(ReadBudget(maxBytes = 100, windowMs = 1_000, clock = { at }))
+        val stream = MeteredInputStream(ByteArrayInputStream(ByteArray(1_000)), meter)
+        assertEquals(100, stream.read(ByteArray(100)))
+        // One byte past the budget in the same window: the socket fails, and the relay with it.
+        assertFailsWith<IOException> { stream.read() }
+        // A new window starts a new count.
+        at += 1_000
+        assertEquals(60, stream.read(ByteArray(60)))
     }
 }
