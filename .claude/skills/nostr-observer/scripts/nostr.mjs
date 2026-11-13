@@ -152,8 +152,8 @@ export function toNpub (hex) {
 /**
  * Event id hex to `nevent1…` (NIP-19, id only).
  *
- * jumble.social's note URLs take an nevent, not bare hex. The writer still
- * cites hex; resolve.mjs is what encodes. Relays and author are omitted on
+ * Brainstorm's event pages are addressed by nevent. The writer still cites
+ * hex; resolve.mjs is what encodes. Relays and author are omitted on
  * purpose: a permalink that names only the event cannot smuggle a relay
  * the corpus never spoke to.
  */
@@ -210,48 +210,58 @@ export function fromNaddr (input) {
 }
 
 /**
- * The three desks whose events get a real destination, keyed as `corpus.mjs`
- * keys its desks: Live now to zap.stream, Classifieds to Shopstr, Diary &
- * Calendar to njump. They differ only in host and path.
+ * Brainstorm, the one host the paper links to.
  *
- * The digest hands the writer `writerUrl(id)` — the event id in hex on the
- * host — and resolve.mjs re-encodes it to `canonicalUrl(event)`, the host's
- * naddr page. Only events carrying a `d` tag qualify: without one there is no
- * address to build. Calendar goes to njump because jumble.social has no
- * calendar view, and because an nevent would freeze one revision of a
- * replaceable event; the naddr stays on the listing as the organiser updates it.
+ * `https://brainstorm.world/e/<id>` opens an event and takes a `nevent`,
+ * `note`, `naddr` or hex id; an naddr opens the address view (articles,
+ * recipes, streams, listings, calendar entries). `https://brainstorm.world/p/<npub>`
+ * is a person. One host for every desk, so a stream, a classified and a
+ * meetup are linked exactly the way a note is.
+ *
+ * The writer cites `writerEventUrl(id)` — the event id in hex — and
+ * resolve.mjs re-encodes it to `eventUrl(event)`: an naddr for an addressable
+ * kind, so the link follows the listing as its author updates it instead of
+ * freezing one revision, and an nevent for everything else.
  */
-export const DESK_LINKS = {
-  live: deskLink({ kinds: [30311], host: 'zap.stream', writerPath: '/stream/', naddrPath: '/', line: 'watch', change: 'stream', what: 'stream watch link(s) to zap.stream' }),
-  classifieds: deskLink({ kinds: [30402], host: 'shopstr.store', writerPath: '/listing/', naddrPath: '/listing/', line: 'listing', change: 'listing', what: 'classified listing link(s) to Shopstr' }),
-  calendar: deskLink({ kinds: [31922, 31923], host: 'njump.me', writerPath: '/', naddrPath: '/', line: 'calendar', change: 'calendar', what: 'calendar link(s) to njump' }),
+export const BRAINSTORM = 'https://brainstorm.world'
+
+/**
+ * NIP-01: kinds 30000-39999 are addressable, named by kind + author + `d` tag.
+ * That covers every desk that needs an naddr (30023 long-form and recipes,
+ * 30311 live, 30402 classifieds, 30617 git, 30818 wiki, 31922/31923
+ * calendar, 32267 apps) without a list that a new desk could fall out of.
+ */
+export function isAddressable (kind) {
+  return Number.isInteger(kind) && kind >= 30000 && kind < 40000
 }
 
-function deskLink ({ kinds, host, writerPath, naddrPath, line, change, what }) {
-  const escape = (value) => value.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')
-  const writerPrefix = `https://${host}${writerPath}`
-  const naddrPrefix = `https://${host}${naddrPath}`
-  return {
-    kinds: new Set(kinds),
-    /** The digest's line name (`watch:`), and resolve's name for an encoded link. */
-    line,
-    change,
-    what,
-    writer: new RegExp(`^${escape(writerPrefix)}([0-9a-f]{64})(?:[/?#].*)?$`, 'i'),
-    naddr: new RegExp(`^${escape(naddrPrefix)}(naddr1[0-9a-z]+)(?:[/?#].*)?$`, 'i'),
-    /** Writer form: event id hex. resolve.mjs encodes the naddr afterwards. */
-    writerUrl (eventId) {
-      const id = String(eventId || '').toLowerCase()
-      if (!/^[0-9a-f]{64}$/.test(id)) throw new Error(`Not an event id: ${String(eventId).slice(0, 16)}`)
-      return writerPrefix + id
-    },
-    /** The host's canonical page for an event, addressed by naddr. */
-    canonicalUrl (event) {
-      const d = tagValue(event, 'd')
-      if (!d || !this.kinds.has(event.kind)) throw new Error(`Not an address on ${host}`)
-      return naddrPrefix + toNaddr({ kind: event.kind, pubkey: event.pubkey, identifier: d })
-    },
+/** Writer form: event id hex on Brainstorm. resolve.mjs encodes it afterwards. */
+export function writerEventUrl (eventId) {
+  const id = String(eventId || '').toLowerCase()
+  if (!/^[0-9a-f]{64}$/.test(id)) throw new Error(`Not an event id: ${String(eventId).slice(0, 16)}`)
+  return `${BRAINSTORM}/e/${id}`
+}
+
+/**
+ * An event's page on Brainstorm: `/e/<naddr1…>` for an addressable kind,
+ * `/e/<nevent1…>` for everything else. Throws for an addressable event with
+ * no `d` tag, which has no address to build — an nevent in its place would
+ * freeze one revision of something whose nature is to be replaced.
+ */
+export function eventUrl (event) {
+  if (isAddressable(event?.kind)) {
+    const d = tagValue(event, 'd')
+    if (d === null) throw new Error(`Kind ${event.kind} event without a d tag has no address`)
+    return `${BRAINSTORM}/e/${toNaddr({ kind: event.kind, pubkey: event.pubkey, identifier: d })}`
   }
+  return `${BRAINSTORM}/e/${toNevent(event?.id)}`
+}
+
+/** A person's page on Brainstorm, `/p/<npub1…>`. */
+export function personUrl (pubkey) {
+  const pk = String(pubkey || '').toLowerCase()
+  if (!/^[0-9a-f]{64}$/.test(pk)) throw new Error(`Not a pubkey: ${pk.slice(0, 16)}`)
+  return `${BRAINSTORM}/p/${toNpub(pk)}`
 }
 
 /** `nevent1…` to lowercase event-id hex. Throws if it is not an nevent that names an id. */

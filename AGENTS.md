@@ -221,33 +221,38 @@ would a `CLAUDE_CODE_OAUTH_TOKEN` pasted into anything of ours.
   successful injection. Its haystack is the ranked desks only, matching
   `Validator.kt`'s `corpus.all()`; the control run is not quotable.
 
-- **Permalinks are jumble.social `nevent1` URLs**, decoded rather than captured.
-  The writer cites `https://jumble.social/notes/<64-hex>`; `resolve.mjs` encodes
-  the nevent; `validate.mjs` decodes it and checks the id against the corpus.
-  The Kotlin regex once allowed `nevent1…` in a branch that captured nothing, so
-  every such link compared against the empty string and a page citing its sources
-  the normal way failed its own check. Decode, or do not accept the link. The
-  full Observer still uses njump.me; this is the skill's host.
+- **Every link is a Brainstorm page, decoded rather than captured.** The writer
+  cites `https://brainstorm.world/e/<64-hex>` for any event on any desk and
+  links a byline as `https://brainstorm.world/p/<64-hex id of one of their
+  posts>`. `resolve.mjs` encodes the citation to an `nevent1`, or to an
+  `naddr1` for an addressable kind (30000-39999: long-form, recipes, live,
+  classifieds, calendar, wiki, git, apps), and the byline to the author's
+  `npub1`. `validate.mjs` decodes each one, finds the event (or author) in the
+  corpus, re-encodes it and requires the page to carry exactly that. The
+  Kotlin regex once allowed `nevent1…` in a branch that captured nothing, so
+  every such link compared against the empty string and a page citing its
+  sources the normal way failed its own check. Decode, or do not accept the
+  link. The full Observer still uses njump.me; Brainstorm is the skill's host.
 
-- **Three desks get a real destination, and nothing else does.** Broadcasting
-  links to zap.stream, Classifieds to Shopstr, Diary & Calendar to njump — each
-  one an `naddr` the boundary derives, never a URL the writer composed. The
-  shape is the art-id shape: the digest hands the writer a writer-form URL, the
-  resolver re-encodes it to the host's canonical address, and the validator
-  decodes it back and checks the id against the corpus. A fabricated watch or
-  listing link is therefore structurally impossible rather than merely
-  detectable, which is why these three are not an exception to "no links to the
-  open web" so much as an application of the same rule. Only events carrying a
-  `d` tag qualify: without one there is no address to build, and printing a link
-  the sanitizer will unwrap is worse than printing none. Calendar goes to njump
-  rather than jumble because jumble has no calendar view, and because an
-  `nevent` would freeze one revision of a replaceable event.
+- **An addressable event is linked by naddr, never nevent.** The shape is the
+  art-id shape: the writer hands in an id, the resolver re-encodes it to the
+  address, and the validator decodes it back and checks kind + author + `d`
+  against the corpus, so a fabricated listing or stream link is structurally
+  impossible rather than merely detectable. An nevent would freeze one
+  revision of something whose nature is to be replaced, so the validator
+  refuses it even for an event in the corpus. An addressable event with no `d`
+  tag has no address and is not linked at all. The per-desk hosts (zap.stream,
+  Shopstr, njump) are gone; old jumble.social citations are still rewritten to
+  Brainstorm for one release.
 
 - **`reference/` is generated.** `tools/sync-skill.sh` copies `system-prompt.md`
   and `house.css` in and prepends a banner correcting the four statements in the
   brief that are true only of the Messages API harness (a sanitizer runs after
   you; the corpus is a `<corpus>` block; return HTML and nothing else; the
-  digest's times are the reader's local clock — here they are UTC). Run it
+  digest's times are the reader's local clock — here they are UTC). It then
+  applies `tools/skill-brief.patch`, which holds what only the skill has: the
+  Kitchen section and the Brainstorm links. Change those in the generated file,
+  then regenerate the patch as a diff against a fresh unpatched copy. Run it
   after editing either resource — the copies are committed, so `git diff
   --exit-code` after running it says whether they are current.
 
@@ -273,9 +278,9 @@ would a `CLAUDE_CODE_OAUTH_TOKEN` pasted into anything of ours.
   writer the opposite and validated URLs only, so a page written to the brief
   would have had every picture rejected — the same two-halves-disagreeing bug as
   the `nevent1` branch that captured nothing. `resolve.mjs` is that afterwards:
-  ids to URLs, unknown id loses its whole figure, hex permalinks encoded to
-  jumble.social nevent URLs, stream / listing / calendar links encoded to their
-  host's naddr, and every other link to the open web unwrapped to plain text. It
+  ids to URLs, unknown id loses its whole figure, hex citations encoded to
+  Brainstorm nevent / naddr URLs, bylines to Brainstorm npub profiles, and
+  every other link to the open web unwrapped to plain text. It
   PRINTS every change that is not a plain resolution, because a dropped figure
   or an unwrapped link is the visible edge of an injection attempt and a
   sanitizer that tidies up in silence hides the one event worth seeing.

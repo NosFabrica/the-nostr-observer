@@ -60,8 +60,8 @@ file.
 | 2 | `readiness.mjs` — four links, first unmet one wins, with the fix for that one |
 | 3 | `corpus.mjs` — fifteen desks plus an unranked control run, over a fixed 24-hour window (the Kitchen alone reads 30 days) |
 | 4 | Writes the page against `reference/editorial.md` and `reference/house.css` |
-| 5 | `resolve.mjs` — art ids to real URLs, citations to jumble.social, desk links to their hosts, every other link unwrapped |
-| 6 | `validate.mjs` — every quote verbatim, every picture from the shortlist, no link to the open web |
+| 5 | `resolve.mjs` — art ids to real URLs, citations to Brainstorm (nevent, or naddr for addressable events), bylines to Brainstorm profiles, every other link unwrapped |
+| 6 | `validate.mjs` — every quote verbatim, every picture from the shortlist, no link but Brainstorm pages for the corpus's events and authors |
 | 7 | `embed.mjs` builds an artifact copy with the pictures inlined, since the artifact viewer blocks remote hosts; the HTML is saved and that copy published |
 
 ## The Kitchen
@@ -96,10 +96,10 @@ Four layers, and only the first two can run in CI.
 node --test ".claude/skills/nostr-observer/test/*.test.mjs"
 ```
 
-105 tests. bech32 against the NIP-19 worked example, the readiness chain in
+109 tests. bech32 against the NIP-19 worked example, the readiness chain in
 every state it can reach, query construction, the relay auth gate, socket
 sharing, the digest budget, the artifact embed step, the verified
-zap.stream / Shopstr / njump link encodings, the Kitchen desk, and the
+Brainstorm nevent / naddr / npub link encodings, the Kitchen desk, and the
 boundary from both sides.
 
 **2. The relay client against a relay that misbehaves on purpose.**

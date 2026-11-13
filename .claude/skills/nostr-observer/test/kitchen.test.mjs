@@ -13,7 +13,7 @@ import { tmpdir } from 'node:os'
 import {
   DESKS, KITCHEN_WINDOW_SECONDS, RECIPE_TAGS, RECIPE_MEMORY, deskFilter, pull, digest, fit, pastCitations, recipeImage, shortlist,
 } from '../scripts/corpus.mjs'
-import { closeAll, toNevent } from '../scripts/nostr.mjs'
+import { closeAll, toNevent, toNaddr } from '../scripts/nostr.mjs'
 import { fakeRelay, event } from './fakerelay.mjs'
 
 const OBSERVER = 'aa'.repeat(32)
@@ -154,7 +154,8 @@ test('the digest prints the whole recipe, its cook, its picture and its source',
   }
   assert.doesNotMatch(section.slice(0, section.indexOf(`[${R2}]`)), /truncated/)
   assert.match(section, /cook: Marta/)
-  assert.match(section, new RegExp(`source: https://jumble\\.social/notes/${R1}`))
+  assert.match(section, new RegExp(`source: https://brainstorm\\.world/e/${R1}$`, 'm'))
+  assert.doesNotMatch(text, /jumble\.social|zap\.stream|shopstr|njump/)
   // The picture comes from the `image` tag and is on the shortlist by id.
   const art = corpus.art.find((a) => a.eventId === R1)
   assert.equal(art.url, 'https://cdn.example/soup.jpg')
@@ -169,15 +170,17 @@ test('a recipe that ran in one of the last 14 editions is held back', async () =
   const { relay } = await kitchenRelay()
   let corpus
   try {
-    // R1 ran yesterday, cited the resolved way; the artifact copy of the same
-    // edition is not a second edition. OLD_TAG ran 15 editions ago, outside
-    // the memory, so it may run again.
-    writeFileSync(join(dir, 'observer-2026-11-12-ABC123.html'), `<a href="https://jumble.social/notes/${toNevent(R1)}">Source</a>`)
-    writeFileSync(join(dir, 'observer-2026-11-12-ABC123.artifact.html'), `<a href="https://jumble.social/notes/${toNevent(R2)}">Source</a>`)
+    // R1 ran yesterday, cited the resolved way: a recipe is addressable, so
+    // its Source link is a Brainstorm naddr and it is matched by address. The
+    // artifact copy of the same edition is not a second edition. OLD_TAG ran
+    // 15 editions ago, outside the memory, so it may run again.
+    const r1 = toNaddr({ kind: 30023, pubkey: COOK, identifier: `soup-${R1.slice(0, 4)}` })
+    writeFileSync(join(dir, 'observer-2026-11-12-ABC123.html'), `<a href="https://brainstorm.world/e/${r1}">Source</a>`)
+    writeFileSync(join(dir, 'observer-2026-11-12-ABC123.artifact.html'), `<a href="https://brainstorm.world/e/${toNevent(R2)}">Source</a>`)
     for (let n = 1; n <= RECIPE_MEMORY; n++) {
       const day = String(n).padStart(2, '0')
       const cited = n === 1 ? OLD_TAG : 'f0'.repeat(32)
-      writeFileSync(join(dir, `observer-2026-10-${day}-X${day}.html`), `<a href="https://jumble.social/notes/${cited}">s</a>`)
+      writeFileSync(join(dir, `observer-2026-10-${day}-X${day}.html`), `<a href="https://brainstorm.world/e/${cited}">s</a>`)
     }
     corpus = await pull({ relay: relay.url, observerHex: OBSERVER, until: UNTIL, editionsDir: dir, idleMs: 2_000 })
   } finally { closeAll(); await relay.close(); rmSync(dir, { recursive: true, force: true }) }
@@ -192,16 +195,47 @@ test('a recipe that ran in one of the last 14 editions is held back', async () =
 test('past editions are read newest first, by date then by write time', () => {
   const dir = mkdtempSync(join(tmpdir(), 'observer-kitchen-'))
   try {
-    writeFileSync(join(dir, 'observer-2026-11-01-AAAAAA.html'), `https://jumble.social/notes/${R1}`)
-    writeFileSync(join(dir, 'observer-2026-11-02-BBBBBB.html'), `https://jumble.social/notes/${R2}`)
+    writeFileSync(join(dir, 'observer-2026-11-01-AAAAAA.html'), `https://brainstorm.world/e/${R1}`)
+    writeFileSync(join(dir, 'observer-2026-11-02-BBBBBB.html'), `https://brainstorm.world/e/${R2}`)
     writeFileSync(join(dir, 'observer-2026-11-02-CCCCCC.html'), 'no citations')
     utimesSync(join(dir, 'observer-2026-11-02-CCCCCC.html'), new Date(), new Date(Date.now() + 60_000))
-    writeFileSync(join(dir, 'corpus.json'), `https://jumble.social/notes/${OLD_TAG}`)
+    writeFileSync(join(dir, 'corpus.json'), `https://brainstorm.world/e/${OLD_TAG}`)
     const two = pastCitations(dir, 2)
     assert.deepEqual(two.editions, ['observer-2026-11-02-CCCCCC.html', 'observer-2026-11-02-BBBBBB.html'])
     assert.deepEqual([...two.ids], [R2])
     assert.deepEqual(pastCitations(join(dir, 'missing')).editions, [])
   } finally { rmSync(dir, { recursive: true, force: true }) }
+})
+
+test('past citations are read in every form an edition has carried', () => {
+  // Brainstorm hex (resolve never ran), nevent, naddr (a recipe), and the
+  // jumble.social citations of editions printed before Brainstorm.
+  const dir = mkdtempSync(join(tmpdir(), 'observer-kitchen-'))
+  try {
+    const address = { kind: 30023, pubkey: COOK, identifier: 'bread' }
+    writeFileSync(join(dir, 'observer-2026-11-05-AAAAAA.html'), [
+      `<a href="https://brainstorm.world/e/${R1}">a</a>`,
+      `<a href="https://brainstorm.world/e/${toNevent(R2)}">b</a>`,
+      `<a href="https://brainstorm.world/e/${toNaddr(address)}">c</a>`,
+      `<a href="https://jumble.social/notes/${OLD_TAG}">d</a>`,
+      `<a href="https://jumble.social/notes/${toNevent(MIRROR)}">e</a>`,
+      `<a href="https://brainstorm.world/p/${ESSAY}">a byline is not a citation</a>`,
+    ].join('\n'))
+    const past = pastCitations(dir)
+    assert.deepEqual([...past.ids].sort(), [R1, R2, OLD_TAG, MIRROR].sort())
+    assert.deepEqual([...past.addresses], [`30023:${COOK}:bread`])
+  } finally { rmSync(dir, { recursive: true, force: true }) }
+})
+
+test('a recipe cited by an old jumble.social link is still held back', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'observer-kitchen-'))
+  const { relay } = await kitchenRelay()
+  let corpus
+  try {
+    writeFileSync(join(dir, 'observer-2026-11-12-ABC123.html'), `<a href="https://jumble.social/notes/${toNevent(R1)}">Source</a>`)
+    corpus = await pull({ relay: relay.url, observerHex: OBSERVER, until: UNTIL, editionsDir: dir, idleMs: 2_000 })
+  } finally { closeAll(); await relay.close(); rmSync(dir, { recursive: true, force: true }) }
+  assert.deepEqual(corpus.kitchen.skipped, [R1])
 })
 
 test('an empty Kitchen says to leave the recipe out, never to look elsewhere', () => {

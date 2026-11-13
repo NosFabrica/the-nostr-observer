@@ -21,12 +21,13 @@
 
 import { readFileSync, writeFileSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
-import { permalinkTarget, toPermalink, deskLinkTarget, deskWriterTarget, corpusIndex } from './validate.mjs'
-import { fromNevent, DESK_LINKS } from './nostr.mjs'
+import { corpusIndex, eventNamed, toEventLink, toPersonLink } from './validate.mjs'
+import { toHex, isAddressable } from './nostr.mjs'
 import { tags, attributes } from './html.mjs'
 
 /**
- * Jumble is a source citation, not a page the paper should be replaced by.
+ * A Brainstorm link is a source citation, not a page the paper should be
+ * replaced by.
  * `noopener` stops the opened tab from reaching `window.opener`.
  */
 export function openInNewTab (raw) {
@@ -47,18 +48,66 @@ export function openInNewTab (raw) {
   return tag
 }
 
-function citedEventId (href) {
-  const jumble = permalinkTarget(href)
-  if (jumble) return jumble
-  const hex = /^https:\/\/jumble\.social\/notes\/([0-9a-f]{64})(?:[/?#].*)?$/i.exec(href)
-  if (hex) return hex[1].toLowerCase()
-  const njump = /^https:\/\/njump\.me\/([0-9a-f]{64})(?:[/?#].*)?$/i.exec(href)
-  if (njump) return njump[1].toLowerCase()
-  const nevent = /^https:\/\/(?:jumble\.social\/notes\/|njump\.me\/)(nevent1[0-9a-z]+)/i.exec(href)
-  if (nevent) {
-    try { return fromNevent(nevent[1]) } catch { return null }
+// The forms a writer may hand in. Each is lenient about what follows the id
+// (a stray path, query or fragment), because what comes out is rebuilt from
+// the corpus anyway; validate.mjs is the strict half.
+const BRAINSTORM_EVENT = /^https:\/\/brainstorm\.world\/e\/([0-9a-z]+)(?:[/?#].*)?$/i
+const BRAINSTORM_PERSON = /^https:\/\/brainstorm\.world\/p\/([0-9a-z]+)(?:[/?#].*)?$/i
+// Accepted for one release, so an older edition or an old habit still
+// resolves: the jumble.social citation the paper used before Brainstorm,
+// hex or nevent. Rewritten to Brainstorm, never kept.
+const LEGACY_JUMBLE = /^https:\/\/jumble\.social\/notes\/([0-9a-f]{64}|nevent1[0-9a-z]+)(?:[/?#].*)?$/i
+
+/**
+ * What a link on the page points at, read through the corpus:
+ * `{ event, legacy }` for a citation, `{ pubkey }` for a byline, or null for
+ * anything the paper does not link to.
+ *
+ * A byline is `/p/<64-hex id of one of that person's posts>`, resolved to the
+ * author of that post. The hex is an EVENT id, never a pubkey: the digest
+ * prints event ids and never a pubkey, and reading the same 64 characters
+ * as either would let one stand in for the other. `/p/<npub1…>` is kept only
+ * if that npub wrote something on a desk, so resolving twice changes nothing.
+ */
+export function linkTarget (href, corpus) {
+  const event = BRAINSTORM_EVENT.exec(href)
+  if (event) {
+    const found = eventNamed(event[1], corpus)
+    return found ? { event: found, legacy: false } : null
+  }
+  const person = BRAINSTORM_PERSON.exec(href)
+  if (person) {
+    const ref = person[1].toLowerCase()
+    if (/^[0-9a-f]{64}$/.test(ref)) {
+      const post = corpusIndex(corpus).byId.get(ref)
+      return post ? { pubkey: String(post.pubkey).toLowerCase() } : null
+    }
+    if (ref.startsWith('npub1')) {
+      try {
+        const pubkey = toHex(ref)
+        return corpusIndex(corpus).authors.has(pubkey) ? { pubkey } : null
+      } catch { return null }
+    }
+    return null
+  }
+  const jumble = LEGACY_JUMBLE.exec(href)
+  if (jumble) {
+    const found = eventNamed(jumble[1], corpus)
+    return found ? { event: found, legacy: true } : null
   }
   return null
+}
+
+/** The canonical link for a target and the change kind it counts as, or null if it has none. */
+function canonicalFor (target) {
+  try {
+    if (target.pubkey) return { url: toPersonLink(target.pubkey), kind: 'person' }
+    return { url: toEventLink(target.event), kind: isAddressable(target.event.kind) ? 'address' : 'permalink' }
+  } catch {
+    // An addressable event with no d tag, or a pubkey that is not one: there
+    // is no honest address to print, so the link is unwrapped below.
+    return null
+  }
 }
 
 function arg (name, fallback = null) {
@@ -95,7 +144,6 @@ function dropFigure (html, start, end) {
  */
 export function resolve (html, corpus) {
   const byId = new Map((corpus.art || []).map((a) => [a.id, a]))
-  const eventIds = new Set(Object.values(corpus.desks).flat().map((e) => e.id))
   const changes = []
   let out = html
 
@@ -123,63 +171,41 @@ export function resolve (html, corpus) {
 
   // --- links to the open web ----------------------------------------------
   // The paper prints addresses; it does not make them clickable — except
-  // source citations, verified zap.stream watch links, verified Shopstr
-  // listing links, and verified njump calendar links. A permalink back to an
-  // event we read is rewritten to jumble.social's nevent URL (the writer cites
-  // hex; this is the afterwards) — unless it is a calendar listing, which
-  // becomes an njump naddr, because jumble has no calendar view and an nevent
-  // freezes one revision of a replaceable event. Stream / classified /
-  // calendar writer forms are encoded to their host's naddr. Everything else
-  // is unwrapped to its own text. Rebuilt back to front so each edit leaves
-  // earlier offsets untouched.
-  // From the shared index rather than three more passes over every desk — the
-  // target helpers below already consult it, and a second set of maps built
-  // here is both the same work twice and a chance for the two to disagree
-  // about what counts as linkable.
-  const index = corpusIndex(corpus)
-  // Which desk link `url` verifies against, and the event it names. A calendar
-  // listing cited the ordinary way — a permalink — counts too: it is re-encoded
-  // to njump rather than kept as a frozen nevent.
-  const deskTarget = (url, id) => {
-    for (const key of Object.keys(DESK_LINKS)) {
-      const eventId = deskWriterTarget(key, url, corpus) || deskLinkTarget(key, url, corpus)
-      const event = eventId && index[key].byId.get(eventId.toLowerCase())
-      if (event) return { link: DESK_LINKS[key], event }
-    }
-    const listing = id && index.calendar.byId.get(id)
-    return listing ? { link: DESK_LINKS.calendar, event: listing } : null
-  }
+  // Brainstorm pages for the events it read and for the people who wrote
+  // them. A citation (`/e/<hex>`) is re-encoded to its nevent, or to its naddr
+  // for an addressable kind: a stream, a listing, a meetup or a recipe is
+  // replaceable, and an nevent would freeze one revision of it. A byline
+  // (`/p/<hex event id>`) becomes the author's npub. An old jumble.social
+  // citation is rewritten the same way. Everything else is unwrapped to its
+  // own text. Rebuilt back to front so each edit leaves earlier offsets
+  // untouched.
   const anchors = tags(out, 'a').reverse()
   for (const anchor of anchors) {
     const url = attributes(anchor.raw).href || ''
     if (!/^https?:/i.test(url)) continue
-    const id = citedEventId(url)
     // Not `out.toLowerCase().indexOf(…)`: that copied the whole document once
     // per anchor, which on a 102 KB page with 528 anchors is 54 MB of string
     // nobody reads twice. A sticky case-insensitive search costs nothing and
     // also accepts `</a >`, which the literal missed.
     const closing = closeAnchor(out, anchor.end)
     if (!closing) continue
-    // Kept links point at their canonical address and open in a new tab: the
-    // paper stays put, and a writer who forgets target=_blank still gets it.
-    const keep = (canonical, kind) => {
+    const target = linkTarget(url, corpus)
+    const canonical = target && canonicalFor(target)
+    if (canonical) {
+      // Kept links point at their canonical address and open in a new tab:
+      // the paper stays put, and a writer who forgets target=_blank still
+      // gets it.
       let tag = anchor.raw
-      if (url !== canonical) {
-        tag = tag.replace(/(\bhref\s*=\s*)("[^"]*"|'[^']*'|[^\s>]+)/i, `$1"${canonical}"`)
+      if (url !== canonical.url) {
+        tag = tag.replace(/(\bhref\s*=\s*)("[^"]*"|'[^']*'|[^\s>]+)/i, `$1"${canonical.url}"`)
       }
       tag = openInNewTab(tag)
       if (tag !== anchor.raw) {
         out = out.slice(0, anchor.start) + tag + out.slice(anchor.end)
-        if (url !== canonical) changes.push({ kind, detail: `${url} -> ${canonical}` })
+        if (url !== canonical.url) {
+          changes.push({ kind: canonical.kind, detail: `${url} -> ${canonical.url}`, ...(target.legacy ? { legacy: true } : {}) })
+        }
       }
-    }
-    const desk = deskTarget(url, id)
-    if (desk) {
-      keep(desk.link.canonicalUrl(desk.event), desk.link.change)
-      continue
-    }
-    if (id && eventIds.has(id)) {
-      keep(toPermalink(id), 'permalink')
       continue
     }
     out = out.slice(0, anchor.start) + out.slice(anchor.end, closing.start) + out.slice(closing.end)
@@ -203,10 +229,11 @@ function main () {
   const counts = changes.reduce((acc, c) => ({ ...acc, [c.kind]: (acc[c.kind] || 0) + 1 }), {})
   console.log('')
   console.log(`  Resolved ${counts.resolved || 0} art id(s).`)
-  if (counts.permalink) console.log(`  Encoded ${counts.permalink} permalink(s) to jumble.social.`)
-  for (const link of Object.values(DESK_LINKS)) {
-    if (counts[link.change]) console.log(`  Encoded ${counts[link.change]} ${link.what}.`)
-  }
+  if (counts.permalink) console.log(`  Encoded ${counts.permalink} citation(s) to Brainstorm nevent pages.`)
+  if (counts.address) console.log(`  Encoded ${counts.address} citation(s) of addressable events to Brainstorm naddr pages.`)
+  if (counts.person) console.log(`  Encoded ${counts.person} byline(s) to Brainstorm profiles.`)
+  const legacy = changes.filter((c) => c.legacy).length
+  if (legacy) console.log(`  Rewrote ${legacy} old jumble.social citation(s) to Brainstorm. Cite https://brainstorm.world/e/<id> next time.`)
   if (counts.dropped || counts.unwrapped) {
     console.log('')
     console.log('  CHANGES WORTH READING - each of these is the page trying to do something')
