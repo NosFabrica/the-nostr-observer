@@ -105,11 +105,13 @@ class AssistantKeys(
     ): List<AssistantPair> =
         db.use { c ->
             // Two statements rather than `? IS NULL OR pubkey > ?`: Postgres can't type an untyped null parameter.
+            // A row the server wrote wrong is left out by the query, not after it: a page short of
+            // LIMIT is what ends [pairs], so one bad row filtered here would drop every owner after it.
             val sql =
                 if (after == null) {
-                    "SELECT pubkey, assistant_pubkey FROM $table WHERE assistant_pubkey IS NOT NULL ORDER BY pubkey LIMIT ?"
+                    "SELECT pubkey, assistant_pubkey FROM $table WHERE $VALID ORDER BY pubkey LIMIT ?"
                 } else {
-                    "SELECT pubkey, assistant_pubkey FROM $table WHERE assistant_pubkey IS NOT NULL AND pubkey > ? ORDER BY pubkey LIMIT ?"
+                    "SELECT pubkey, assistant_pubkey FROM $table WHERE $VALID AND pubkey > ? ORDER BY pubkey LIMIT ?"
                 }
             c.prepareStatement(sql).use { st ->
                 var i = 1
@@ -120,7 +122,7 @@ class AssistantKeys(
                         while (rs.next()) {
                             val owner = rs.getString(1)
                             val assistant = rs.getString(2)
-                            // A row the server wrote wrong is skipped: it can't be matched to a schedule.
+                            // [VALID] already says so; checked again so a pair is never built from anything else.
                             if (isPubKeyHex(owner) && isPubKeyHex(assistant)) add(AssistantPair(owner, assistant))
                         }
                     }
@@ -199,5 +201,8 @@ class AssistantKeys(
         val COLUMNS = listOf("pubkey", "assistant_pubkey", "encrypted_nsec", "nsec")
 
         private val TABLE_NAME = Regex("[a-z_][a-z0-9_]*(\\.[a-z_][a-z0-9_]*)?")
+
+        /** A pair that can be matched to a schedule: both keys 64 lowercase hex ([isPubKeyHex]); a null fails the match. */
+        private const val VALID = "pubkey ~ '^[0-9a-f]{64}$' AND assistant_pubkey ~ '^[0-9a-f]{64}$'"
     }
 }

@@ -120,6 +120,23 @@ class AssistantKeysTest {
         }
 
     @Test
+    fun aRowTheServerWroteWrongDoesNotEndThePaging() =
+        runTest {
+            val db = world()
+            val people = List(AssistantDirectory.PAGE + 100) { Person() to Person() }
+            people.forEach { (o, a) -> BrainstormSchema.insert(db, o.pubkey, a.pubkey, "not read", null) }
+            // First by pubkey, so on the first page: an Assistant that isn't a pubkey, and an owner in capitals.
+            BrainstormSchema.insert(db, "0".repeat(64), "not a pubkey", "x", null)
+            BrainstormSchema.insert(db, "0".repeat(63) + "1", "A".repeat(64), "x", null)
+            BrainstormSchema.insert(db, "0".repeat(63) + "2", Person().pubkey.uppercase(), "x", null)
+            val keys = AssistantKeys(db, keyFile)
+            val expected = people.map { (o, a) -> AssistantPair(o.pubkey, a.pubkey) }.sortedBy { it.owner }
+            val pairs = keys.pairs()
+            assertEquals(expected.size, pairs.size)
+            assertEquals(expected, pairs)
+        }
+
+    @Test
     fun theServicesRoleReadsItsFourColumnsAndNoOther() =
         runTest {
             val db = world()
