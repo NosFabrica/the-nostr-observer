@@ -372,8 +372,33 @@ class UrlGuardInterceptor(
 }
 
 /**
+ * No `permessage-deflate` on a WebSocket. OkHttp offers it on every upgrade (and refuses a request
+ * that sets the header itself), then inflates a whole message in memory: a frame of 65 KB on the
+ * wire, all a [ReadBudget] counts, arrived as a 64 MB message. So the offer is taken out of the
+ * request, and an acceptance out of the answer: an honest relay then sends plain frames, every
+ * byte of them counted, and OkHttp fails a relay that compresses anyway ("Unexpected rsv1 flag").
+ * An application interceptor: OkHttp runs no network interceptor on a WebSocket's call, and the
+ * request it builds carries the header before the chain starts.
+ */
+class NoWebSocketCompression : Interceptor {
+    override fun intercept(chain: Interceptor.Chain): Response {
+        val request = chain.request()
+        val asked =
+            if (request.header(EXTENSIONS) == null) request else request.newBuilder().removeHeader(EXTENSIONS).build()
+        val response = chain.proceed(asked)
+        if (response.code != 101 || response.header(EXTENSIONS) == null) return response
+        return response.newBuilder().removeHeader(EXTENSIONS).build()
+    }
+
+    private companion object {
+        const val EXTENSIONS = "Sec-WebSocket-Extensions"
+    }
+}
+
+/**
  * [base] made safe to point at a reader's URL: the URL check, the address check at connect time
- * ([dns]) and on every socket, bounded bodies ([BodyCapInterceptor]), no redirects, no proxy.
+ * ([dns]) and on every socket, bounded bodies ([BodyCapInterceptor]), no compressed WebSocket
+ * ([NoWebSocketCompression]), no redirects, no proxy.
  */
 fun guardedClient(
     base: OkHttpClient,
@@ -385,6 +410,7 @@ fun guardedClient(
         .newBuilder()
         .addInterceptor(UrlGuardInterceptor(schemes))
         .addInterceptor(BodyCapInterceptor())
+        .addInterceptor(NoWebSocketCompression())
         .dns(dns)
         .socketFactory(GuardedSocketFactory(readBudget))
         .followRedirects(false)

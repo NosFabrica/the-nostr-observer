@@ -197,6 +197,9 @@ relays. So all of them go through `guardedClient` (`SafeHttp.kt`):
 - a reader's relay socket reads at most 16 MB per 10 s (`ReadBudget`). OkHttp has no limit on an
   inbound WebSocket message and buffers a whole one before handing it on, so this is what bounds
   one relay's memory; the index relays, Brainstorm's own, aren't held to it;
+- no WebSocket is compressed (`NoWebSocketCompression`): OkHttp offers `permessage-deflate` and
+  inflates a whole message in memory, so a 65 KB frame, all the budget counts, could be 64 MB on
+  the heap. The offer is taken out of the upgrade, and a relay that compresses anyway is dropped;
 - `.onion` names are refused before any resolver sees them (the cluster's DNS would pass them on);
 - no redirects at all, and no proxy (through a proxy, the proxy resolves the name and the
   address check would never see it). Outbound HTTPS from the service must therefore be direct.

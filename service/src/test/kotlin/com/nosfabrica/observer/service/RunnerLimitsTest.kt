@@ -84,6 +84,11 @@ class RunnerLimitsTest {
     }
 
     @Test
+    fun theGuardedClientNeverInflatesAWebSocketMessage() {
+        assertTrue(guardedClient(OkHttpClient(), setOf("wss")).interceptors.any { it is NoWebSocketCompression })
+    }
+
+    @Test
     fun aTricklingStreamStopsWhenThePrintIsCancelled() {
         // A server of our own on loopback (never a real provider): it answers a stream's headers,
         // then one byte every few seconds, which no read timeout would ever end.
