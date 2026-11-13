@@ -12,6 +12,11 @@ rootProject.name = "the-nostr-observer"
 include(":generator")
 include(":service")
 
+// Only what JitPack builds: Quartz and libschnorr256k1-kotlin. Not all of `com.github.*`: plenty
+// of it is on Central, such as ktlint's `com.github.ajalt.clikt`, which spotless resolves, and a
+// cold cache (CI) then fails to find it.
+val jitpackGroups = "com\\.github\\.vitorpamplona(\\..*)?"
+
 dependencyResolutionManagement {
     repositories {
         // Quartz is a Kotlin Multiplatform library with Android in its graph:
@@ -20,8 +25,8 @@ dependencyResolutionManagement {
         // AndroidX artifact and not the reason, which reads like a broken pin.
         // JitPack's groups are asked of JitPack alone: Central answers a lookup
         // for one with a 429 as often as a 404, and a 429 fails the build.
-        google { content { excludeGroupByRegex("com\\.github\\..*") } }
-        mavenCentral { content { excludeGroupByRegex("com\\.github\\..*") } }
+        google { content { excludeGroupByRegex(jitpackGroups) } }
+        mavenCentral { content { excludeGroupByRegex(jitpackGroups) } }
         // Quartz ships from JitPack. See gradle/libs.versions.toml for why the
         // pin is a commit hash and why every module force()s it.
         maven("https://jitpack.io")
