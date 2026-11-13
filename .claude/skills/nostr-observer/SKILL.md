@@ -182,32 +182,26 @@ and some viewers block remote images outright — so a missing picture is normal
 not exceptional. With `alt` it degrades to a sentence; without it, to an empty
 box. Same rule as the caption: say what the post says the picture is.
 
-**Cite a source as `https://jumble.social/notes/<64-hex-event-id>`.** Step 5
-encodes that as an `nevent1` URL and opens it in a new tab, so the paper stays
-put. Do not cite through `njump.me` (that host is for calendar listings only,
-below), and do not compose an `nevent1` yourself — a regex
-that accepted `nevent1` without decoding it once shipped a page whose every
-citation failed the boundary.
+**Cite a source as `https://brainstorm.world/e/<64-hex-event-id>`,** with an
+id the digest printed. This is the one citation form for every desk: notes,
+long-form posts, recipes, live streams, classifieds and calendar listings
+alike. Step 5 encodes it as an `nevent1` URL, or as an `naddr1` URL for an
+addressable event (a long-form post, recipe, stream, listing or meetup its
+author can update), so the link follows the latest version rather than
+freezing one. It opens in a new tab, so the paper stays put. Link a stream's
+title, a listing's title and a meetup's title this way too.
 
-**Link live streams in the Broadcasting column** using the `watch:` URL the
-digest printed (`https://zap.stream/stream/<64-hex-event-id>`). Step 5 encodes
-it as a zap.stream naddr. One line per stream; link the title or stream name.
-Do not compose an `naddr1` yourself, and do not use a zap.stream URL copied
-from a post body — only the derived watch line from Live now.
+**Link a byline as `https://brainstorm.world/p/<64-hex-event-id>`,** with the id
+of one of that person's posts in the digest. Step 5 turns it into
+`https://brainstorm.world/p/<npub1…>` of whoever wrote that post. The hex is an
+event id, never a pubkey.
 
-**Link classifieds** using the `listing:` URL the digest printed
-(`https://shopstr.store/listing/<64-hex-event-id>`). Step 5 encodes it as a
-Shopstr naddr. Link the listing title. Do not compose an `naddr1` yourself, and
-do not use a shopstr.store URL copied from a post body — only the derived
-listing line from Classifieds.
-
-**Link calendar listings** using the `calendar:` URL the digest printed
-(`https://njump.me/<64-hex-event-id>`). Step 5 encodes it as an njump naddr,
-because a listing is replaceable and an `nevent` would freeze one revision of
-it — so link a calendar listing with its `calendar:` URL, not a jumble.social
-citation. Link the event title. Do not compose an `naddr1` yourself, and do
-not use an njump.me URL copied from a post body — only the derived calendar
-line from Calendar.
+Do not compose an `nevent1`, `naddr1` or `npub1` link yourself — a regex that
+accepted `nevent1` without decoding it once shipped a page whose every
+citation failed the boundary — and do not link through another client, or use
+a URL copied from a post body. Old `https://jumble.social/notes/…` citations
+are still rewritten to Brainstorm for one release, but write the Brainstorm
+form.
 
 Save it as `editions/observer-<YYYY-MM-DD>-<code>.html`, using the edition code the
 corpus digest printed.
@@ -251,7 +245,7 @@ even when it is inconvenient.
 |---|---|
 | **QUOTE** | Anything in `<q>` or `<blockquote>` must appear verbatim in a source event. Elision with `…` is allowed; the fragments must appear in order in **one** event. Paraphrase is not checked, because paraphrase is journalism — so paraphrase freely, and quote only what was said. |
 | **IMAGE** | After Step 5 every `<img src>` must be a shortlist URL. That happens by itself if you wrote ids; it fails if you wrote a URL yourself. |
-| **LINK** | After Step 5, permitted links are: `https://jumble.social/notes/<nevent1…>` for a source event in the corpus, `https://zap.stream/<naddr1…>` for a live stream from Live now, `https://shopstr.store/listing/<naddr1…>` for a classified from Classifieds, and `https://njump.me/<naddr1…>` for a listing from Calendar. Write citations as `https://jumble.social/notes/<64-hex-event-id>`, stream watch links as `https://zap.stream/stream/<64-hex-event-id>`, listing links as `https://shopstr.store/listing/<64-hex-event-id>` and calendar links as `https://njump.me/<64-hex-event-id>` from the digest; resolve encodes all four. Do not compose an `nevent1` or `naddr1` yourself. Everything else — including a URL that appeared in the corpus — is refused. |
+| **LINK** | After Step 5, the only permitted links are `https://brainstorm.world/e/<nevent1…|naddr1…>` for an event in the corpus (an naddr for an addressable event, an nevent for anything else) and `https://brainstorm.world/p/<npub1…>` for the author of an event in the corpus. Write citations as `https://brainstorm.world/e/<64-hex-event-id>` and bylines as `https://brainstorm.world/p/<64-hex-event-id>` with ids from the digest; resolve encodes both. Do not compose an `nevent1`, `naddr1` or `npub1` yourself. Everything else — another client's link, a Brainstorm link with anything after the id, a URL that appeared in the corpus — is refused. |
 | **MARKUP** | No `<script>`, no `<iframe>`, no `on…=` handlers, no `javascript:`, no forms. The paper collects nothing and runs nothing. |
 
 The link rule is the one that looks too strict. It is not: an early version

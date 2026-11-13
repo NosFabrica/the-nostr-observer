@@ -14,7 +14,7 @@
 // Usage: node corpus.mjs <npub> [--relay wss://…] [--out corpus.json] [--floor 20]
 //                         [--editions <dir>]   (default: the folder --out is in)
 
-import { req, toHex, toNpub, shortNpub, DESK_LINKS, tagValue, tagsNamed, closeAll, MAX_REQ_BYTES, INCLUDE_SPAM, fromNevent } from './nostr.mjs'
+import { req, toHex, toNpub, shortNpub, tagValue, tagsNamed, closeAll, MAX_REQ_BYTES, INCLUDE_SPAM, fromNevent, fromNaddr, isAddressable, writerEventUrl } from './nostr.mjs'
 import { writeFileSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { dirname, join, resolve as resolvePath } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -184,22 +184,27 @@ export function deskFilter (desk, until, observerHex, floor) {
 }
 
 /**
- * The event ids the last `count` editions cited, read from the editions
- * themselves.
+ * What the last `count` editions cited, read from the editions themselves:
+ * the event ids, and the addresses (`kind:pubkey:d`) of addressable events.
  *
  * There is no separate record of what ran: the skill keeps every edition as
  * `observer-<YYYY-MM-DD>-<code>.html` in `editions/`, and each one cites its
- * sources as jumble.social links (resolved to `nevent1…`, or still hex if
- * resolve never ran). That citation IS the record. The `.artifact.html` copies
- * are the same editions again and are not counted twice.
+ * sources as Brainstorm links — `nevent1…` or, for an addressable kind such as
+ * a recipe, `naddr1…`, or still hex if resolve never ran. Editions printed
+ * before Brainstorm cite jumble.social instead, and are read the same way.
+ * That citation IS the record. A recipe cited by naddr is matched by its
+ * address, which also catches a revised recipe under a new event id. The
+ * `.artifact.html` copies are the same editions again and are not counted
+ * twice.
  *
  * A folder that is missing or holds no editions answers with `editions: []`,
  * which the digest reports as "nothing to check against" rather than as
  * "nothing ran".
  */
 export function pastCitations (dir, count = RECIPE_MEMORY) {
+  const none = () => ({ editions: [], ids: new Set(), addresses: new Set() })
   let names = []
-  try { names = readdirSync(dir) } catch { return { editions: [], ids: new Set() } }
+  try { names = readdirSync(dir) } catch { return none() }
   const editions = names
     .filter((name) => /^observer-\d{4}-\d{2}-\d{2}-[0-9A-Za-z]+\.html$/.test(name))
     .map((name) => {
@@ -212,17 +217,37 @@ export function pastCitations (dir, count = RECIPE_MEMORY) {
     .sort((a, b) => (a.date === b.date ? b.mtime - a.mtime : (a.date < b.date ? 1 : -1)))
     .slice(0, count)
   const ids = new Set()
-  const cite = /https:\/\/jumble\.social\/notes\/(nevent1[0-9a-z]+|[0-9a-f]{64})/gi
+  const addresses = new Set()
+  const cite = /https:\/\/(?:brainstorm\.world\/e|jumble\.social\/notes)\/(nevent1[0-9a-z]+|naddr1[0-9a-z]+|[0-9a-f]{64})/gi
   for (const { name } of editions) {
     let html = ''
     try { html = readFileSync(join(dir, name), 'utf8') } catch { continue }
     for (const match of html.matchAll(cite)) {
       const target = match[1].toLowerCase()
       if (/^[0-9a-f]{64}$/.test(target)) { ids.add(target); continue }
-      try { ids.add(fromNevent(target)) } catch { /* not an nevent that names an id */ }
+      try {
+        if (target.startsWith('naddr1')) {
+          const { kind, pubkey, identifier } = fromNaddr(target)
+          addresses.add(addressOf(kind, pubkey, identifier))
+        } else {
+          ids.add(fromNevent(target))
+        }
+      } catch { /* not bech32 that names anything */ }
     }
   }
-  return { editions: editions.map((e) => e.name), ids }
+  return { editions: editions.map((e) => e.name), ids, addresses }
+}
+
+/** `kind:pubkey:d`, the key `pastCitations` records an addressable citation under. */
+export function addressOf (kind, pubkey, identifier) {
+  return `${kind}:${String(pubkey || '').toLowerCase()}:${identifier}`
+}
+
+/** Whether `event` is something one of the past editions cited, by id or by address. */
+function citedBefore (past, event) {
+  if (past.ids.has(String(event.id).toLowerCase())) return true
+  const d = tagValue(event, 'd')
+  return isAddressable(event.kind) && d !== null && past.addresses.has(addressOf(event.kind, event.pubkey, d))
 }
 
 /** Run tasks a few at a time. The relay has spells of not answering; do not hammer it. */
@@ -506,8 +531,6 @@ export function digest (corpus, budget = DEFAULT_DIGEST_BUDGET) {
       const author = corpus.profiles[event.pubkey]?.name || shortNpub(event.pubkey)
       p(`- [${event.id}] kind ${event.kind} · ${author} · ${when(event.created_at)}`)
       if (title) p(`  title: ${title}`)
-      const link = DESK_LINKS[desk.key]
-      if (link && tagValue(event, 'd')) p(`  ${link.line}: ${link.writerUrl(event.id)}`)
       const text = body(event, EXCERPT[desk.key] ?? DEFAULT_EXCERPT)
       if (text) p(`  ${text}`)
     }
@@ -571,7 +594,7 @@ function kitchen (p, corpus, events) {
     if (title) p(`  title: ${title}`)
     p(`  cook: ${author}`)
     p(`  picture: ${pictures.get(event.id) || 'none on the shortlist'}`)
-    p(`  source: https://jumble.social/notes/${event.id}`)
+    p(`  source: ${writerEventUrl(event.id)}`)
     p('  recipe, in full:')
     const text = String(event.content || '').replace(/\r\n?/g, '\n').replace(/[ \t]+$/gm, '').replace(/\n{3,}/g, '\n\n').trim()
     for (const line of text.split('\n')) p(line ? `    ${line}` : '')
@@ -588,7 +611,7 @@ function kitchen (p, corpus, events) {
  */
 export async function pull ({ relay, observerHex, floor = DEFAULT_TRUST_FLOOR, until = Math.floor(Date.now() / 1000), editionsDir = null, idleMs = 25_000, log = () => {} }) {
   const since = until - WINDOW_SECONDS
-  const past = editionsDir ? pastCitations(editionsDir) : { editions: [], ids: new Set() }
+  const past = editionsDir ? pastCitations(editionsDir) : { editions: [], ids: new Set(), addresses: new Set() }
   const skipped = []
 
   log(`  Pulling ${DESKS.length} desks + the control run…\n`)
@@ -603,7 +626,7 @@ export async function pull ({ relay, observerHex, floor = DEFAULT_TRUST_FLOOR, u
     let kept = belongs(desk, observerHex, events)
     if (desk.noRepeats) {
       kept = kept.filter((e) => {
-        if (!past.ids.has(e.id)) return true
+        if (!citedBefore(past, e)) return true
         skipped.push(e.id)
         return false
       })
