@@ -19,6 +19,8 @@
 # Deliberately different:
 #   ObserverPublisher takes `forReader`, for a runner's site (to be upstreamed).
 #   Platform.kt stands in for the bits of Amethyst's commons the engine imports.
+#   Routstr.kt is commons/routstr's RoutstrError.kt and the parts of its RoutstrJson.kt the engine
+#   (writerExceptionFor, sats_pricing) and the runner (/v1/info, /v1/balance/info) read.
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

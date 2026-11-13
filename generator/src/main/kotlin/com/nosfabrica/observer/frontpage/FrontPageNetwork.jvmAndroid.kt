@@ -72,7 +72,7 @@ suspend fun IRoleBasedHttpClientBuilder.listAgentModels(key: AgentKeyTag): List<
         val request = request(url) { get().auth(key) }
         try {
             okHttpClientForMoney(url).newCall(request).executeAsync().use { response ->
-                if (!response.isSuccessful) throw WriterException(failureFor(response.code), response.code)
+                if (!response.isSuccessful) throw writerExceptionFor(response.code, runCatching { response.body.string() }.getOrDefault(""))
                 readModels(response.body.string())
             }
         } catch (e: IOException) {
@@ -131,15 +131,7 @@ suspend fun IRoleBasedHttpClientBuilder.chatComplete(
         }
     }
 
-private fun failure(response: Response): WriterException {
-    val said =
-        runCatching { response.body.string() }
-            .getOrDefault("")
-            .replace(Regex("\\s+"), " ")
-            .trim()
-            .take(160)
-    return WriterException(failureFor(response.code), response.code, said)
-}
+private fun failure(response: Response): WriterException = writerExceptionFor(response.code, runCatching { response.body.string() }.getOrDefault(""))
 
 private suspend fun readStream(
     response: Response,
