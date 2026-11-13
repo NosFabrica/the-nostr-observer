@@ -213,7 +213,7 @@ Postgres is reached by JDBC, outside the guard: its address is the operator's, n
 
 | Variable | Default | |
 |---|---|---|
-| `DATABASE_URL` | (required) | JDBC URL of brainstorm_server's Postgres, `jdbc:postgresql://host:5432/db` |
+| `DATABASE_URL` | (required) | JDBC URL of brainstorm_server's Postgres, `jdbc:postgresql://host:5432/db`. Every call is bounded: 10 s to connect, 15 s to log in, 30 s for an answer, 30 s per statement; don't set `options`, `socketTimeout` or `loginTimeout` in the URL, which would replace them |
 | `DATABASE_USER`, `DATABASE_PASSWORD` | | the `observer_service` role (below). The password is a secret: from a k8s Secret |
 | `NSEC_KEYS_FILE` | `/run/secrets/nsec_encryption_keys` | brainstorm_server's Fernet key file, mounted read-only |
 | `PORT` | `8080` | where `POST /v1/run` is served |
