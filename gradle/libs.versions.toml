@@ -12,7 +12,7 @@ app = "0.2.0"
 # force()s this pin, and why "newer" is a word that does not apply here. The only relation
 # between two hashes is ancestry, and only git answers it:
 #   git merge-base --is-ancestor A B
-quartz = "fae3e8733c2245a43224392a99eda00e33dc1cb1"
+quartz = "c4b25b8dcd21c02078e0f887ff8f68a96b00d2ac"
 # The crypto primitives Quartz is built on; the engine hashes with them directly. Keep it at
 # the version Quartz's own catalog names for the commit above.
 cryptoKmp = "2.1.0"
