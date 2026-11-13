@@ -53,8 +53,12 @@ tables: it learns that an occurrence is settled from the `200` this service answ
    (`ws`, an internal host), is `NO_QUORUM`.
 4. Every event it reads must verify (id and signature) and be dated at most 10 minutes ahead,
    or it is ignored: anyone can hand a relay an event with the owner's or the Assistant's pubkey
-   on it. Every relay is asked on its own subscription and gets at most 20 s and 2,000 events for
-   one read, whatever it sends; past either it answered for nobody.
+   on it, checked before copies are deduplicated (a forged copy under a real event's id can't hide
+   it). Every relay is asked on its own subscription and gets at most 20 s and 2,000 events for
+   one read (never fewer than the read's `limit`), whatever it sends; past either it answered for
+   nobody. The NIP-65 lists are read in chunks of owners: a full page (counted as sent, before any
+   check), or one the event cap cut off, is asked on rather than dropped; a CLOSED chunk is asked
+   again in halves, never one person twice, and nothing more after `rate-limited:` or `blocked:`.
 5. Requires that newest version to carry exactly one public `p`, the owner's Assistant
    (`ScheduledTaskClaims.checkRunner(event, assistant, owner)`). No `p`: the owner took printing
    back (`NOT_NAMED`). Two: `RUNNER_CONFLICT`.

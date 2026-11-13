@@ -77,7 +77,8 @@ class QuartzRelayAccessTest {
             // Its events never let Quartz's idle window run out: only the wall clock ends it.
             assertTrue(tookMs < 4_000, "took $tookMs ms")
             assertEquals(setOf(honest), read.served)
-            assertEquals(listOf(note.id), read.events.map { it.id })
+            // The junk is handed on unchecked (RunnerNostr verifies each copy once): none of it verifies.
+            assertEquals(listOf(note.id), read.events.filter { RunnerNostr.acceptable(it) }.map { it.id })
             // And its subscription is closed.
             assertTrue(client.open.isEmpty())
         }
@@ -92,7 +93,19 @@ class QuartzRelayAccessTest {
             val tookMs = (System.nanoTime() - started) / 1_000_000
             assertTrue(tookMs < 10_000, "took $tookMs ms")
             assertTrue(read.served.isEmpty())
-            assertTrue(read.events.isEmpty())
+            assertEquals(setOf(junk), read.capped)
+            assertTrue(read.events.none { RunnerNostr.acceptable(it) })
             assertTrue(client.open.isEmpty())
+        }
+
+    @Test
+    fun theEventCapIsNeverUnderTheRequestsLimitAndACutRelayIsSaidToBe() =
+        runBlocking {
+            val client = Scripted(emptyList())
+            val access = QuartzRelayAccess(client, idleMs = 5_000, deadlineMs = 60_000, maxEvents = 50)
+            val read = access.fetch(setOf(junk), Filter(kinds = listOf(1), limit = 100))
+            // Cut off past the limit, not at 50: a relay may send as many as it was asked for.
+            assertEquals(setOf(junk), read.capped)
+            assertEquals(101, read.sent)
         }
 }

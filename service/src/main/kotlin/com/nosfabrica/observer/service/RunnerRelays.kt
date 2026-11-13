@@ -31,7 +31,18 @@ class RelayRead(
     val served: Set<NormalizedRelayUrl>,
     /** The relays that answered with a CLOSED (not an auth wall): the REQ itself, maybe its size, was refused. */
     val refused: Set<NormalizedRelayUrl> = emptySet(),
+    /** The relays the read's event cap cut off: they sent more than it allows (at least the `limit`), so there is more to page. */
+    val capped: Set<NormalizedRelayUrl> = emptySet(),
+    /** Of [refused], those whose CLOSED said `rate-limited:` or `blocked:`: asking again, smaller, only costs more. */
+    val throttled: Set<NormalizedRelayUrl> = emptySet(),
+    /** How many events the relays sent, before any was checked: what says a page was full. */
+    val sent: Int = events.size,
 ) {
+    companion object {
+        /** A CLOSED that says the relay won't serve this client now, whatever it asks: NIP-01's `rate-limited:` and `blocked:`. */
+        fun isFinalRefusal(message: String): Boolean = message.startsWith("rate-limited:") || message.startsWith("blocked:")
+    }
+
     /** At least one relay reached EOSE: an empty [events] then means "none", not "unknown". */
     val anyServed: Boolean get() = served.isNotEmpty()
 
@@ -78,10 +89,15 @@ class QuartzRelayAccess(
     ): RelayRead {
         if (relays.isEmpty()) return RelayRead(emptyList(), emptySet())
         val reads = coroutineScope { relays.map { relay -> async { fetchOne(relay, filter) } }.awaitAll() }
+        // Every copy, unchecked and not deduplicated: RunnerNostr verifies, then deduplicates, so a
+        // forged copy under a real event's id can't hide it.
         return RelayRead(
-            reads.flatMap { it.events }.distinctBy { it.id },
+            reads.flatMap { it.events },
             reads.flatMapTo(HashSet()) { it.served },
             reads.flatMapTo(HashSet()) { it.refused },
+            capped = reads.flatMapTo(HashSet()) { it.capped },
+            throttled = reads.flatMapTo(HashSet()) { it.throttled },
+            sent = reads.sumOf { it.sent },
         )
     }
 
@@ -95,25 +111,33 @@ class QuartzRelayAccess(
         // Collected here, not from the result: a read cut off by the deadline returns nothing.
         val kept = ArrayList<Event>()
         var sent = 0
+        // Never under the REQ's own limit: a relay may send as many events as it was asked for.
+        val cap = maxOf(maxEvents, filter.limit ?: 0)
+        var capped = false
         val result =
             try {
                 withTimeoutOrNull(deadlineMs) {
                     client.fetchAllWithHooks(mapOf(relay to listOf(filter)), idleTimeoutMs = idleMs) { _, e ->
-                        if (++sent > maxEvents) throw TooManyEvents()
-                        // Checked again by RunnerNostr; dropping a forgery here keeps it out of memory.
-                        if (RunnerNostr.acceptable(e)) synchronized(kept) { kept += e }
+                        if (++sent > cap) throw TooManyEvents()
+                        // Kept unchecked: RunnerNostr verifies each copy once. The cap bounds what this holds.
+                        synchronized(kept) { kept += e }
                         false
                     }
                 }
             } catch (e: TooManyEvents) {
+                capped = true
                 null
             }
-        if (result == null) Log.d(TAG) { "relay=${relay.url} cut off: deadline or more than $maxEvents events" }
+        if (result == null) Log.d(TAG) { "relay=${relay.url} cut off: " + if (capped) "more than $cap events" else "the deadline" }
         val reason = result?.doneReasons?.get(relay)
+        val closed = reason?.takeIf { it.startsWith("closed:") }?.removePrefix("closed:")
         return RelayRead(
             synchronized(kept) { kept.toList() },
             if (reason == DONE_REASON_EOSE) setOf(relay) else emptySet(),
-            if (reason?.startsWith("closed:") == true) setOf(relay) else emptySet(),
+            if (closed != null) setOf(relay) else emptySet(),
+            capped = if (capped) setOf(relay) else emptySet(),
+            throttled = if (closed != null && RelayRead.isFinalRefusal(closed.trim())) setOf(relay) else emptySet(),
+            sent = sent,
         )
     }
 
@@ -129,11 +153,12 @@ class QuartzRelayAccess(
         const val FETCH_DEADLINE_MS = 20_000L
 
         /**
-         * The most events one relay may send for one read. The largest read the worker makes is a
-         * chunk of [RunnerNostr.AUTHORS_PER_REQ] schedules, one each: four times that is a relay
-         * holding old versions too, and anything past it is a relay sending junk.
+         * The most events one relay may send for one read, and never under the read's `limit`.
+         * A page is at most [RunnerNostr.PAGE_LIMIT] events, so this is four pages: past it, a relay
+         * is sending junk, or more than it was asked for. A relay cut off here is [RelayRead.capped],
+         * and its read is paged on from the oldest event it sent.
          */
-        const val MAX_EVENTS_PER_RELAY = 4 * RunnerNostr.AUTHORS_PER_REQ
+        const val MAX_EVENTS_PER_RELAY = 4 * RunnerNostr.PAGE_LIMIT
     }
 }
 
@@ -233,11 +258,26 @@ class RunnerNostr(
                         val others = async { access.fetch(relays - searchRelay, filter) }
                         val search = async { access.fetch(setOf(searchRelay), forRelay(searchRelay, filter)) }
                         val (o, s) = others.await() to search.await()
-                        RelayRead(o.events + s.events, o.served + s.served, o.refused + s.refused)
+                        RelayRead(
+                            o.events + s.events,
+                            o.served + s.served,
+                            o.refused + s.refused,
+                            capped = o.capped + s.capped,
+                            throttled = o.throttled + s.throttled,
+                            sent = o.sent + s.sent,
+                        )
                     }
                 }
             } ?: RelayRead(emptyList(), emptySet()).also { Log.d(TAG) { "a read of ${relays.size} relays ran past ${deadlineMs}ms" } }
-        return RelayRead(raw.events.distinctBy { it.id }.filter { acceptable(it, at) }, raw.served, raw.refused)
+        // Checked first, then deduplicated: a forged copy under a real event's id must not hide it.
+        return RelayRead(
+            raw.events.filter { acceptable(it, at) }.distinctBy { it.id },
+            raw.served,
+            raw.refused,
+            capped = raw.capped,
+            throttled = raw.throttled,
+            sent = raw.sent,
+        )
     }
 
     /** [pubkey]'s NIP-65 write relays, as `wss` URLs only; empty when they published none or they couldn't be read. Cached ([relayListTtlSeconds]). */
@@ -329,55 +369,108 @@ class RunnerNostr(
     )
 
     /**
-     * [authors]' events of one replaceable kind on [relay], in chunks of [authorsPerReq] with
-     * `limit` set to the chunk's size, and the authors the relay answered for in full.
+     * [authors]' events of one kind on [relay], in chunks of [authorsPerReq] with `limit` set to
+     * the chunk's size times [perAuthor] (the events one author may hold for the filter: one for a
+     * replaceable kind, more for an addressable one, which an author holds one of per `d`), at
+     * most [PAGE_LIMIT], and the authors the relay answered for in full.
      *
-     * A relay answered for an author when it sent that author's event, or when it reached EOSE on
-     * a page that wasn't full. A full page (as many events as the limit, or [FULL_PAGE_FLOOR], the
-     * smallest page a relay is assumed to cut to without saying so) may have left authors out:
-     * those are asked again in chunks half the size, until the page isn't full. A CLOSED (a REQ
-     * too large for the relay) is asked again the same way, down to [minChunk]. A relay that
-     * doesn't answer (down, slow, cut off) isn't asked again: it answered for nobody.
+     * A relay answered for a chunk when it reached EOSE on a page that wasn't full. A full page (as
+     * many events sent as the limit, or [FULL_PAGE_FLOOR], the smallest page a relay is assumed to
+     * cut to without saying so, counted before any is checked) and a page the read's event cap cut
+     * off ([RelayRead.capped]) are paged on: the same chunk asked again with `until` at the oldest
+     * event sent (inclusive; copies are deduplicated by id), until a page isn't full. A page that
+     * brings nothing new can't be paged past: its chunk is asked again in two halves. With one
+     * event an author ([perAuthor] 1), a full page answers for the authors who sent theirs, and the
+     * rest are asked again without them.
+     *
+     * A CLOSED (a REQ too large for the relay) is asked again in two halves of that chunk, down
+     * to [minChunk]; a single author is never asked again, and nothing more is asked of a relay
+     * whose CLOSED says `rate-limited:` or `blocked:`. A relay that doesn't answer (down, slow) isn't
+     * asked again: it answered for nobody.
+     *
+     * At most [MAX_REQS_PER_RELAY] REQs for each [authorsPerReq] authors: the cap scales with the
+     * owners, so a large poll isn't cut short of quorum by its size alone.
      */
     private suspend fun byAuthors(
         relay: NormalizedRelayUrl,
         authors: Collection<HexKey>,
+        perAuthor: Int = 1,
         filterOf: (List<HexKey>) -> Filter,
     ): AuthorsRead {
-        val events = ArrayList<Event>()
+        val events = LinkedHashMap<String, Event>()
         val covered = HashSet<HexKey>()
-        var left = authors.distinct().sorted()
-        var size = authorsPerReq
+        val all = authors.distinct().sorted()
+        val queue = ArrayDeque(all.chunked(authorsPerReq))
         var asked = 0
-        while (left.isNotEmpty() && asked < MAX_REQS_PER_RELAY) {
-            val again = ArrayList<HexKey>()
-            for (chunk in left.chunked(size)) {
-                if (asked++ >= MAX_REQS_PER_RELAY) break
+        val maxReqs = MAX_REQS_PER_RELAY * ((all.size + authorsPerReq - 1) / authorsPerReq).coerceAtLeast(1)
+        chunks@ while (queue.isNotEmpty()) {
+            var chunk = queue.removeFirst()
+            var until: Long? = null
+            while (true) {
+                if (asked++ >= maxReqs) {
+                    Log.d(TAG) { "relay=${relay.url} asked $maxReqs REQs: the rest isn't answered for" }
+                    break@chunks
+                }
                 val wanted = chunk.toHashSet()
-                val read = fetch(setOf(relay), filterOf(chunk).copy(limit = chunk.size))
-                val mine = read.events.filter { it.pubKey in wanted }
-                events += mine
+                val limit = minOf(chunk.size * perAuthor, PAGE_LIMIT)
+                val read = fetch(setOf(relay), filterOf(chunk).copy(limit = limit, until = until))
+                var fresh = 0
+                for (e in read.events) if (e.pubKey in wanted && events.putIfAbsent(e.id, e) == null) fresh++
+                val served = relay in read.served
                 when {
-                    relay in read.served -> {
-                        val sent = mine.mapTo(HashSet()) { it.pubKey }
+                    served && read.sent < minOf(limit, FULL_PAGE_FLOOR) -> {
+                        covered += chunk
+                        break
+                    }
+
+                    (served || relay in read.capped) && perAuthor == 1 -> {
+                        // One event an author: who sent theirs is answered for; the rest are asked again.
+                        val sent = read.events.mapNotNullTo(HashSet()) { e -> e.pubKey.takeIf { it in wanted } }
                         covered += sent
-                        if (read.events.size >= minOf(chunk.size, FULL_PAGE_FLOOR) && chunk.size > 1) {
-                            again += chunk.filter { it !in sent }
+                        if (sent.isEmpty()) break
+                        chunk = chunk.filter { it !in sent }
+                        if (chunk.isEmpty()) break
+                    }
+
+                    served || relay in read.capped -> {
+                        // A full page, or one the cap cut: page on from the oldest event it sent.
+                        val oldest = read.events.minOfOrNull { it.createdAt }
+                        if (oldest != null && (until == null || fresh > 0)) {
+                            until = oldest
                         } else {
-                            covered += chunk
+                            // Nothing new past this page (more events in one second than a page holds): smaller, or given up.
+                            split(chunk, queue)
+                            break
                         }
                     }
 
-                    relay in read.refused && size > minChunk -> {
-                        again += chunk
+                    relay in read.throttled -> {
+                        break@chunks
+                    }
+
+                    relay in read.refused -> {
+                        if (chunk.size > minChunk) split(chunk, queue)
+                        break
+                    }
+
+                    else -> {
+                        break
                     }
                 }
             }
-            if (again.isEmpty() || size <= 1) break
-            left = again
-            size = (size / 2).coerceAtLeast(1)
         }
-        return AuthorsRead(events, covered)
+        return AuthorsRead(events.values.toList(), covered)
+    }
+
+    /** [chunk] asked again as two halves, first; a single author is never asked again. */
+    private fun split(
+        chunk: List<HexKey>,
+        queue: ArrayDeque<List<HexKey>>,
+    ) {
+        if (chunk.size <= 1) return
+        val half = (chunk.size + 1) / 2
+        queue.addFirst(chunk.drop(half))
+        queue.addFirst(chunk.take(half))
     }
 
     /** [block] on each of [relays], [relayParallelism] at a time. */
@@ -439,14 +532,17 @@ class RunnerNostr(
 
         /**
          * A page this long may be a relay's own cut, made without saying so (strfry cuts at 500,
-         * others lower): its missing authors are asked again in smaller chunks ([byAuthors]).
+         * others lower): it is paged on with `until` ([byAuthors]).
          */
         const val FULL_PAGE_FLOOR = 100
+
+        /** The largest `limit` asked for: strfry's own cap, and four of them make [QuartzRelayAccess.MAX_EVENTS_PER_RELAY]. */
+        const val PAGE_LIMIT = 500
 
         /** The smallest chunk a relay that CLOSEs a batch is asked again with. */
         const val MIN_CHUNK = 25
 
-        /** The most REQs [byAuthors] sends one relay for one batch read. */
+        /** The most REQs [byAuthors] sends one relay for each [AUTHORS_PER_REQ] authors of one batch read. */
         const val MAX_REQS_PER_RELAY = 64
 
         /** How many relays a batch read asks at once. */
