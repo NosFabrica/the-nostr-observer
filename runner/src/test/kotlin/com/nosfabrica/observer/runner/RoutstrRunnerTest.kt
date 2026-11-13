@@ -69,14 +69,14 @@ class RoutstrRunnerTest : RunnerWorld() {
         runTest {
             val node = FakeNode(balanceMsats = 599_999)
             val worker = routstrWorld(node)
-            assertEquals(RunOutcome.INSUFFICIENT_BALANCE, worker.poll()[owner.pubKey])
+            assertEquals(RunOutcome.INSUFFICIENT_BALANCE, worker.run(owner.pubKey))
             assertTrue(printer.calls.isEmpty())
             // Nothing was spent: the morning is still open.
             assertEquals(OwnRun.NONE, runs.ownRun(ObserverRunner.TASK, owner.pubKey, six))
             node.balanceMsats = 600_000
-            assertEquals(RunOutcome.INSUFFICIENT_BALANCE, worker.poll()[owner.pubKey], "settled for the hour")
+            assertEquals(RunOutcome.INSUFFICIENT_BALANCE, worker.run(owner.pubKey), "settled for the hour")
             clock += ObserverRunner.FIXABLE_RETRY_SECONDS
-            assertEquals(RunOutcome.PRINTED, worker.poll()[owner.pubKey])
+            assertEquals(RunOutcome.PRINTED, worker.run(owner.pubKey))
             // `sats_pricing` in the key's own /models said it is a Routstr node: /info was never needed.
             assertTrue(node.calls.none { it.startsWith("info") })
             assertTrue(node.calls.all { it.endsWith(nodeKey.url) }, "only the key's own node is asked")
@@ -92,11 +92,11 @@ class RoutstrRunnerTest : RunnerWorld() {
             val node = FakeNode(balanceMsats = 600_000)
             val worker = routstrWorld(node)
             listedModels = dear
-            assertEquals(RunOutcome.INSUFFICIENT_BALANCE, worker.poll()[owner.pubKey], "twice max_cost no longer covers a print")
+            assertEquals(RunOutcome.INSUFFICIENT_BALANCE, worker.run(owner.pubKey), "twice max_cost no longer covers a print")
             assertTrue(printer.calls.isEmpty())
             node.balanceMsats = required
             clock += ObserverRunner.FIXABLE_RETRY_SECONDS
-            assertEquals(RunOutcome.PRINTED, worker.poll()[owner.pubKey])
+            assertEquals(RunOutcome.PRINTED, worker.run(owner.pubKey))
         }
 
     @Test
@@ -110,7 +110,7 @@ class RoutstrRunnerTest : RunnerWorld() {
             world(listOf(nodeKey, openRouter))
             listedModels = dear
             schedule(ObserverParams.withDeep(task(model = model, key = nodeKey), true))
-            assertEquals(RunOutcome.INSUFFICIENT_BALANCE, worker.poll()[owner.pubKey])
+            assertEquals(RunOutcome.INSUFFICIENT_BALANCE, worker.run(owner.pubKey))
             assertTrue(printer.calls.isEmpty())
         }
 
@@ -120,7 +120,7 @@ class RoutstrRunnerTest : RunnerWorld() {
             val node = FakeNode(info = routstrInfo, balanceMsats = 0)
             val worker = routstrWorld(node)
             listedModels = listed(model)
-            assertEquals(RunOutcome.INSUFFICIENT_BALANCE, worker.poll()[owner.pubKey])
+            assertEquals(RunOutcome.INSUFFICIENT_BALANCE, worker.run(owner.pubKey))
             assertTrue(printer.calls.isEmpty())
         }
 
@@ -130,7 +130,7 @@ class RoutstrRunnerTest : RunnerWorld() {
             val node = FakeNode(info = null, balanceMsats = 0)
             val worker = routstrWorld(node)
             listedModels = listed(model)
-            assertEquals(RunOutcome.PRINTED, worker.poll()[owner.pubKey])
+            assertEquals(RunOutcome.PRINTED, worker.run(owner.pubKey))
             assertTrue(node.calls.none { it.startsWith("balance") })
         }
 
@@ -140,7 +140,7 @@ class RoutstrRunnerTest : RunnerWorld() {
             val node = FakeNode(info = routstrInfo, balanceMsats = 0)
             world()
             schedule()
-            assertEquals(RunOutcome.PRINTED, runnerWith(routstr = RoutstrFunds(node)).poll()[owner.pubKey])
+            assertEquals(RunOutcome.PRINTED, runnerWith(routstr = RoutstrFunds(node)).run(owner.pubKey))
             assertTrue(node.calls.isEmpty())
         }
 
@@ -155,10 +155,10 @@ class RoutstrRunnerTest : RunnerWorld() {
                         """{"detail":{"error":{"type":"insufficient_balance","code":"insufficient_balance","details":{"required_msats":700000,"available_msats":1000}}}}""",
                     ),
                 )
-            assertEquals(RunOutcome.INSUFFICIENT_BALANCE, worker.poll()[owner.pubKey])
+            assertEquals(RunOutcome.INSUFFICIENT_BALANCE, worker.run(owner.pubKey))
             assertEquals(OwnRun.ENDED, runs.ownRun(ObserverRunner.TASK, owner.pubKey, six))
             clock += ObserverRunner.FIXABLE_RETRY_SECONDS
-            assertEquals(RunOutcome.ATTEMPTED, worker.poll()[owner.pubKey])
+            assertEquals(RunOutcome.ATTEMPTED, worker.run(owner.pubKey))
             assertEquals(1, printer.calls.size)
         }
 
@@ -173,10 +173,10 @@ class RoutstrRunnerTest : RunnerWorld() {
                         """{"detail":{"error":{"message":"Payment settlement failed","type":"payment_settlement_failed","code":"payment_settlement_failed"}}}""",
                     ),
                 )
-            assertEquals(RunOutcome.CHARGED_NO_ANSWER, worker.poll()[owner.pubKey])
+            assertEquals(RunOutcome.CHARGED_NO_ANSWER, worker.run(owner.pubKey))
             assertEquals(OwnRun.ENDED, runs.ownRun(ObserverRunner.TASK, owner.pubKey, six))
             clock += ObserverRunner.FIXABLE_RETRY_SECONDS
-            assertEquals(RunOutcome.ATTEMPTED, worker.poll()[owner.pubKey])
+            assertEquals(RunOutcome.ATTEMPTED, worker.run(owner.pubKey))
             assertEquals(1, printer.calls.size)
         }
 
@@ -186,12 +186,12 @@ class RoutstrRunnerTest : RunnerWorld() {
             val worker = routstrWorld(FakeNode(balanceMsats = 1_000_000))
             printer.result =
                 FakePrinter.failing(writerExceptionFor(424, """{"error":{"message":"upstream down","code":"UPSTREAM_UNAVAILABLE"}}"""))
-            assertEquals(RunOutcome.UPSTREAM_UNAVAILABLE, worker.poll()[owner.pubKey])
+            assertEquals(RunOutcome.UPSTREAM_UNAVAILABLE, worker.run(owner.pubKey))
             assertEquals(OwnRun.NONE, runs.ownRun(ObserverRunner.TASK, owner.pubKey, six))
-            assertEquals(RunOutcome.UPSTREAM_UNAVAILABLE, worker.poll()[owner.pubKey], "settled for the hour")
+            assertEquals(RunOutcome.UPSTREAM_UNAVAILABLE, worker.run(owner.pubKey), "settled for the hour")
             printer.result = { _, _ -> FakePrinter.printed() }
             clock += ObserverRunner.FIXABLE_RETRY_SECONDS
-            assertEquals(RunOutcome.PRINTED, worker.poll()[owner.pubKey])
+            assertEquals(RunOutcome.PRINTED, worker.run(owner.pubKey))
             assertEquals(2, printer.calls.size)
         }
 
@@ -200,7 +200,7 @@ class RoutstrRunnerTest : RunnerWorld() {
         runTest {
             val worker = routstrWorld(FakeNode(balanceMsats = 1_000_000))
             printer.result = { _, _ -> throw AfterAnswerException(WriterException(WriterFailure.UPSTREAM_DOWN, 424)) }
-            assertEquals(RunOutcome.WRITER_FAILED, worker.poll()[owner.pubKey])
+            assertEquals(RunOutcome.WRITER_FAILED, worker.run(owner.pubKey))
             assertEquals(OwnRun.ENDED, runs.ownRun(ObserverRunner.TASK, owner.pubKey, six))
         }
 
@@ -220,7 +220,7 @@ class RoutstrRunnerTest : RunnerWorld() {
                 printer.calls.clear()
                 world(listOf(onion, openRouter))
                 schedule(task(model = model, key = onion))
-                assertEquals(expected, runnerWith(routstr = RoutstrFunds(node)).poll()[owner.pubKey], onion.url)
+                assertEquals(expected, runnerWith(routstr = RoutstrFunds(node)).run(owner.pubKey), onion.url)
                 assertTrue(printer.calls.isEmpty(), onion.url)
                 assertTrue(node.calls.isEmpty(), onion.url)
             }
@@ -232,7 +232,7 @@ class RoutstrRunnerTest : RunnerWorld() {
             world()
             // The reader chose a node the Assistant has no key for, and no model: never another provider instead.
             schedule(task(model = null, key = nodeKey))
-            assertEquals(RunOutcome.KEY_NOT_GIVEN, runner.poll()[owner.pubKey])
+            assertEquals(RunOutcome.KEY_NOT_GIVEN, runner.run(owner.pubKey))
             assertTrue(printer.calls.isEmpty())
         }
 

@@ -45,7 +45,7 @@ suspend fun NostrSignerInternal.signed(
 
 fun sha256Hex(bytes: ByteArray): String = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
 
-/** brainstorm_server's key view in memory: each owner's Assistant signer, or why there is none. */
+/** brainstorm_server's `brainstorm_nsec` in memory: each owner's Assistant signer, or why there is none. */
 class MemoryDirectory(
     private val assistants: Map<HexKey, NostrSignerInternal>,
     private val failures: Map<HexKey, KeyFailure> = emptyMap(),
@@ -78,8 +78,6 @@ class RecordingAssistant(
     val local = LocalAssistant(MemoryDirectory(assistants, failures), now)
     val decrypted = mutableListOf<Pair<HexKey, Int>>()
     val signedKinds = mutableListOf<Int>()
-
-    suspend fun pairs() = local.pairs()
 
     override suspend fun assistantOf(owner: HexKey): HexKey = local.assistantOf(owner)
 

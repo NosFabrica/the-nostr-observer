@@ -9,6 +9,7 @@ import com.vitorpamplona.quartz.nipFAAgentKeys.tags.AgentKeyTag
 import com.vitorpamplona.quartz.nipFBScheduledTasks.ScheduledTask
 import com.vitorpamplona.quartz.nipFBScheduledTasks.ScheduledTaskEvent
 import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.test.Test
@@ -18,39 +19,27 @@ import kotlin.test.assertTrue
 
 /** How long anything can hold the worker, what survives a halt, and which reads are trusted. */
 class RunnerBoundsTest : RunnerWorld() {
-    /** A second owner (the stranger) with their own Assistant, lists and schedule, beside the owner's. */
-    private suspend fun secondOwner() {
-        relays.put(index, strangersAssistant.signed(10002, arrayOf(arrayOf("r", assistantRelay.url)), createdAt = 1))
-        relays.put(
-            ownerRelay,
-            stranger.signed(10063, arrayOf(arrayOf("server", "https://blossom.owner.example")), createdAt = 1),
-            stranger.signed(10040, arrayOf(arrayOf("30382:rank", "b".repeat(64), "wss://nip85.example")), createdAt = 1),
-        )
-        relays.put(assistantRelay, agentKeyList(strangersAssistant, listOf(openRouter), createdAt = 1))
-        val strangers =
-            ScheduledTask
-                .create("observer", "observer", "0 6 * * *", "Europe/London", setAt = 0)
-                .withRunner(strangersAssistant.pubKey, 0)
-                .withParam("model", listOf("m"))
-        relays.put(ownerRelay, typed(stranger.sign(ScheduledTaskEvent.update(strangers, stranger, "observer", createdAt = now - 3_600))))
-    }
-
     @Test
-    fun aRelayThatNeverAnswersDoesNotHoldThePoll() =
+    fun aRelayThatNeverAnswersDoesNotHoldTheWake() =
         runTest {
             world()
             schedule()
             // The owner's relay takes every REQ and never ends one: no EOSE, no CLOSED, no error.
+            // Every relay is asked on its own subscription, so it costs its own deadline, and the
+            // others (the index) still answer.
             val hanging =
                 object : RelayAccess by relays {
                     override suspend fun fetch(
                         relays: Set<NormalizedRelayUrl>,
                         filter: Filter,
-                    ): RelayRead = if (ownerRelay in relays) awaitCancellation() else this@RunnerBoundsTest.relays.fetch(relays, filter)
+                    ): RelayRead {
+                        if (ownerRelay !in relays) return this@RunnerBoundsTest.relays.fetch(relays, filter)
+                        delay(QuartzRelayAccess.FETCH_DEADLINE_MS)
+                        return this@RunnerBoundsTest.relays.fetch(relays - ownerRelay, filter)
+                    }
                 }
-            val outcomes = runnerWith(access = hanging).poll()
             // It answered for nobody: no quorum on the owner's relays, nothing spent.
-            assertEquals(RunOutcome.NO_QUORUM, outcomes[owner.pubKey])
+            assertEquals(RunOutcome.NO_QUORUM, runnerWith(access = hanging).run(owner.pubKey))
             assertTrue(printer.calls.isEmpty())
         }
 
@@ -68,11 +57,11 @@ class RunnerBoundsTest : RunnerWorld() {
                     ): Int = awaitCancellation()
                 }
             val pending = MemoryPendingStore()
-            assertNull(withTimeoutOrNull(60_000) { runnerWith(access = stuck, pending = pending).poll() })
+            assertNull(withTimeoutOrNull(60_000) { runnerWith(access = stuck, pending = pending).run(owner.pubKey) })
             assertEquals(1, printer.calls.size)
             // A restart finds it in the store, and publishes it without printing again.
             assertEquals(listOf(six), pending.list(ObserverRunner.TASK, owner.pubKey).map { it.occurrence })
-            runnerWith(pending = pending).poll()
+            runnerWith(pending = pending).run(owner.pubKey)
             assertEquals(1, printer.calls.size)
             assertTrue(relays.published.any { ObserverSite.isRunnerSiteFor(it.first, assistant.pubKey, owner.pubKey) })
             assertTrue(pending.list(ObserverRunner.TASK, owner.pubKey).isEmpty())
@@ -105,13 +94,13 @@ class RunnerBoundsTest : RunnerWorld() {
             pending.put(yesterday.toPending())
             val worker = runnerWith(pending = pending)
             blossom.down = true
-            assertEquals(RunOutcome.PUBLISH_PENDING, worker.poll()[owner.pubKey])
+            assertEquals(RunOutcome.PUBLISH_PENDING, worker.run(owner.pubKey))
             // Today's paper is kept beside it, not in its place.
             assertEquals(listOf(six - 86_400, six), pending.list(ObserverRunner.TASK, owner.pubKey).map { it.occurrence })
             // Back up: both go out, in one site.
             blossom.down = false
             clock += 600
-            worker.poll()
+            worker.run(owner.pubKey)
             assertTrue(pending.list(ObserverRunner.TASK, owner.pubKey).isEmpty())
             val site = relays.published.last().first
             val paths = site.tags.filter { it.size > 1 && it[0] == "path" }.map { it[1] }
@@ -120,32 +109,11 @@ class RunnerBoundsTest : RunnerWorld() {
         }
 
     @Test
-    fun aRunWaitingForAPermitWhenTheWorkerStopsStartsNothing() =
-        runTest {
-            world()
-            schedule()
-            secondOwner()
-            var stopping = false
-            // One run at a time; SIGTERM arrives during the first print.
-            val stopper =
-                PaperPrinter { key, model, who, name, options ->
-                    stopping = true
-                    printer.print(key, model, who, name, options)
-                }
-            val outcomes = runnerWith(printer = stopper, accepting = { !stopping }, parallelism = 1).poll()
-            assertEquals(1, printer.calls.size)
-            val waited = if (printer.calls.single().third == owner.pubKey) stranger.pubKey else owner.pubKey
-            assertEquals(RunOutcome.STOPPING, outcomes[waited])
-            // Not even its schedule was decrypted.
-            assertTrue(api.decrypted.none { it.first == waited })
-        }
-
-    @Test
     fun aModelsListingThatNeverAnswersEndsTheRun() =
         runTest {
             world()
             schedule(task(model = null, key = null))
-            val outcome = runnerWith(models = { awaitCancellation() }).poll()[owner.pubKey]
+            val outcome = runnerWith(models = { awaitCancellation() }).run(owner.pubKey)
             assertEquals(RunOutcome.NO_MODEL, outcome)
             assertTrue(printer.calls.isEmpty())
         }
@@ -159,10 +127,10 @@ class RunnerBoundsTest : RunnerWorld() {
             schedule()
             // One of the Assistant's two relays answers: a newer list (a key taken back) may be on the other.
             relays.down = setOf(second)
-            assertEquals(RunOutcome.NO_QUORUM, runner.poll()[owner.pubKey])
+            assertEquals(RunOutcome.NO_QUORUM, runner.run(owner.pubKey))
             assertTrue(printer.calls.isEmpty())
             relays.down = emptySet()
-            assertEquals(RunOutcome.PRINTED, runner.poll()[owner.pubKey])
+            assertEquals(RunOutcome.PRINTED, runner.run(owner.pubKey))
         }
 
     @Test
@@ -171,54 +139,10 @@ class RunnerBoundsTest : RunnerWorld() {
             world()
             val elsewhere = AgentKeyTag("sk-other-9999", "https://api.example.com/v1")
             schedule(task(key = elsewhere))
-            assertEquals(RunOutcome.KEY_NOT_GIVEN, runner.poll()[owner.pubKey])
+            assertEquals(RunOutcome.KEY_NOT_GIVEN, runner.run(owner.pubKey))
             // The owner gives the Assistant that key: a new kind 12000.
             relays.put(assistantRelay, agentKeyList(assistant, listOf(openRouter, elsewhere), createdAt = 2))
-            assertEquals(RunOutcome.PRINTED, runner.poll()[owner.pubKey])
+            assertEquals(RunOutcome.PRINTED, runner.run(owner.pubKey))
             assertEquals(elsewhere, printer.calls.single().first)
-        }
-
-    @Test
-    fun aRelayThatCutsAPageShortIsNotTakenAsHavingAnsweredForEveryone() =
-        runTest {
-            world()
-            schedule()
-            // Two more owners whose schedules are on the same relay, written later than the owner's.
-            val others = listOf(newSigner(), newSigner())
-            val assistants = others.map { newSigner() }
-            others.zip(assistants).forEachIndexed { i, (who, theirs) ->
-                relays.put(index, who.signed(10002, arrayOf(arrayOf("r", ownerRelay.url, "write")), createdAt = 1))
-                val t =
-                    ScheduledTask
-                        .create("observer", "observer", "0 6 * * *", "Europe/London", setAt = 0)
-                        .withRunner(theirs.pubKey, 0)
-                relays.put(ownerRelay, typed(who.sign(ScheduledTaskEvent.update(t, who, "observer", createdAt = now - 60 + i))))
-            }
-            // The owner took printing back on their relay; the index still has the version naming the Assistant.
-            schedule(
-                ScheduledTask(task().publicTags.filterNot { it[0] == "p" }.toTypedArray(), task().privateTags),
-                onIndex = false,
-                createdAt = now - 1_800,
-            )
-            // The owners' relay sends two events for a REQ with no limit, and says nothing about it.
-            relays.defaultLimit = { if (it == ownerRelay) 2 else null }
-            val nostr = RunnerNostr(relays, setOf(index), null, now = { clock })
-            val reads = nostr.schedules(listOf(owner.pubKey) + others.map { it.pubKey })
-            val mine = reads.single { it.event.pubKey == owner.pubKey }
-            // The newest is the one without the Assistant, read in full.
-            assertTrue(ScheduledTask(mine.event.tags).runners.isEmpty())
-            assertTrue(mine.quorum)
-        }
-
-    @Test
-    fun aRelayThatClosesABigBatchIsAskedAgainInSmallerOnes() =
-        runTest {
-            world()
-            schedule()
-            relays.refuses = { relay, filter -> relay == ownerRelay && filter.authors.orEmpty().size > 1 }
-            val nostr = RunnerNostr(relays, setOf(index), null, now = { clock }, authorsPerReq = 4, minChunk = 1)
-            val read = nostr.schedules(listOf(owner.pubKey, stranger.pubKey)).single { it.event.pubKey == owner.pubKey }
-            assertTrue(read.quorum)
-            assertTrue(relays.asked.any { (to, f) -> to == setOf(ownerRelay) && f.authors == listOf(owner.pubKey) && f.limit == 1 })
         }
 }

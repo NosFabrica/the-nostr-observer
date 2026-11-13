@@ -50,7 +50,6 @@ abstract class RunnerWorld {
     protected val runner =
         ObserverRunner(
             api = api,
-            pairs = { api.pairs() },
             nostr = RunnerNostr(relays, setOf(index), null),
             blossom = BlossomHttp(blossom.client),
             printer = printer,
@@ -82,6 +81,23 @@ abstract class RunnerWorld {
             assistant.signed(10063, arrayOf(arrayOf("server", "https://assistant-own.example")), createdAt = 1),
             agentKeyList(assistant, keys, createdAt = 1),
         )
+    }
+
+    /** A second owner (the stranger) with their own Assistant, lists and schedule, beside the owner's. */
+    protected suspend fun secondOwner() {
+        relays.put(index, strangersAssistant.signed(10002, arrayOf(arrayOf("r", assistantRelay.url)), createdAt = 1))
+        relays.put(
+            ownerRelay,
+            stranger.signed(10063, arrayOf(arrayOf("server", "https://blossom.owner.example")), createdAt = 1),
+            stranger.signed(10040, arrayOf(arrayOf("30382:rank", "b".repeat(64), "wss://nip85.example")), createdAt = 1),
+        )
+        relays.put(assistantRelay, agentKeyList(strangersAssistant, listOf(openRouter), createdAt = 1))
+        val strangers =
+            ScheduledTask
+                .create("observer", "observer", "0 6 * * *", "Europe/London", setAt = 0)
+                .withRunner(strangersAssistant.pubKey, 0)
+                .withParam("model", listOf("m"))
+        relays.put(ownerRelay, typed(stranger.sign(ScheduledTaskEvent.update(strangers, stranger, "observer", createdAt = now - 3_600))))
     }
 
     protected fun task(
@@ -119,19 +135,16 @@ abstract class RunnerWorld {
         api: AssistantSigner = this.api,
         pending: PendingStore = MemoryPendingStore(),
         routstr: RoutstrFunds = RoutstrFunds(NoRoutstrNode),
-        parallelism: Int = ObserverRunner.PARALLELISM,
         models: suspend (AgentKeyTag) -> List<AgentModel> = { listedModels },
         nostr: RunnerNostr = RunnerNostr(access, setOf(index), null, now = { clock }),
     ) = ObserverRunner(
         api = api,
-        pairs = { this.api.pairs() },
         nostr = nostr,
         blossom = BlossomHttp(blossom.client),
         printer = printer,
         runs = runs,
         models = models,
         now = { clock },
-        parallelism = parallelism,
         accepting = accepting,
         pending = pending,
         routstr = routstr,

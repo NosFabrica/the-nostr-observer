@@ -71,12 +71,15 @@ import okhttp3.Call
 import okhttp3.EventListener
 import java.util.concurrent.ConcurrentHashMap
 
-/** How one schedule went on one poll. Logged by name, with the owner: never a key or a plaintext. */
+/** How one wake (or one re-publish) went for one owner. Logged by name, with the owner: never a key or a plaintext. */
 enum class RunOutcome {
     PRINTED,
 
-    /** Printed and paid for, but not published (Blossom, a relay or `sign` failed): kept, and published again on later polls. */
+    /** Printed and paid for, but not published (Blossom, a relay or `sign` failed): kept, and published again later ([republish]). */
     PUBLISH_PENDING,
+
+    /** The owner has no Observer schedule on the relays read (or none of them answered). */
+    NO_SCHEDULE,
 
     /** The owner's newest schedule names no runner: they took printing back. */
     NOT_NAMED,
@@ -84,7 +87,7 @@ enum class RunOutcome {
     /** Too few of the owner's write relays answered to trust the schedule read is the newest: nothing is spent. */
     NO_QUORUM,
 
-    /** The schedule changed between the decision and the print (re-read right before spending): the next poll decides again. */
+    /** The schedule changed between the decision and the print (re-read right before spending): the next wake decides again. */
     SCHEDULE_CHANGED,
 
     /**
@@ -100,7 +103,7 @@ enum class RunOutcome {
     /** Its author isn't the owner of the Assistant it names, it names another key than the owner's Assistant, or its signature is bad. */
     REJECTED,
 
-    /** The key view has no Assistant for the owner. */
+    /** `brainstorm_nsec` has no Assistant for the owner. */
     NO_ASSISTANT,
 
     /** The owner's Assistant key doesn't open (no Fernet key opens it) or isn't the stored Assistant's. */
@@ -123,7 +126,7 @@ enum class RunOutcome {
 
     /**
      * A device of the owner holds a live claim on the occurrence: it may be printing it now. Not
-     * run, nothing spent; a later poll runs it only once that claim is stale and unfinished.
+     * run, nothing spent; a later wake runs it only once that claim is stale and unfinished.
      */
     CLAIMED_BY_DEVICE,
 
@@ -166,7 +169,7 @@ enum class RunOutcome {
     /** No `model` param and the endpoint lists none. */
     NO_MODEL,
 
-    /** The ranking isn't projected yet: nothing was spent, the next poll tries again. */
+    /** The ranking isn't projected yet: nothing was spent (the claim is forgotten), the next wake tries again. */
     NOT_READY,
     WRITER_FAILED,
 
@@ -311,13 +314,12 @@ suspend fun <T> cancellingCalls(
     }
 
 /**
- * The Assistant's print worker: one [poll] reads every owner's Observer schedule that names
- * their Assistant, checks it, decides, prints and publishes. See runner/README.md.
+ * The Assistant's print service, for one owner at a time: [run] reads the owner's newest Observer
+ * schedule, checks that it names their Assistant, decides, prints and publishes ([WakeService]
+ * calls it on a wake). [republish] publishes the papers still waiting. See runner/README.md.
  */
 class ObserverRunner(
     private val api: AssistantSigner,
-    /** Every (owner, Assistant) there is: the key view's pairs. */
-    private val pairs: suspend () -> List<AssistantPair>,
     private val nostr: RunnerNostr,
     private val blossom: BlossomHttp,
     private val printer: PaperPrinter,
@@ -327,11 +329,9 @@ class ObserverRunner(
     private val models: suspend (AgentKeyTag) -> List<AgentModel>,
     private val zoneOf: (String?) -> CronZone? = { it?.let(ZoneIdCronZone::of) },
     private val now: () -> Long = { TimeUtils.now() },
-    /** How many owners' schedules run at once: one slow reader's server never holds up the rest. */
-    private val parallelism: Int = PARALLELISM,
     /** The longest a print may take, the model's calls included ([PRINT_TIMEOUT_SECONDS]). */
     private val printTimeoutMs: Long = PRINT_TIMEOUT_SECONDS * 1000,
-    /** False once the worker is stopping: a run that hasn't started its print yet doesn't. */
+    /** False once the service is stopping: a run that hasn't started its print yet doesn't. */
     private val accepting: () -> Boolean = { true },
     /** Papers printed but not yet published ([PendingPaper]), in `assistant_runner.pending`. */
     private val pending: PendingStore = MemoryPendingStore(),
@@ -341,8 +341,9 @@ class ObserverRunner(
     private val modelsTimeoutMs: Long = MODELS_TIMEOUT_MS,
 ) {
     /**
-     * What this worker already settled for an owner's occurrence, so a poll doesn't read both
-     * sites and decrypt the keys again every few minutes until the next one is due: [outcome]
+     * What this service already settled for an owner's occurrence, so a wake (the runner wakes
+     * again every few minutes until a `runs` row exists, and a fixable outcome writes none) doesn't
+     * read both sites and decrypt the keys again until the next one is due: [outcome]
      * holds for [scheduleId]'s [occurrence] until [until] (the occurrence's end for a paper that
      * exists or a run that ended, an hour for something the owner can fix, like a missing 10063).
      */
@@ -360,60 +361,100 @@ class ObserverRunner(
 
     private val settled = ConcurrentHashMap<HexKey, Settled>()
 
-    /** Decrypted schedule tags by event id: an event never changes, so neither does its plaintext. Pruned to the schedules of the last poll. */
-    private val decryptedTags = ConcurrentHashMap<String, Array<Array<String>>>()
+    /**
+     * Each owner's newest schedule's decrypted tags, by its event id: an event never changes, so
+     * neither does its plaintext. One per owner, so it holds no more than the owners it has seen.
+     */
+    private val decryptedTags = ConcurrentHashMap<HexKey, Pair<String, Array<Array<String>>>>()
 
     /**
-     * One pass over every schedule. Returns each owner's outcome, for tests and the log.
+     * One owner's whole path, as a wake asks: their Assistant, their newest schedule (read with a
+     * quorum), the checks, the decision, the print and the publish. Returns the outcome, for the
+     * log and the tests; throws only when cancelled.
      */
-    suspend fun poll(): Map<HexKey, RunOutcome> {
-        val pairs = pairs()
-        val byOwner = pairs.associateBy { it.owner }
-        val gate = Semaphore(parallelism)
-        val reads = nostr.schedules(byOwner.keys)
-        decryptedTags.keys.retainAll(reads.map { it.event.id }.toSet())
-        settled.keys.retainAll(byOwner.keys)
+    suspend fun run(owner: HexKey): RunOutcome =
+        guarded(owner) {
+            val at = now()
+            settled.values.removeIf { it.until <= at }
+            val (read, pair) = front(owner)
+            runChecked(read, pair)
+        }
 
-        // A stopping worker starts no run, even one queued for a permit.
-        fun mayStart() = accepting()
-        val ran =
-            coroutineScope {
-                reads
-                    .mapNotNull { read -> byOwner[read.event.pubKey]?.let { read to it } }
-                    .map { (read, pair) ->
-                        async {
-                            if (!mayStart()) return@async pair.owner to report(pair.owner, RunOutcome.STOPPING)
-                            gate.withPermit {
-                                pair.owner to
-                                    try {
-                                        if (!mayStart()) report(pair.owner, RunOutcome.STOPPING) else runSchedule(read, pair)
-                                    } catch (e: CancellationException) {
-                                        throw e
-                                    } catch (e: Exception) {
-                                        // The class only: a message could carry what a provider or server echoed.
-                                        Log.w(TAG) { "owner=${pair.owner} outcome=${RunOutcome.ERROR} error=${e.javaClass.simpleName}" }
-                                        RunOutcome.ERROR
-                                    }
-                            }
-                        }
-                    }.awaitAll()
+    /**
+     * Publishes [owner]'s papers that are still waiting, never printing anything: only while their
+     * newest schedule (read with a quorum) still names their Assistant, as [run] does. An owner who
+     * no longer has an Assistant has theirs dropped.
+     */
+    suspend fun republish(owner: HexKey): RunOutcome =
+        guarded(owner) {
+            val (_, pair) =
+                try {
+                    front(owner)
+                } catch (s: Stop) {
+                    if (s.outcome == RunOutcome.NO_ASSISTANT) waiting(owner).forEach { dropPaper(it) }
+                    throw s
+                }
+            val papers = waiting(owner)
+            if (papers.isEmpty()) return@guarded RunOutcome.PRINTED
+            val ownerRelays = nostr.writeRelays(owner)
+            val assistantRelays = nostr.writeRelays(pair.assistant)
+            val site = AssistantSiteIO(owner, pair.assistant, api, nostr, assistantRelays, ownerServers(owner, ownerRelays), blossom, now)
+            publishPending(pair, papers, site)
+        }
+
+    /** [block], its [Stop] read as its outcome, and any other failure as [RunOutcome.ERROR]. */
+    private suspend fun guarded(
+        owner: HexKey,
+        block: suspend () -> RunOutcome,
+    ): RunOutcome =
+        try {
+            block()
+        } catch (s: Stop) {
+            s.outcome
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // The class only: a message could carry what a provider or a relay echoed.
+            Log.w(TAG) { "owner=$owner outcome=${RunOutcome.ERROR} error=${e.javaClass.simpleName}" }
+            RunOutcome.ERROR
+        }
+
+    /**
+     * What every path starts with: the owner's Assistant (its key must open), the owner's newest
+     * schedule read by author with a quorum, and the runner checks on it. Nothing is decrypted.
+     * [Stop]s with the outcome when any fails.
+     */
+    private suspend fun front(owner: HexKey): Pair<ScheduleRead, AssistantPair> {
+        // Checked first: a SIGTERM while this wake waited starts nothing.
+        if (!accepting()) stop(owner, RunOutcome.STOPPING)
+        val assistant =
+            try {
+                api.assistantOf(owner)
+            } catch (e: NoAssistantException) {
+                stop(owner, RunOutcome.NO_ASSISTANT)
+            } catch (e: AssistantKeyException) {
+                stop(owner, RunOutcome.KEY_UNREADABLE, e.failure.name)
             }
-        // A pending paper whose owner no longer has an Assistant, or is past its time, goes.
-        dropPending(byOwner.keys)
-        return ran.toMap(LinkedHashMap())
+        val pair = AssistantPair(owner, assistant)
+        val read = nostr.schedule(owner) ?: stop(owner, RunOutcome.NO_SCHEDULE)
+        val event = read.event
+        val named = ScheduledTask(event.tags).runners
+        // The owner took printing back (their newest version names no runner): nothing to do, said quietly.
+        if (named.isEmpty()) stop(owner, RunOutcome.NOT_NAMED)
+        // NIP-FB: with more than one `p`, nobody runs the task. Nothing is decrypted.
+        if (named.size != 1) stop(owner, RunOutcome.RUNNER_CONFLICT, "${named.size} p tags")
+        // Being named is not enough: the author must be the owner of THAT Assistant, and it must verify.
+        val check = ScheduledTaskClaims.checkRunner(event, pair.assistant, pair.owner)
+        if (check != ScheduledTaskClaims.RunnerCheck.OK) stop(owner, RunOutcome.REJECTED, check.name)
+        // Too few of the owner's relays answered: a newer version (printing taken back) may be on the others.
+        if (!read.quorum) stop(owner, RunOutcome.NO_QUORUM)
+        return read to pair
     }
 
-    /** Drops the papers past their time, and those of owners not in [owners] (no Assistant any more). */
-    private suspend fun dropPending(owners: Set<HexKey>) {
+    /** Drops every paper past its time: the retry loop's first step. */
+    suspend fun dropExpiredPending() {
         try {
             pending.dropExpired(now()).takeIf { it > 0 }?.let { Log.i(TAG) { "dropped $it pending papers past their time" } }
-            for (owner in pending.owners(TASK)) {
-                if (owner in owners) continue
-                for (paper in pending.list(TASK, owner)) {
-                    pending.delete(TASK, owner, paper.occurrence)
-                    report(owner, RunOutcome.PUBLISH_FAILED, "pending paper dropped")
-                }
-            }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -517,35 +558,12 @@ class ObserverRunner(
         detail: String? = null,
     ): Nothing = throw Stop(report(owner, outcome, detail))
 
-    private suspend fun runSchedule(
-        read: ScheduleRead,
-        pair: AssistantPair,
-    ): RunOutcome =
-        try {
-            runChecked(read, pair)
-        } catch (s: Stop) {
-            s.outcome
-        }
-
     private suspend fun runChecked(
         read: ScheduleRead,
         pair: AssistantPair,
     ): RunOutcome {
         val event = read.event
         val owner = pair.owner
-        // Checked again here: a SIGTERM while this run waited for a permit starts nothing.
-        if (!accepting()) return report(owner, RunOutcome.STOPPING)
-        val named = ScheduledTask(event.tags).runners
-        // The owner took printing back (their newest version names no runner): nothing to do, said quietly.
-        if (named.isEmpty()) return report(owner, RunOutcome.NOT_NAMED)
-        // NIP-FB: with more than one `p`, nobody runs the task. Nothing is decrypted.
-        if (named.size != 1) return report(owner, RunOutcome.RUNNER_CONFLICT, "${named.size} p tags")
-        // Being named is not enough: the author must be the owner of THAT Assistant, and it must verify.
-        val check = ScheduledTaskClaims.checkRunner(event, pair.assistant, pair.owner)
-        if (check != ScheduledTaskClaims.RunnerCheck.OK) return report(owner, RunOutcome.REJECTED, check.name)
-        // Too few of the owner's relays answered: a newer version (printing taken back) may be on the others.
-        if (!read.quorum) return report(owner, RunOutcome.NO_QUORUM)
-
         // Both NIP-65 lists are cached; the owner's 10063 is read only once something needs it.
         val ownerRelays = nostr.writeRelays(owner)
         val assistantRelays = nostr.writeRelays(pair.assistant)
@@ -802,7 +820,7 @@ class ObserverRunner(
     /**
      * Publishes [papers] (an owner's, oldest first, each already kept) to the Assistant's site in
      * one site event, and drops them once out. On any failure they stay kept, to be published
-     * again on a later poll, never printed again.
+     * again later ([republish]), never printed again.
      */
     private suspend fun publish(
         pair: AssistantPair,
@@ -840,14 +858,16 @@ class ObserverRunner(
         pair: AssistantPair,
         papers: List<PendingPaper>,
         site: AssistantSiteIO,
-    ) {
+    ): RunOutcome {
         val (live, expired) = papers.partition { now() <= it.until }
         expired.forEach {
             dropPaper(it)
             report(pair.owner, RunOutcome.PUBLISH_FAILED, "pending paper dropped")
         }
-        if (live.isEmpty()) return
-        if (publish(pair, live, site) == RunOutcome.PRINTED) report(pair.owner, RunOutcome.PRINTED, "${live.size} published late")
+        if (live.isEmpty()) return RunOutcome.PUBLISH_FAILED
+        val outcome = publish(pair, live, site)
+        if (outcome == RunOutcome.PRINTED) report(pair.owner, RunOutcome.PRINTED, "${live.size} published late")
+        return outcome
     }
 
     /** The schedule's private tags, decrypted by the Assistant from the whole signed event, once per event. */
@@ -855,9 +875,9 @@ class ObserverRunner(
         pair: AssistantPair,
         event: ScheduledTaskEvent,
     ): Array<Array<String>> {
-        decryptedTags[event.id]?.let { return it }
+        decryptedTags[pair.owner]?.takeIf { it.first == event.id }?.let { return it.second }
         val tags = parseTags(decrypt(pair, event, schedule = null)) ?: stop(pair.owner, RunOutcome.UNREADABLE)
-        decryptedTags[event.id] = tags
+        decryptedTags[pair.owner] = event.id to tags
         return tags
     }
 
@@ -1060,7 +1080,7 @@ class ObserverRunner(
         /** The task this service runs: the schedules' `task`, and its rows in `assistant_runner`. */
         const val TASK = ObserverSchedule.TASK
 
-        /** Owners run at once ([poll]). */
+        /** Owners run at once ([WakeService]): one slow reader's server never holds up the rest. */
         const val PARALLELISM = 4
 
         private const val DAY_SECONDS = 86_400L

@@ -153,7 +153,7 @@ class RunnerEngineTest : RunnerWorld() {
             val ai = FakeAi(200 to plan(note), 200 to page(note))
             world()
             schedule()
-            assertEquals(RunOutcome.PRINTED, runnerWith(printer = pressWith(listOf(note), ai)).poll()[owner.pubKey])
+            assertEquals(RunOutcome.PRINTED, runnerWith(printer = pressWith(listOf(note), ai)).run(owner.pubKey))
 
             // The same bytes went to each of the owner's servers.
             val published =
@@ -198,7 +198,7 @@ class RunnerEngineTest : RunnerWorld() {
         runBlocking {
             world()
             schedule(ObserverParams.withDeep(task(), true))
-            assertEquals(RunOutcome.PRINTED, runner.poll()[owner.pubKey])
+            assertEquals(RunOutcome.PRINTED, runner.run(owner.pubKey))
             assertEquals(WritingEffort.DEEP, printer.options.single().effort)
         }
 
@@ -207,7 +207,7 @@ class RunnerEngineTest : RunnerWorld() {
         runBlocking {
             world()
             schedule()
-            assertEquals(RunOutcome.PRINTED, runner.poll()[owner.pubKey])
+            assertEquals(RunOutcome.PRINTED, runner.run(owner.pubKey))
             assertEquals(WritingEffort.STANDARD, printer.options.single().effort)
         }
 
@@ -320,7 +320,7 @@ class RunnerEngineTest : RunnerWorld() {
             runs.claim(ObserverRunner.TASK, owner.pubKey, six - 7 * 86_400)
             runs.end(ObserverRunner.TASK, owner.pubKey, six - 7 * 86_400, RunOutcome.PRINTED.name)
 
-            assertEquals(RunOutcome.PRINTED, runner.poll()[owner.pubKey])
+            assertEquals(RunOutcome.PRINTED, runner.run(owner.pubKey))
             val context: EditionContext = printer.options.single().context
             // Four days before today's: No. 5.
             assertEquals(5, context.number)
@@ -338,7 +338,7 @@ class RunnerEngineTest : RunnerWorld() {
         runBlocking {
             world()
             schedule()
-            assertEquals(RunOutcome.PRINTED, runner.poll()[owner.pubKey])
+            assertEquals(RunOutcome.PRINTED, runner.run(owner.pubKey))
             val context = printer.options.single().context
             assertEquals(1, context.number)
             assertTrue(context.recent.isEmpty())

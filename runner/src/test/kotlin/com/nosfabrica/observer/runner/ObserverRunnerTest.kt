@@ -35,7 +35,7 @@ class ObserverRunnerTest : RunnerWorld() {
         runTest {
             world()
             schedule()
-            assertEquals(mapOf(owner.pubKey to RunOutcome.PRINTED), runner.poll())
+            assertEquals(RunOutcome.PRINTED, runner.run(owner.pubKey))
 
             // `key` = URL + last 4 picks the second OpenRouter key, `model` the model.
             assertEquals(listOf(Triple(secondOpenRouter, "anthropic/claude-sonnet-4.5", owner.pubKey)), printer.calls)
@@ -62,7 +62,7 @@ class ObserverRunnerTest : RunnerWorld() {
             // the model, so the next wake doesn't risk paying for the same morning twice.
             runs.claim(ObserverRunner.TASK, owner.pubKey, six)
             assertEquals(OwnRun.DIED, runs.ownRun(ObserverRunner.TASK, owner.pubKey, six))
-            assertEquals(RunOutcome.ATTEMPTED, runner.poll()[owner.pubKey])
+            assertEquals(RunOutcome.ATTEMPTED, runner.run(owner.pubKey))
             assertTrue(printer.calls.isEmpty())
             assertTrue(relays.published.isEmpty())
         }
@@ -72,7 +72,7 @@ class ObserverRunnerTest : RunnerWorld() {
         runTest {
             world()
             schedule()
-            runner.poll()
+            runner.run(owner.pubKey)
             assertEquals(setOf("blossom.owner.example", "media.owner.example"), blossom.hostsWritten())
             assertFalse(blossom.requests.any { "assistant-own.example" in it })
             // One 24242 per file (the page, the archive, editions.json), each signed through the server.
@@ -85,7 +85,7 @@ class ObserverRunnerTest : RunnerWorld() {
             world()
             relays.held[ownerRelay]!!.removeAll { it.kind == 10063 }
             schedule()
-            assertEquals(RunOutcome.NO_SERVERS, runner.poll()[owner.pubKey])
+            assertEquals(RunOutcome.NO_SERVERS, runner.run(owner.pubKey))
             assertTrue(printer.calls.isEmpty())
             assertTrue(blossom.requests.isEmpty())
         }
@@ -96,23 +96,23 @@ class ObserverRunnerTest : RunnerWorld() {
             world()
             // A stranger (who has an Assistant of their own) names the owner's Assistant.
             schedule(task(), by = stranger)
-            assertEquals(RunOutcome.REJECTED, runner.poll()[stranger.pubKey])
+            assertEquals(RunOutcome.REJECTED, runner.run(stranger.pubKey))
             assertTrue(api.decrypted.isEmpty())
             assertTrue(printer.calls.isEmpty())
             assertTrue(relays.published.isEmpty())
         }
 
     @Test
-    fun aScheduleBySomeoneWithNoAssistantIsRejected() =
+    fun aWakeForSomeoneWithNoAssistantDoesNothing() =
         runTest {
             world()
             val nobody = newSigner()
             relays.put(index, nobody.signed(10002, arrayOf(arrayOf("r", ownerRelay.url, "write")), createdAt = 1))
             schedule(task(), by = nobody)
-            // The schedules are read by the owners we serve; this one isn't, and even if a relay
-            // returned it, it would be rejected.
-            val outcome = runner.poll()[nobody.pubKey]
-            assertTrue(outcome == null || outcome == RunOutcome.REJECTED)
+            // A wake for someone `brainstorm_nsec` holds no Assistant for reads no relay and decrypts nothing.
+            assertEquals(RunOutcome.NO_ASSISTANT, runner.run(nobody.pubKey))
+            assertTrue(api.decrypted.isEmpty())
+            assertTrue(relays.asked.isEmpty())
             assertTrue(printer.calls.isEmpty())
         }
 
@@ -122,7 +122,7 @@ class ObserverRunnerTest : RunnerWorld() {
             world()
             val both = ScheduledTask(task().publicTags + arrayOf(arrayOf("p", strangersAssistant.pubKey)), task().privateTags)
             schedule(both)
-            assertEquals(RunOutcome.RUNNER_CONFLICT, runner.poll()[owner.pubKey])
+            assertEquals(RunOutcome.RUNNER_CONFLICT, runner.run(owner.pubKey))
             assertTrue(api.decrypted.isEmpty())
             assertTrue(printer.calls.isEmpty())
         }
@@ -143,7 +143,7 @@ class ObserverRunnerTest : RunnerWorld() {
                     now - 600,
                 )
             relays.put(ownerRelay, typed(owner.sign(template)))
-            assertEquals(RunOutcome.ALREADY_PRINTED, runner.poll()[owner.pubKey])
+            assertEquals(RunOutcome.ALREADY_PRINTED, runner.run(owner.pubKey))
             assertTrue(printer.calls.isEmpty())
         }
 
@@ -164,7 +164,7 @@ class ObserverRunnerTest : RunnerWorld() {
                     forReader = owner.pubKey,
                 )
             relays.put(assistantRelay, typed(assistant.sign(template)))
-            assertEquals(RunOutcome.ALREADY_PRINTED, runner.poll()[owner.pubKey])
+            assertEquals(RunOutcome.ALREADY_PRINTED, runner.run(owner.pubKey))
             assertTrue(printer.calls.isEmpty())
         }
 
@@ -185,7 +185,7 @@ class ObserverRunnerTest : RunnerWorld() {
                     forReader = owner.pubKey,
                 )
             relays.put(assistantRelay, typed(stranger.sign(template)))
-            assertEquals(RunOutcome.PRINTED, runner.poll()[owner.pubKey])
+            assertEquals(RunOutcome.PRINTED, runner.run(owner.pubKey))
         }
 
     @Test
@@ -205,7 +205,7 @@ class ObserverRunnerTest : RunnerWorld() {
                     forReader = owner.pubKey,
                 )
             relays.put(assistantRelay, typed(assistant.sign(template)))
-            assertEquals(RunOutcome.PRINTED, runner.poll()[owner.pubKey])
+            assertEquals(RunOutcome.PRINTED, runner.run(owner.pubKey))
         }
 
     @Test
@@ -213,7 +213,7 @@ class ObserverRunnerTest : RunnerWorld() {
         runTest {
             world()
             schedule(task(key = AgentKeyTag("sk-ant-zzzz-nope", "https://api.anthropic.com/v1/")))
-            runner.poll()
+            runner.run(owner.pubKey)
             assertEquals(anthropic, printer.calls.single().first)
         }
 
@@ -222,7 +222,7 @@ class ObserverRunnerTest : RunnerWorld() {
         runTest {
             world()
             schedule(task(model = null, key = null))
-            runner.poll()
+            runner.run(owner.pubKey)
             val (key, model, _) = printer.calls.single()
             assertEquals(openRouter, key)
             assertEquals("anthropic/claude-sonnet-4.5", model)
@@ -233,7 +233,7 @@ class ObserverRunnerTest : RunnerWorld() {
         runTest {
             world()
             schedule(task().withParam("size", listOf("broadsheet")))
-            assertEquals(RunOutcome.UNKNOWN_PARAMS, runner.poll()[owner.pubKey])
+            assertEquals(RunOutcome.UNKNOWN_PARAMS, runner.run(owner.pubKey))
             assertTrue(printer.calls.isEmpty())
         }
 
@@ -242,7 +242,7 @@ class ObserverRunnerTest : RunnerWorld() {
         runTest {
             world()
             schedule(task().withEnabled(false, now))
-            assertEquals(RunOutcome.NOT_RUNNABLE, runner.poll()[owner.pubKey])
+            assertEquals(RunOutcome.NOT_RUNNABLE, runner.run(owner.pubKey))
             assertTrue(printer.calls.isEmpty())
         }
 
@@ -261,7 +261,7 @@ class ObserverRunnerTest : RunnerWorld() {
                 printer.calls.clear()
                 world(listOf(local, openRouter))
                 schedule(task(key = local))
-                assertEquals(RunOutcome.REFUSED_URL, runner.poll()[owner.pubKey], url)
+                assertEquals(RunOutcome.REFUSED_URL, runner.run(owner.pubKey), url)
                 assertTrue(printer.calls.isEmpty(), url)
             }
         }
@@ -272,10 +272,10 @@ class ObserverRunnerTest : RunnerWorld() {
             world()
             schedule()
             printer.result = { _, _ -> FakePrinter.notReady() }
-            assertEquals(RunOutcome.NOT_READY, runner.poll()[owner.pubKey])
+            assertEquals(RunOutcome.NOT_READY, runner.run(owner.pubKey))
             printer.result = FakePrinter.failing(WriterException(WriterFailure.RATE_LIMITED, 429))
-            assertEquals(RunOutcome.WRITER_FAILED, runner.poll()[owner.pubKey])
-            assertEquals(RunOutcome.ATTEMPTED, runner.poll()[owner.pubKey])
+            assertEquals(RunOutcome.WRITER_FAILED, runner.run(owner.pubKey))
+            assertEquals(RunOutcome.ATTEMPTED, runner.run(owner.pubKey))
             assertEquals(2, printer.calls.size)
         }
 
@@ -285,7 +285,7 @@ class ObserverRunnerTest : RunnerWorld() {
             world()
             schedule()
             val gone = RecordingAssistant(mapOf(stranger.pubKey to strangersAssistant), { clock })
-            assertEquals(RunOutcome.NO_ASSISTANT, runnerWith(api = gone).poll()[owner.pubKey])
+            assertEquals(RunOutcome.NO_ASSISTANT, runnerWith(api = gone).run(owner.pubKey))
             assertTrue(printer.calls.isEmpty())
         }
 
@@ -296,7 +296,7 @@ class ObserverRunnerTest : RunnerWorld() {
             schedule()
             for (failure in listOf(KeyFailure.NSEC_UNREADABLE, KeyFailure.NSEC_MISMATCH)) {
                 val broken = RecordingAssistant(mapOf(owner.pubKey to assistant), { clock }, mapOf(owner.pubKey to failure))
-                assertEquals(RunOutcome.KEY_UNREADABLE, runnerWith(api = broken).poll()[owner.pubKey], failure.name)
+                assertEquals(RunOutcome.KEY_UNREADABLE, runnerWith(api = broken).run(owner.pubKey), failure.name)
             }
             assertTrue(printer.calls.isEmpty())
         }
@@ -307,14 +307,14 @@ class ObserverRunnerTest : RunnerWorld() {
             world()
             val event = schedule()
             val keyList = relays.held[assistantRelay]!!.first { it.kind == 12000 }
-            val (_, printedLogs) = capturingLogs { runner.poll() }
+            val (_, printedLogs) = capturingLogs { runner.run(owner.pubKey) }
 
             // Fresh state, and a provider that fails while echoing the key back.
             relays.published.clear()
             relays.held[assistantRelay]!!.removeAll { it.kind == 35128 }
             printer.result = FakePrinter.failing(WriterException(WriterFailure.REJECTED, 401, "invalid key ${secondOpenRouter.key}"))
             // A new worker: this one remembers the morning is settled.
-            val (_, failedLogs) = capturingLogs { runnerWith(runs = MemoryRunStore()).poll() }
+            val (_, failedLogs) = capturingLogs { runnerWith(runs = MemoryRunStore()).run(owner.pubKey) }
 
             for (logs in listOf(printedLogs, failedLogs)) {
                 assertTrue(logs.contains(owner.pubKey), "the owner and the outcome are logged")
@@ -340,50 +340,11 @@ class ObserverRunnerTest : RunnerWorld() {
             world()
             schedule()
             val hanging = PaperPrinter { _, _, _, _, _ -> awaitCancellation() }
-            assertEquals(RunOutcome.TIMED_OUT, runnerWith(printer = hanging).poll()[owner.pubKey])
+            assertEquals(RunOutcome.TIMED_OUT, runnerWith(printer = hanging).run(owner.pubKey))
             // It may have reached the model: never again on its own.
             assertEquals(OwnRun.ENDED, runs.ownRun(ObserverRunner.TASK, owner.pubKey, Instant.parse("2026-11-12T06:00:00Z").epochSecond))
-            assertEquals(RunOutcome.ATTEMPTED, runner.poll()[owner.pubKey])
+            assertEquals(RunOutcome.ATTEMPTED, runner.run(owner.pubKey))
             assertTrue(relays.published.isEmpty())
-        }
-
-    @Test
-    fun oneSlowReaderDoesNotHoldUpTheOthers() =
-        runTest {
-            world()
-            schedule()
-            // A second owner with their own Assistant, schedule and lists.
-            relays.put(index, strangersAssistant.signed(10002, arrayOf(arrayOf("r", assistantRelay.url)), createdAt = 1))
-            relays.put(
-                ownerRelay,
-                stranger.signed(10063, arrayOf(arrayOf("server", "https://blossom.owner.example")), createdAt = 1),
-                stranger.signed(10040, arrayOf(arrayOf("30382:rank", "b".repeat(64), "wss://nip85.example")), createdAt = 1),
-            )
-            relays.put(assistantRelay, agentKeyList(strangersAssistant, listOf(openRouter), createdAt = 1))
-            val strangers =
-                ScheduledTask
-                    .create("observer", "observer", "0 6 * * *", "Europe/London", setAt = 0)
-                    .withRunner(strangersAssistant.pubKey, 0)
-                    .withParam("model", listOf("m"))
-            relays.put(
-                ownerRelay,
-                typed(stranger.sign(ScheduledTaskEvent.update(strangers, stranger, "observer", createdAt = now - 3_600))),
-            )
-
-            // The owner's print waits until the stranger's is done: run one after the other, it never would.
-            val strangerDone = CompletableDeferred<Unit>()
-            val gated =
-                PaperPrinter { key, model, who, name, options ->
-                    if (who == owner.pubKey) {
-                        strangerDone.await()
-                    } else {
-                        strangerDone.complete(Unit)
-                    }
-                    printer.print(key, model, who, name, options)
-                }
-            val outcomes = runnerWith(printer = gated).poll()
-            assertEquals(RunOutcome.PRINTED, outcomes[owner.pubKey])
-            assertEquals(RunOutcome.PRINTED, outcomes[stranger.pubKey])
         }
 
     @Test
@@ -400,7 +361,7 @@ class ObserverRunnerTest : RunnerWorld() {
                         scheduleId: String?,
                     ): Boolean = throw SQLException("the database is gone")
                 }
-            assertEquals(RunOutcome.RECORDS_UNAVAILABLE, runnerWith(runs = broken).poll()[owner.pubKey])
+            assertEquals(RunOutcome.RECORDS_UNAVAILABLE, runnerWith(runs = broken).run(owner.pubKey))
             assertTrue(printer.calls.isEmpty())
         }
 
@@ -409,7 +370,7 @@ class ObserverRunnerTest : RunnerWorld() {
         runTest {
             world()
             schedule()
-            assertEquals(RunOutcome.STOPPING, runnerWith(accepting = { false }).poll()[owner.pubKey])
+            assertEquals(RunOutcome.STOPPING, runnerWith(accepting = { false }).run(owner.pubKey))
             assertTrue(printer.calls.isEmpty())
             assertEquals(OwnRun.NONE, runs.ownRun(ObserverRunner.TASK, owner.pubKey, Instant.parse("2026-11-12T06:00:00Z").epochSecond))
         }
@@ -432,7 +393,7 @@ class ObserverRunnerTest : RunnerWorld() {
                 },
                 onIndex = false,
             )
-            assertEquals(RunOutcome.NOT_NAMED, runner.poll()[owner.pubKey])
+            assertEquals(RunOutcome.NOT_NAMED, runner.run(owner.pubKey))
             assertTrue(printer.calls.isEmpty())
             assertTrue(api.decrypted.isEmpty())
         }
@@ -449,7 +410,7 @@ class ObserverRunnerTest : RunnerWorld() {
             schedule()
             // One of two answers: not more than half. The newer version may be on the silent one.
             relays.down = setOf(second)
-            assertEquals(RunOutcome.NO_QUORUM, runner.poll()[owner.pubKey])
+            assertEquals(RunOutcome.NO_QUORUM, runner.run(owner.pubKey))
             assertTrue(printer.calls.isEmpty())
         }
 
@@ -474,11 +435,11 @@ class ObserverRunnerTest : RunnerWorld() {
                     }
                 }
             val r = runnerWith(access = editing)
-            assertEquals(RunOutcome.SCHEDULE_CHANGED, r.poll()[owner.pubKey])
+            assertEquals(RunOutcome.SCHEDULE_CHANGED, r.run(owner.pubKey))
             assertTrue(printer.calls.isEmpty())
             assertEquals(OwnRun.NONE, runs.ownRun(ObserverRunner.TASK, owner.pubKey, six))
             // The next poll decides on the new version.
-            assertEquals(RunOutcome.PRINTED, r.poll()[owner.pubKey])
+            assertEquals(RunOutcome.PRINTED, r.run(owner.pubKey))
             assertEquals("openai/gpt-4o-mini", printer.calls.single().second)
         }
 
@@ -516,7 +477,7 @@ class ObserverRunnerTest : RunnerWorld() {
                 )
             val forged = EventFactory.create<Event>(real.id, owner.pubKey, real.createdAt, real.kind, real.tags, real.content, real.sig)
             relays.put(ownerRelay, forged)
-            assertEquals(RunOutcome.PRINTED, runner.poll()[owner.pubKey])
+            assertEquals(RunOutcome.PRINTED, runner.run(owner.pubKey))
         }
 
     @Test
@@ -525,7 +486,7 @@ class ObserverRunnerTest : RunnerWorld() {
             world()
             schedule()
             relays.down = setOf(assistantRelay)
-            assertEquals(RunOutcome.SITE_UNREADABLE, runner.poll()[owner.pubKey])
+            assertEquals(RunOutcome.SITE_UNREADABLE, runner.run(owner.pubKey))
             assertTrue(printer.calls.isEmpty())
         }
 
@@ -550,10 +511,10 @@ class ObserverRunnerTest : RunnerWorld() {
                     ),
                 ),
             )
-            assertEquals(RunOutcome.ALREADY_PRINTED, runner.poll()[owner.pubKey])
+            assertEquals(RunOutcome.ALREADY_PRINTED, runner.run(owner.pubKey))
             val siteReads = relays.asked.count { it.second.kinds == listOf(35128) }
             val relayListReads = relays.asked.count { it.second.kinds == listOf(10002) }
-            assertEquals(RunOutcome.ALREADY_PRINTED, runner.poll()[owner.pubKey])
+            assertEquals(RunOutcome.ALREADY_PRINTED, runner.run(owner.pubKey))
             assertEquals(siteReads, relays.asked.count { it.second.kinds == listOf(35128) }, "the sites were read again")
             assertEquals(relayListReads, relays.asked.count { it.second.kinds == listOf(10002) }, "the relay lists were read again")
             // Decrypted once: the second poll used the plaintext it had.
@@ -566,10 +527,10 @@ class ObserverRunnerTest : RunnerWorld() {
             world()
             schedule()
             blossom.down = true
-            assertEquals(RunOutcome.PUBLISH_PENDING, runner.poll()[owner.pubKey])
+            assertEquals(RunOutcome.PUBLISH_PENDING, runner.run(owner.pubKey))
             assertTrue(relays.published.isEmpty())
             blossom.down = false
-            runner.poll()
+            runner.run(owner.pubKey)
             assertEquals(1, printer.calls.size, "printed once")
             val site = relays.published.single().first
             assertTrue(ObserverSite.isRunnerSiteFor(site, assistant.pubKey, owner.pubKey))
@@ -583,10 +544,10 @@ class ObserverRunnerTest : RunnerWorld() {
         runTest {
             world()
             schedule(task(key = AgentKeyTag("sk-other-9999", "https://api.example.com/v1")))
-            assertEquals(RunOutcome.KEY_NOT_GIVEN, runner.poll()[owner.pubKey])
+            assertEquals(RunOutcome.KEY_NOT_GIVEN, runner.run(owner.pubKey))
             assertTrue(printer.calls.isEmpty())
             val keyReads = api.decrypted.count { it.second == 12000 }
-            assertEquals(RunOutcome.KEY_NOT_GIVEN, runner.poll()[owner.pubKey])
+            assertEquals(RunOutcome.KEY_NOT_GIVEN, runner.run(owner.pubKey))
             assertEquals(keyReads, api.decrypted.count { it.second == 12000 })
         }
 }

@@ -6,6 +6,7 @@ import com.nosfabrica.assistant.core.FernetKeyFile
 import com.nosfabrica.assistant.core.Migrations
 import com.nosfabrica.assistant.core.PostgresPendingStore
 import com.nosfabrica.assistant.core.PostgresRunStore
+import com.nosfabrica.assistant.core.WakeRequest
 import com.nosfabrica.observer.frontpage.IRoleBasedHttpClientBuilder
 import com.nosfabrica.observer.frontpage.JsoupPaperBoundary
 import com.nosfabrica.observer.frontpage.listAgentModels
@@ -21,6 +22,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import okhttp3.OkHttpClient
+import java.io.IOException
 import java.nio.file.Path
 import java.nio.file.Paths
 import java.util.concurrent.CountDownLatch
@@ -29,38 +31,56 @@ import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.system.exitProcess
 
 /**
- * The worker's settings, all from the environment. The database password ([Db.fromEnv]) is the
- * one secret here, and it is never logged; the Assistants' keys are in [keysFile].
+ * The service's settings, all from the environment. The database password ([Db.fromEnv]) is the
+ * one secret among them, and it is never logged; the Assistants' keys open with [keysFile].
  */
-class RunnerConfig(
-    val pollSeconds: Long,
-    val indexRelays: List<String>,
-    val searchRelay: String,
+class ServiceConfig(
+    /** The port `POST /v1/run` is served on. */
+    val port: Int = DEFAULT_PORT,
+    /** Owners' paths at once; a wake past them is answered 429. */
+    val parallelism: Int = ObserverRunner.PARALLELISM,
+    /** Seconds between the retry loop's passes over the papers still waiting. */
+    val pendingSeconds: Long = DEFAULT_PENDING_SECONDS,
+    val indexRelays: List<String> = listOf(DEFAULT_SEARCH_RELAY),
+    val searchRelay: String = DEFAULT_SEARCH_RELAY,
     /** brainstorm_server's Fernet key file, which opens the Assistants' nsecs. */
     val keysFile: Path = Paths.get(FernetKeyFile.DEFAULT_PATH),
-    /** On SIGTERM, how long the print under way may still take before the process exits anyway. */
+    /** On SIGTERM, how long the prints under way may still take before the process exits anyway. */
     val graceSeconds: Long = DEFAULT_GRACE_SECONDS,
 ) {
     companion object {
         const val DEFAULT_SEARCH_RELAY = "wss://search.brainstorm.world"
+        const val DEFAULT_PORT = 8080
+        const val DEFAULT_PENDING_SECONDS = 300L
 
         /** A print's budget and the publish after it: the pod's terminationGracePeriodSeconds must be longer. */
         const val DEFAULT_GRACE_SECONDS = ObserverRunner.PRINT_TIMEOUT_SECONDS + 60
 
-        fun fromEnv(env: Map<String, String> = System.getenv()): RunnerConfig {
-            val search = env["OBSERVER_SEARCH_RELAY"]?.trim()?.takeIf { it.isNotEmpty() } ?: DEFAULT_SEARCH_RELAY
-            return RunnerConfig(
-                pollSeconds = env["OBSERVER_RUNNER_POLL_SECONDS"]?.toLongOrNull()?.coerceAtLeast(30) ?: 300,
+        fun fromEnv(env: Map<String, String> = System.getenv()): ServiceConfig {
+            fun value(name: String) = env[name]?.trim()?.takeIf { it.isNotEmpty() }
+
+            fun number(
+                name: String,
+                range: LongRange,
+            ): Long? =
+                value(name)?.let {
+                    it.toLongOrNull()?.takeIf { n -> n in range } ?: throw IllegalArgumentException("$name must be a number in $range")
+                }
+            val search = value("OBSERVER_SEARCH_RELAY") ?: DEFAULT_SEARCH_RELAY
+            return ServiceConfig(
+                port = number("PORT", 1L..65_535L)?.toInt() ?: DEFAULT_PORT,
+                parallelism = number("PARALLELISM", 1L..64L)?.toInt() ?: ObserverRunner.PARALLELISM,
+                pendingSeconds = number("PENDING_SECONDS", 30L..86_400L) ?: DEFAULT_PENDING_SECONDS,
                 indexRelays =
-                    env["INDEX_RELAYS"]
+                    value("INDEX_RELAYS")
                         ?.split(',')
                         ?.map { it.trim() }
                         ?.filter { it.isNotEmpty() }
                         ?.takeIf { it.isNotEmpty() }
                         ?: listOf(search),
                 searchRelay = search,
-                keysFile = Paths.get(env["NSEC_KEYS_FILE"]?.trim()?.takeIf { it.isNotEmpty() } ?: FernetKeyFile.DEFAULT_PATH),
-                graceSeconds = env["OBSERVER_RUNNER_GRACE_SECONDS"]?.toLongOrNull()?.coerceAtLeast(0) ?: DEFAULT_GRACE_SECONDS,
+                keysFile = Paths.get(value("NSEC_KEYS_FILE") ?: FernetKeyFile.DEFAULT_PATH),
+                graceSeconds = number("GRACE_SECONDS", 0L..3_600L) ?: DEFAULT_GRACE_SECONDS,
             )
         }
     }
@@ -74,19 +94,19 @@ const val RELAY_READ_WINDOW_MS = 10_000L
 fun main() {
     val (config, db) =
         try {
-            RunnerConfig.fromEnv() to Db.fromEnv()
+            ServiceConfig.fromEnv() to Db.fromEnv()
         } catch (e: IllegalArgumentException) {
-            System.err.println("observer-runner: ${e.message}")
+            System.err.println("observer-service: ${e.message}")
             exitProcess(2)
         }
     Log.minLevel = LogLevel.INFO
 
     // The `assistant_runner` schema: whichever process starts first applies what is missing.
     try {
-        runBlocking { Migrations.migrate(db) }.takeIf { it.isNotEmpty() }?.let { Log.i("ObserverRunner") { "migrated: $it" } }
+        runBlocking { Migrations.migrate(db) }.takeIf { it.isNotEmpty() }?.let { Log.i(TAG) { "migrated: $it" } }
     } catch (e: Exception) {
         // The class only: a driver's message may carry the URL.
-        System.err.println("observer-runner: can't migrate the assistant_runner schema: ${e.javaClass.simpleName}")
+        System.err.println("observer-service: can't migrate the assistant_runner schema: ${e.javaClass.simpleName}")
         exitProcess(3)
     }
 
@@ -114,8 +134,10 @@ fun main() {
         }
 
     val stopping = AtomicBoolean(false)
-    val idle = CountDownLatch(1)
-    val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    val stopped = CountDownLatch(1)
+    val sockets = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    // The wakes' runs: off the server's threads, spread over the cores.
+    val runs = CoroutineScope(Dispatchers.Default + SupervisorJob())
     val search = RelayUrlNormalizer.normalizeOrNull(config.searchRelay) ?: error("OBSERVER_SEARCH_RELAY is not a relay URL")
     val index = RunnerNostr.relaysOf(config.indexRelays)
     val ours = index + search
@@ -125,61 +147,71 @@ fun main() {
                 { if (it in ours) guardedSockets else budgetedSockets },
                 { UrlGuard.refusal(it.url, setOf("wss")) == null },
             ),
-            scope,
+            sockets,
         )
-    val nostr = RunnerNostr(QuartzRelayAccess(client), index, search)
     val keys = FernetKeyFile(config.keysFile)
     // The count only: never a key.
-    Log.i("ObserverRunner") { "the key file holds ${keys.keyCount()} keys" }
-    val assistant = LocalAssistant(AssistantKeys(db, keys))
+    Log.i(TAG) { "the key file holds ${keys.keyCount()} keys" }
+    val runStore = PostgresRunStore(db)
+    // In Postgres beside the runs: a paid paper survives a restart.
+    val pending = PostgresPendingStore(db)
     val runner =
         ObserverRunner(
-            api = assistant,
-            pairs = { assistant.pairs() },
-            nostr = nostr,
+            api = LocalAssistant(AssistantKeys(db, keys)),
+            nostr = RunnerNostr(QuartzRelayAccess(client), index, search),
             blossom = BlossomHttp(blossomClient),
             printer = PressPrinter(client, search, http, JsoupPaperBoundary),
-            runs = PostgresRunStore(db),
+            runs = runStore,
             models = { http.listAgentModels(it) },
             accepting = { !stopping.get() },
-            // In Postgres beside the runs: a paid paper survives a restart.
-            pending = PostgresPendingStore(db),
+            pending = pending,
             // Only ever the key's own node; through the same guarded client as the print.
             routstr = RoutstrFunds(HttpRoutstrNode(http)),
         )
+    val service = WakeService(runner, runStore, pending, runs, config.parallelism, accepting = { !stopping.get() })
+    val server =
+        try {
+            WakeServer(service, config.port).also { it.start() }
+        } catch (e: IOException) {
+            System.err.println("observer-service: can't listen on port ${config.port}: ${e.javaClass.simpleName}")
+            exitProcess(3)
+        }
 
-    // SIGTERM: no new print starts; the one under way may finish within the grace period.
+    // SIGTERM: no new wake is taken, and the prints under way may finish within the grace
+    // period; a paper they print is in the store before it is published, so it isn't lost.
     Runtime.getRuntime().addShutdownHook(
         Thread {
             stopping.set(true)
-            Log.i("ObserverRunner") { "stopping: no new prints; waiting up to ${config.graceSeconds}s for the current one" }
-            if (!idle.await(config.graceSeconds, TimeUnit.SECONDS)) Log.w("ObserverRunner") { "stopping: the grace period ran out" }
+            server.stop()
+            Log.i(TAG) { "stopping: no new wakes; waiting up to ${config.graceSeconds}s for ${service.busy} runs" }
+            if (!runBlocking { service.drain(config.graceSeconds * 1000) }) Log.w(TAG) { "stopping: the grace period ran out" }
+            stopped.await(5, TimeUnit.SECONDS)
         },
     )
 
-    Log.i("ObserverRunner") { "started: polling every ${config.pollSeconds}s" }
+    Log.i(TAG) { "started: POST ${WakeRequest.PATH} on port ${server.port}, ${config.parallelism} at a time" }
     try {
-        // Not the main thread's own loop: the poll's work spreads over the cores, and the blocking
-        // writes (run records, pending papers) move to the IO dispatcher on their own.
         runBlocking(Dispatchers.Default) {
             while (!stopping.get()) {
+                // Woken every second to see a SIGTERM, rather than sleeping through the grace period.
+                var waited = 0L
+                while (waited < config.pendingSeconds && !stopping.get()) {
+                    delay(1000)
+                    waited++
+                }
+                if (stopping.get()) break
                 try {
-                    val outcomes = runner.poll()
-                    Log.i("ObserverRunner") { "poll done: ${outcomes.size} schedules, ${outcomes.values.groupingBy { it }.eachCount()}" }
+                    service.republishPending()
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
-                    Log.w("ObserverRunner") { "poll failed: ${e.javaClass.simpleName}" }
-                }
-                // Woken every second to see a SIGTERM, rather than sleeping through the grace period.
-                var waited = 0L
-                while (waited < config.pollSeconds && !stopping.get()) {
-                    delay(1000)
-                    waited++
+                    Log.w(TAG) { "the retry pass failed: ${e.javaClass.simpleName}" }
                 }
             }
         }
     } finally {
-        idle.countDown()
+        stopped.countDown()
     }
 }
+
+private const val TAG = "ObserverService"

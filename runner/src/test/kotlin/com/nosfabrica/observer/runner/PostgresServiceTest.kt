@@ -26,7 +26,7 @@ import kotlin.test.assertTrue
 
 /**
  * The service against a real Postgres (a throwaway cluster, or CI's service; skipped, saying so,
- * when there is neither): brainstorm_server's view and Fernet key file for the Assistant's key,
+ * when there is neither): brainstorm_server's `brainstorm_nsec` and Fernet key file for the Assistant's key,
  * `assistant_runner.runs` for the claim and its end, `assistant_runner.pending` for the paper.
  * Relays, Blossom and the model are fakes, as everywhere.
  *
@@ -59,16 +59,16 @@ class PostgresServiceTest : RunnerWorld() {
             schedule()
             val runs = PostgresRunStore(db)
             val worker = runnerWith(api = localAssistant(db), runs = runs, pending = PostgresPendingStore(db))
-            val (outcome, logs) = capturingLogs { worker.poll()[owner.pubKey] }
+            val (outcome, logs) = capturingLogs { worker.run(owner.pubKey) }
             assertEquals(RunOutcome.PRINTED, outcome)
             val row = assertNotNull(runs.find(ObserverRunner.TASK, owner.pubKey, six))
             assertEquals(RunState.ENDED, row.state)
             assertEquals("PRINTED", row.outcome)
-            // Signed by the Assistant, from the key the view and the key file gave.
+            // Signed by the Assistant, from the key `brainstorm_nsec` and the key file gave.
             val site = relays.published.single().first
             assertTrue(ObserverSite.isRunnerSiteFor(site, assistant.pubKey, owner.pubKey))
             // A new service (a restart, another replica) reads the row and doesn't print again.
-            assertEquals(RunOutcome.ATTEMPTED, runnerWith(api = localAssistant(db), runs = PostgresRunStore(db)).poll()[owner.pubKey])
+            assertEquals(RunOutcome.ATTEMPTED, runnerWith(api = localAssistant(db), runs = PostgresRunStore(db)).run(owner.pubKey))
             assertEquals(1, printer.calls.size)
             for (secret in listOf(nsec, nsecHex, token, fernetKey, openRouter.key, secondOpenRouter.key)) {
                 assertFalse(secret in logs, "a key or a token reached the log")
@@ -85,7 +85,7 @@ class PostgresServiceTest : RunnerWorld() {
             blossom.down = true
             assertEquals(
                 RunOutcome.PUBLISH_PENDING,
-                runnerWith(api = localAssistant(db), runs = PostgresRunStore(db), pending = pending).poll()[owner.pubKey],
+                runnerWith(api = localAssistant(db), runs = PostgresRunStore(db), pending = pending).run(owner.pubKey),
             )
             val waiting = pending.list(ObserverRunner.TASK, owner.pubKey).single()
             assertEquals(six, waiting.occurrence)
@@ -95,7 +95,7 @@ class PostgresServiceTest : RunnerWorld() {
             assertEquals(clock + PendingPaper.RETRY_SECONDS, waiting.until)
             // Back up: a new service publishes it from the store, without printing again.
             blossom.down = false
-            runnerWith(api = localAssistant(db), runs = PostgresRunStore(db), pending = PostgresPendingStore(db)).poll()
+            runnerWith(api = localAssistant(db), runs = PostgresRunStore(db), pending = PostgresPendingStore(db)).run(owner.pubKey)
             assertEquals(1, printer.calls.size)
             assertTrue(relays.published.any { ObserverSite.isRunnerSiteFor(it.first, assistant.pubKey, owner.pubKey) })
             assertTrue(pending.list(ObserverRunner.TASK, owner.pubKey).isEmpty())

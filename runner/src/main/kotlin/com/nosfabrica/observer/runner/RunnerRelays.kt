@@ -165,7 +165,7 @@ class RunnerNostr(
      * bound ([QuartzRelayAccess.FETCH_DEADLINE_MS]). Past it, nothing was served.
      */
     private val deadlineMs: Long = READ_DEADLINE_MS,
-    /** How many relays a batch read asks at once ([schedules], [writeRelaysOf]). */
+    /** How many relays a batch read asks at once ([writeRelaysOf]). */
     private val relayParallelism: Int = RELAY_PARALLELISM,
     /** The authors a batch read asks one relay for in one REQ ([byAuthors]). */
     private val authorsPerReq: Int = AUTHORS_PER_REQ,
@@ -178,9 +178,6 @@ class RunnerNostr(
     )
 
     private val relayLists = ConcurrentHashMap<HexKey, CachedRelays>()
-
-    /** When each owner with no schedule on the index relays last had their own relays asked. */
-    private val offIndexCheckedAt = ConcurrentHashMap<HexKey, Long>()
 
     /** A filter as one relay must be asked it: the search relay closes a REQ without a token. */
     private fun forRelay(
@@ -349,63 +346,13 @@ class RunnerNostr(
     }
 
     /**
-     * Every owner's newest Observer schedule (kind 34817, `d=observer`), and whether it was read
-     * with a quorum. Asked by author, never by `#p`: an owner who took printing back published a
-     * newer version without the `p`, and a `#p` read would never see it, so a relay still holding
-     * the older version would keep the worker printing. The caller checks that the newest names
-     * exactly this owner's Assistant.
-     *
-     * The index relays are asked first, for every owner; only the owners with a schedule there
-     * (and, hourly, those without: [OFF_INDEX_RECHECK_SECONDS]) have their own write relays asked
-     * too. Every relay is asked on its own, [relayParallelism] at a time ([byAuthors]), so one
-     * slow relay costs its own deadline, not the sum of everyone's.
+     * [owner]'s newest Observer schedule (kind 34817, `d=observer`), from their write relays and
+     * the index, and whether more than half of their relays answered: the read a wake starts
+     * with, and the one right before spending. Asked by author, never by `#p`: an owner who took
+     * printing back published a newer version without the `p`, and a `#p` read would never see
+     * it, so a relay still holding the older version would keep the service printing. The caller
+     * checks that the newest names exactly this owner's Assistant.
      */
-    suspend fun schedules(owners: Collection<HexKey>): List<ScheduleRead> {
-        if (owners.isEmpty()) return emptyList()
-        val found = HashMap<HexKey, MutableList<Event>>()
-        val servedBy = HashMap<HexKey, MutableSet<NormalizedRelayUrl>>()
-
-        suspend fun ask(byRelay: Map<NormalizedRelayUrl, List<HexKey>>) {
-            val reads = onEach(byRelay.keys) { relay -> relay to byAuthors(relay, byRelay.getValue(relay), ::scheduleFilter) }
-            // Merged here, on one coroutine: the reads ran in parallel.
-            for ((relay, read) in reads) {
-                read.events.forEach { found.getOrPut(it.pubKey) { ArrayList() } += it }
-                read.covered.forEach { servedBy.getOrPut(it) { HashSet() } += relay }
-            }
-        }
-
-        val all = owners.distinct()
-        ask(index.associateWith { all })
-        val at = now()
-        // An owner the index shows no schedule for is still looked for on their own relays, but
-        // only every [OFF_INDEX_RECHECK_SECONDS]: a schedule the index missed is found late, never lost.
-        val scheduled =
-            all.filter { owner ->
-                found[owner].orEmpty().any(ObserverSchedule::isObserverSchedule) ||
-                    (offIndexCheckedAt[owner]?.let { at - it >= OFF_INDEX_RECHECK_SECONDS } ?: true).also {
-                        if (it) offIndexCheckedAt[owner] = at
-                    }
-            }
-        offIndexCheckedAt.keys.retainAll(all.toSet())
-        val ownRelays = writeRelaysOf(scheduled)
-        val byRelay = HashMap<NormalizedRelayUrl, MutableList<HexKey>>()
-        for (owner in scheduled) {
-            ownRelays[owner].orEmpty().filter { it !in index }.forEach { byRelay.getOrPut(it) { ArrayList() } += owner }
-        }
-        ask(byRelay)
-
-        return scheduled.mapNotNull { owner ->
-            val newest =
-                newestOf(
-                    found[owner].orEmpty().filter {
-                        it.pubKey == owner && ObserverSchedule.isObserverSchedule(it)
-                    },
-                ) as? ScheduledTaskEvent
-            newest?.let { ScheduleRead(it, hasQuorum(ownRelays[owner].orEmpty(), servedBy[owner].orEmpty())) }
-        }
-    }
-
-    /** [owner]'s newest Observer schedule read again, from their write relays and the index, with a quorum: the read right before spending. */
     suspend fun schedule(owner: HexKey): ScheduleRead? {
         val relays = writeRelays(owner)
         val read = fetch(relays + index, scheduleFilter(listOf(owner)))
@@ -451,9 +398,6 @@ class RunnerNostr(
 
         /** An hour: a person's relays rarely move, and a stale list only costs a missed read. */
         const val RELAY_LIST_TTL_SECONDS = 3_600L
-
-        /** How often an owner the index shows no schedule for has their own relays asked anyway. */
-        const val OFF_INDEX_RECHECK_SECONDS = 3_600L
 
         /** How far ahead of the worker's clock an event may be dated and still be read. */
         const val MAX_FUTURE_SECONDS = 600L

@@ -2,7 +2,6 @@ package com.nosfabrica.observer.runner
 
 import com.nosfabrica.assistant.core.AssistantDirectory
 import com.nosfabrica.assistant.core.AssistantKey
-import com.nosfabrica.assistant.core.AssistantPair
 import com.nosfabrica.assistant.core.KeyFailure
 import com.vitorpamplona.quartz.nip01Core.core.Event
 import com.vitorpamplona.quartz.nip01Core.core.HexKey
@@ -52,7 +51,7 @@ open class AssistantException(
     message: String,
 ) : Exception(message)
 
-/** The key view has no Assistant for this owner (any more). */
+/** `brainstorm_nsec` has no Assistant for this owner (any more). */
 class NoAssistantException(
     val owner: HexKey,
 ) : AssistantException("owner $owner has no Assistant")
@@ -72,8 +71,8 @@ class RefusedException(
 class UndecryptableException : AssistantException("the content doesn't decrypt")
 
 /**
- * The owner's Assistant, with its key from brainstorm_server's view ([AssistantDirectory], `:core`'s
- * `AssistantKeys` in production), and exactly the allowlist brainstorm_server's
+ * The owner's Assistant, with its key from brainstorm_server's `brainstorm_nsec`
+ * ([AssistantDirectory], `:core`'s `AssistantKeys` in production), and exactly the allowlist brainstorm_server's
  * `observer_runner_service.py` enforced when the worker asked it to decrypt and sign:
  *
  * - **decrypt** only a whole event whose id and signature verify: the owner's 34817 whose one `p`
@@ -97,9 +96,6 @@ class LocalAssistant(
     private val directory: AssistantDirectory,
     private val now: () -> Long = { TimeUtils.now() },
 ) : AssistantSigner {
-    /** Every (owner, Assistant) the view holds; nothing is decrypted to list them. */
-    suspend fun pairs(): List<AssistantPair> = directory.pairs()
-
     override suspend fun assistantOf(owner: HexKey): HexKey = signerOf(owner).pubKey
 
     private suspend fun signerOf(owner: HexKey): NostrSignerInternal =
