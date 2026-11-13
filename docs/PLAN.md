@@ -54,9 +54,11 @@ no nsec: it decrypts and signs as an owner's Assistant through brainstorm_server
 `/internal/observerRunner/*` endpoints. Every few minutes it:
 
 1. pages the (owner, Assistant) list from the server;
-2. reads kind 34817 `d=observer` naming those Assistants in `p`;
-3. keeps only schedules whose author is the owner mapped to that Assistant, with exactly one
-   `p` and a valid signature, and drops the rest;
+2. reads each owner's newest kind 34817 `d=observer` by author (never by `#p`, which would miss
+   the version that takes printing back), with more than half of the owner's write relays
+   answering;
+3. keeps only schedules whose newest version names that owner's Assistant in exactly one `p`,
+   with a valid signature, and drops the rest;
 4. decrypts each through the server and decides with Quartz's runner rules: due, not paused,
    after the time it was set, params understood;
 5. reads both Observer sites (the owner's and the Assistant's) and skips an occurrence that
@@ -65,6 +67,9 @@ no nsec: it decrypts and signs as an owner's Assistant through brainstorm_server
 7. prints with the engine (the same press and page checks as the apps);
 8. uploads to the **owner's** Blossom servers, with each 24242 signed through the server;
 9. publishes the **Assistant's** Observer site, with `["p", owner]`, signed through the server.
+
+Consent to a public site stays with Brainstorm: it asks the reader before it names the
+Assistant in their schedule, and the worker publishes whenever the schedule names it.
 
 The AI key is plaintext only in the worker's memory for the run, and is never logged.
 
