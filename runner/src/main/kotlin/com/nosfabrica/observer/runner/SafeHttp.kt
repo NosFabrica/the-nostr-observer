@@ -4,6 +4,11 @@ import okhttp3.Dns
 import okhttp3.Interceptor
 import okhttp3.OkHttpClient
 import okhttp3.Response
+import okhttp3.ResponseBody.Companion.asResponseBody
+import okhttp3.ResponseBody.Companion.toResponseBody
+import okio.Buffer
+import okio.ForwardingSource
+import okio.buffer
 import java.io.IOException
 import java.net.Inet4Address
 import java.net.Inet6Address
@@ -286,7 +291,7 @@ class UrlGuardInterceptor(
 
 /**
  * [base] made safe to point at a reader's URL: the URL check, the address check at connect time
- * ([dns]), no redirects, no proxy.
+ * ([dns]) and on every socket, bounded bodies ([BodyCapInterceptor]), no redirects, no proxy.
  */
 fun guardedClient(
     base: OkHttpClient,
@@ -296,9 +301,69 @@ fun guardedClient(
     base
         .newBuilder()
         .addInterceptor(UrlGuardInterceptor(schemes))
+        .addInterceptor(BodyCapInterceptor())
         .dns(dns)
         .socketFactory(GuardedSocketFactory())
         .followRedirects(false)
         .followSslRedirects(false)
         .proxy(Proxy.NO_PROXY)
         .build()
+
+/**
+ * Bounds what a reader's server can make the worker hold: a successful body is cut off with an
+ * [IOException] past [maxBytes] (the engine then reports the server unreachable), and an error
+ * body is read to [maxErrorBytes] at most, the rest dropped. A reader's AI endpoint answering
+ * with an endless stream, or one huge line, would otherwise grow the worker's memory without end.
+ */
+class BodyCapInterceptor(
+    private val maxBytes: Long = MAX_BODY_BYTES,
+    private val maxErrorBytes: Long = MAX_ERROR_BYTES,
+) : Interceptor {
+    override fun intercept(chain: Interceptor.Chain): Response {
+        val response = chain.proceed(chain.request())
+        // A WebSocket upgrade's stream is the socket itself, never a body to read.
+        if (response.code == 101) return response
+        val body = response.body
+        val type = body.contentType()
+        if (!response.isSuccessful) {
+            val kept =
+                body.use {
+                    val source = it.source()
+                    source.request(maxErrorBytes)
+                    val buffer = Buffer()
+                    buffer.write(source.buffer, minOf(maxErrorBytes, source.buffer.size))
+                    buffer.readByteArray()
+                }
+            return response.newBuilder().body(kept.toResponseBody(type)).build()
+        }
+        val capped =
+            object : ForwardingSource(body.source()) {
+                private var total = 0L
+
+                override fun read(
+                    sink: Buffer,
+                    byteCount: Long,
+                ): Long {
+                    val n = super.read(sink, byteCount)
+                    if (n > 0) {
+                        total += n
+                        if (total > maxBytes) throw IOException("the response is over $maxBytes bytes")
+                    }
+                    return n
+                }
+            }
+        return response.newBuilder().body(capped.buffer().asResponseBody(type, -1)).build()
+    }
+
+    companion object {
+        /**
+         * A streamed page arrives as Server-Sent Events, a few hundred bytes of JSON around every
+         * few characters of text, reasoning included: a long paper is several megabytes on the
+         * wire. 32 MB is far past any real one, and bounds the text it can carry.
+         */
+        const val MAX_BODY_BYTES = 32L * 1024 * 1024
+
+        /** An error body is only ever trimmed to 160 characters for the log's detail. */
+        const val MAX_ERROR_BYTES = 16L * 1024
+    }
+}

@@ -40,6 +40,18 @@ import com.vitorpamplona.quartz.nipFBScheduledTasks.ZoneIdCronZone
 import com.vitorpamplona.quartz.utils.Log
 import com.vitorpamplona.quartz.utils.TimeUtils
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.withTimeout
+import okhttp3.Call
+import okhttp3.EventListener
+import java.util.concurrent.ConcurrentHashMap
 
 /** How one schedule went on one poll. Logged by name, with the owner: never a key or a plaintext. */
 enum class RunOutcome {
@@ -99,6 +111,15 @@ enum class RunOutcome {
     NOT_READY,
     WRITER_FAILED,
 
+    /** The print ran past [ObserverRunner.PRINT_TIMEOUT_SECONDS]: stopped, and (it may have spent) not run again. */
+    TIMED_OUT,
+
+    /** The run records can't be written or read ([RunRecordsException]): nothing is printed until an operator looks. */
+    RECORDS_UNAVAILABLE,
+
+    /** The worker is shutting down: no new print starts. */
+    STOPPING,
+
     /** The page failed the page checks twice: never published. */
     PAGE_REFUSED,
     PUBLISH_FAILED,
@@ -115,7 +136,14 @@ fun interface PaperPrinter {
     ): PrintResult
 }
 
-/** [PaperPrinter] with Amethyst's press: the same desks, writer and page checks as the apps. */
+/**
+ * [PaperPrinter] with Amethyst's press: the same desks, writer and page checks as the apps.
+ *
+ * Each print's calls to the AI endpoint are cancelled the moment the print is (its timeout, or
+ * the worker stopping): the engine reads a stream with blocking reads, which a coroutine's
+ * cancellation alone doesn't interrupt, so a server sending a byte every few minutes would
+ * otherwise hold the print until the client's own timeouts.
+ */
 class PressPrinter(
     private val client: INostrClient,
     private val searchRelay: NormalizedRelayUrl,
@@ -128,13 +156,54 @@ class PressPrinter(
         owner: HexKey,
         readerName: String,
     ): PrintResult =
-        FrontPagePress(
-            client,
-            searchRelay,
-            boundary,
-            { messages, onEvent -> http.chatComplete(key, model, messages, onEvent) },
-        ).print(owner, readerName)
+        cancellingCalls(http) { tracked ->
+            FrontPagePress(
+                client,
+                searchRelay,
+                boundary,
+                { messages, onEvent -> tracked.chatComplete(key, model, messages, onEvent) },
+            ).print(owner, readerName)
+        }
 }
+
+/**
+ * [block] with an [IRoleBasedHttpClientBuilder] whose money calls are all cancelled the moment
+ * [block] is (a timeout, the worker stopping), not when their blocking reads next return.
+ */
+suspend fun <T> cancellingCalls(
+    http: IRoleBasedHttpClientBuilder,
+    block: suspend (IRoleBasedHttpClientBuilder) -> T,
+): T =
+    coroutineScope {
+        val calls = ConcurrentHashMap.newKeySet<Call>()
+        val tracked =
+            object : IRoleBasedHttpClientBuilder {
+                override fun okHttpClientForMoney(url: String) =
+                    http
+                        .okHttpClientForMoney(url)
+                        .newBuilder()
+                        .eventListenerFactory { call ->
+                            calls += call
+                            EventListener.NONE
+                        }.build()
+
+                override fun okHttpClientForUploads(url: String) = http.okHttpClientForUploads(url)
+            }
+        // Suspended until the block ends one way or the other; cancelled with it, it cancels the calls.
+        val watchdog =
+            launch {
+                try {
+                    awaitCancellation()
+                } finally {
+                    calls.forEach { it.cancel() }
+                }
+            }
+        try {
+            block(tracked)
+        } finally {
+            watchdog.cancel()
+        }
+    }
 
 /**
  * The Assistant's print worker: one [poll] reads every owner's Observer schedule that names
@@ -150,6 +219,12 @@ class ObserverRunner(
     private val models: suspend (AgentKeyTag) -> List<AgentModel>,
     private val zoneOf: (String?) -> CronZone? = { it?.let(ZoneIdCronZone::of) },
     private val now: () -> Long = { TimeUtils.now() },
+    /** How many owners' schedules run at once: one slow reader's server never holds up the rest. */
+    private val parallelism: Int = PARALLELISM,
+    /** The longest a print may take, the model's calls included ([PRINT_TIMEOUT_SECONDS]). */
+    private val printTimeoutMs: Long = PRINT_TIMEOUT_SECONDS * 1000,
+    /** False once the worker is stopping: a run that hasn't started its print yet doesn't. */
+    private val accepting: () -> Boolean = { true },
 ) {
     /** Every (owner, Assistant) brainstorm_server holds, page by page. */
     suspend fun assistants(): List<AssistantPair> {
@@ -167,23 +242,31 @@ class ObserverRunner(
     suspend fun poll(): Map<HexKey, RunOutcome> {
         val pairs = assistants()
         val byAssistant = pairs.associateBy { it.assistant }
-        val outcomes = LinkedHashMap<HexKey, RunOutcome>()
-        for (event in nostr.schedules(pairs)) {
-            val outcome =
-                try {
-                    runSchedule(event, byAssistant)
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: RunnerTokenRejectedException) {
-                    throw e
-                } catch (e: Exception) {
-                    // The class only: a message could carry what a provider or server echoed.
-                    Log.w(TAG) { "owner=${event.pubKey} outcome=${RunOutcome.ERROR} error=${e.javaClass.simpleName}" }
-                    RunOutcome.ERROR
-                }
-            outcomes[event.pubKey] = outcome
-        }
-        return outcomes
+        val gate = Semaphore(parallelism)
+        val ran =
+            coroutineScope {
+                nostr
+                    .schedules(pairs)
+                    .map { event ->
+                        async {
+                            gate.withPermit {
+                                event.pubKey to
+                                    try {
+                                        runSchedule(event, byAssistant)
+                                    } catch (e: CancellationException) {
+                                        throw e
+                                    } catch (e: RunnerTokenRejectedException) {
+                                        throw e
+                                    } catch (e: Exception) {
+                                        // The class only: a message could carry what a provider or server echoed.
+                                        Log.w(TAG) { "owner=${event.pubKey} outcome=${RunOutcome.ERROR} error=${e.javaClass.simpleName}" }
+                                        RunOutcome.ERROR
+                                    }
+                            }
+                        }
+                    }.awaitAll()
+            }
+        return ran.toMap(LinkedHashMap())
     }
 
     /** Ends a schedule's run with [outcome], already reported. */
@@ -268,10 +351,19 @@ class ObserverRunner(
         val model = ObserverParams.model(task) ?: defaultModel(key) ?: return report(owner, RunOutcome.NO_MODEL)
 
         val name = readerName(owner, ownerRelays)
-        records.started(owner, occurrence)
+        if (!accepting()) return report(owner, RunOutcome.STOPPING)
+        try {
+            records.started(owner, occurrence)
+        } catch (e: RunRecordsException) {
+            // Not written down, so not started: printing now could pay for this morning twice after a restart.
+            return report(owner, RunOutcome.RECORDS_UNAVAILABLE, e.message)
+        }
         val result =
             try {
-                printer.print(key, model, owner, name)
+                withTimeout(printTimeoutMs) { printer.print(key, model, owner, name) }
+            } catch (e: TimeoutCancellationException) {
+                records.ended(owner, occurrence)
+                return report(owner, RunOutcome.TIMED_OUT)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: WriterException) {
@@ -439,6 +531,17 @@ class ObserverRunner(
 
     companion object {
         private const val TAG = "ObserverRunner"
+
+        /** Owners run at once ([poll]). */
+        const val PARALLELISM = 4
+
+        /**
+         * A print's whole budget. Amethyst's scheduled run has 9 min 30 s (its FrontPageWorker's
+         * RUN_LIMIT_MS) and keeps 132 s of it for `ran` (FrontPageMorning.RAN_RESERVE_SECONDS),
+         * so a device's print never gets more than 438 s; the worker writes no `ran` and claims
+         * nothing, and gives a print the same 438 s at most.
+         */
+        const val PRINT_TIMEOUT_SECONDS = 438L
 
         /** A decrypted tag array, or null when the plaintext isn't one. */
         fun parseTags(plaintext: String): Array<Array<String>>? =

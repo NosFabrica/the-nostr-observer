@@ -12,6 +12,8 @@ import com.vitorpamplona.quartz.nipFAAgentKeys.tags.AgentKeyTag
 import com.vitorpamplona.quartz.nipFBScheduledTasks.ScheduledTask
 import com.vitorpamplona.quartz.nipFBScheduledTasks.ScheduledTaskClaims.OwnRun
 import com.vitorpamplona.quartz.nipFBScheduledTasks.ScheduledTaskEvent
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.test.runTest
 import java.time.Instant
 import kotlin.test.Test
@@ -408,5 +410,98 @@ class ObserverRunnerTest {
                 assertFalse(logs.contains(keyList.content), "a ciphertext reached the log")
             }
             assertTrue(failedLogs.contains("WRITER_FAILED"))
+        }
+
+    private fun runnerWith(
+        printer: PaperPrinter = this.printer,
+        records: RunRecords = this.records,
+        accepting: () -> Boolean = { true },
+    ) = ObserverRunner(
+        api = api,
+        nostr = RunnerNostr(relays, setOf(index), null),
+        blossom = BlossomHttp(blossom.client),
+        printer = printer,
+        records = records,
+        models = { listedModels },
+        now = { now },
+        accepting = accepting,
+    )
+
+    @Test
+    fun aPrintThatNeverEndsIsStoppedAndNotRunAgain() =
+        runTest {
+            world()
+            schedule()
+            val hanging = PaperPrinter { _, _, _, _ -> awaitCancellation() }
+            assertEquals(RunOutcome.TIMED_OUT, runnerWith(printer = hanging).poll()[owner.pubKey])
+            // It may have reached the model: never again on its own.
+            assertEquals(OwnRun.ENDED, records.ownRun(owner.pubKey, Instant.parse("2026-11-12T06:00:00Z").epochSecond))
+            assertEquals(RunOutcome.ATTEMPTED, runner.poll()[owner.pubKey])
+            assertTrue(relays.published.isEmpty())
+        }
+
+    @Test
+    fun oneSlowReaderDoesNotHoldUpTheOthers() =
+        runTest {
+            world()
+            schedule()
+            // A second owner with their own Assistant, schedule and lists.
+            relays.put(index, strangersAssistant.signed(10002, arrayOf(arrayOf("r", assistantRelay.url)), createdAt = 1))
+            relays.put(
+                ownerRelay,
+                stranger.signed(10063, arrayOf(arrayOf("server", "https://blossom.owner.example")), createdAt = 1),
+                stranger.signed(10040, arrayOf(arrayOf("30382:rank", "b".repeat(64), "wss://nip85.example")), createdAt = 1),
+            )
+            relays.put(assistantRelay, agentKeyList(strangersAssistant, listOf(openRouter), createdAt = 1))
+            val strangers =
+                ScheduledTask
+                    .create("observer", "observer", "0 6 * * *", "Europe/London", setAt = 0)
+                    .withRunner(strangersAssistant.pubKey, 0)
+                    .withParam("model", listOf("m"))
+            relays.put(
+                ownerRelay,
+                typed(stranger.sign(ScheduledTaskEvent.update(strangers, stranger, "observer", createdAt = now - 3_600))),
+            )
+
+            // The owner's print waits until the stranger's is done: run one after the other, it never would.
+            val strangerDone = CompletableDeferred<Unit>()
+            val gated =
+                PaperPrinter { key, model, who, name ->
+                    if (who == owner.pubKey) {
+                        strangerDone.await()
+                    } else {
+                        strangerDone.complete(Unit)
+                    }
+                    printer.print(key, model, who, name)
+                }
+            val outcomes = runnerWith(printer = gated).poll()
+            assertEquals(RunOutcome.PRINTED, outcomes[owner.pubKey])
+            assertEquals(RunOutcome.PRINTED, outcomes[stranger.pubKey])
+        }
+
+    @Test
+    fun aRecordThatCantBeKeptMeansNoPrint() =
+        runTest {
+            world()
+            schedule()
+            val broken =
+                object : RunRecords by records {
+                    override fun started(
+                        owner: HexKey,
+                        occurrence: Long,
+                    ) = throw RunRecordsException("disk full")
+                }
+            assertEquals(RunOutcome.RECORDS_UNAVAILABLE, runnerWith(records = broken).poll()[owner.pubKey])
+            assertTrue(printer.calls.isEmpty())
+        }
+
+    @Test
+    fun aStoppingWorkerStartsNoPrint() =
+        runTest {
+            world()
+            schedule()
+            assertEquals(RunOutcome.STOPPING, runnerWith(accepting = { false }).poll()[owner.pubKey])
+            assertTrue(printer.calls.isEmpty())
+            assertEquals(OwnRun.NONE, records.ownRun(owner.pubKey, Instant.parse("2026-11-12T06:00:00Z").epochSecond))
         }
 }
