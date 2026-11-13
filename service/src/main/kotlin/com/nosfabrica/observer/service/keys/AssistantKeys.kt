@@ -132,7 +132,8 @@ class AssistantKeys(
 
     override suspend fun key(owner: HexKey): AssistantKey {
         val row = db.use { c -> row(c, owner) } ?: return failed(owner, KeyFailure.NO_ASSISTANT)
-        val assistant = row.assistant ?: return failed(owner, KeyFailure.NO_ASSISTANT)
+        // The server's `if assistant_pubkey:`: a blank one is no Assistant, not a mismatch.
+        val assistant = row.assistant?.takeIf { it.isNotBlank() } ?: return failed(owner, KeyFailure.NO_ASSISTANT)
         val hex = plaintextOf(row)?.let { decodePrivateKeyAsHexOrNull(it.trim()) }?.takeIf { it.length == 64 }
         val keyPair = hex?.let(::keyPairOrNull) ?: return failed(owner, KeyFailure.NSEC_UNREADABLE)
         if (keyPair.pubKey.toHexKey() != assistant.lowercase()) return failed(owner, KeyFailure.NSEC_MISMATCH)

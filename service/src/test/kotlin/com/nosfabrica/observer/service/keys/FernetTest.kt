@@ -85,4 +85,13 @@ class FernetTest {
         assertFailsWith<IllegalArgumentException> { Fernet("!!!!") }
         assertFalse(keys[0] in k1.toString())
     }
+
+    @Test
+    fun aKeyOrTokenInStandardBase64OrWithWhitespaceOpensAsPythonWouldHaveIt() {
+        // Python's urlsafe_b64decode maps `+` and `/` too, and the key file may wrap a line.
+        val standard = keys[0].replace('-', '+').replace('_', '/')
+        assertEquals(plaintext, Fernet(" $standard\n").decrypt(tokenK1)!!.decodeToString())
+        val wrapped = tokenK1.substring(0, 40) + "\r\n " + tokenK1.substring(40).replace('-', '+').replace('_', '/')
+        assertEquals(plaintext, k1.decrypt(wrapped)!!.decodeToString())
+    }
 }

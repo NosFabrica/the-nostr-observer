@@ -26,7 +26,7 @@ class Fernet(
     init {
         val raw =
             try {
-                Base64.getUrlDecoder().decode(key.trim())
+                Base64.getUrlDecoder().decode(urlSafe(key))
             } catch (e: IllegalArgumentException) {
                 // Not the key itself in the message: it may be most of one.
                 throw IllegalArgumentException("not a Fernet key: not URL-safe base64")
@@ -45,7 +45,7 @@ class Fernet(
     fun decrypt(token: String): ByteArray? {
         val data =
             try {
-                Base64.getUrlDecoder().decode(token.trim())
+                Base64.getUrlDecoder().decode(urlSafe(token))
             } catch (e: IllegalArgumentException) {
                 return null
             }
@@ -103,6 +103,28 @@ class Fernet(
     override fun toString() = "Fernet(key hidden)"
 
     companion object {
+        /**
+         * [s] as Python's `urlsafe_b64decode` reads it: `+` and `/` are taken for `-` and `_`, and
+         * whitespace anywhere (a wrapped line in the key file) is dropped. Java's URL decoder
+         * refuses both, and would make a token the server opens unreadable here.
+         */
+        internal fun urlSafe(s: String): String =
+            buildString(s.length) {
+                for (c in s) {
+                    if (!c.isWhitespace()) {
+                        append(
+                            if (c == '+') {
+                                '-'
+                            } else if (c == '/') {
+                                '_'
+                            } else {
+                                c
+                            },
+                        )
+                    }
+                }
+            }
+
         private const val VERSION: Byte = 0x80.toByte()
         private const val KEY_BYTES = 32
         private const val BLOCK = 16

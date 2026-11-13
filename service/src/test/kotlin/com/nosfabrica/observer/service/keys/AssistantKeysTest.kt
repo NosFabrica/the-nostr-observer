@@ -166,4 +166,14 @@ class AssistantKeysTest {
             assertEquals(KeyFailure.NO_ASSISTANT, assertIs<AssistantKey.Failed>(keys.key(owner)).failure)
             assertEquals(emptyList(), keys.pairs())
         }
+
+    @Test
+    fun aBlankAssistantIsNoAssistant() =
+        runTest {
+            val db = world()
+            val a = Person()
+            val owner = Person().pubkey
+            BrainstormSchema.insert(db, owner, "", a.nsec, encrypt(a.nsec))
+            assertEquals(KeyFailure.NO_ASSISTANT, assertIs<AssistantKey.Failed>(AssistantKeys(db, keyFile).key(owner)).failure)
+        }
 }
