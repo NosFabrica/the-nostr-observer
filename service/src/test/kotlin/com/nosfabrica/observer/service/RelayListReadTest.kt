@@ -82,4 +82,17 @@ class RelayListReadTest : RunnerWorld() {
             val read = RunnerNostr(forging, setOf(index), null, now = { clock }).schedule(owner.pubKey)
             assertEquals(real.sig, read?.event?.sig)
         }
+
+    @Test
+    fun onlyAnOwnersFirstEightWriteRelaysAreAsked() =
+        runTest {
+            val many = List(30) { relay("wss://r$it.example") }
+            relays.put(index, owner.signed(10002, many.map { arrayOf("r", it.url, "write") }.toTypedArray(), createdAt = 1))
+            val event = schedule()
+            many.take(8).forEach { relays.put(it, event) }
+            val read = RunnerNostr(relays, setOf(index), null, now = { clock }).schedule(owner.pubKey)
+            assertTrue(read!!.quorum)
+            val asked = relays.asked.flatMap { it.first }.toSet()
+            assertEquals(many.take(8).toSet(), asked - index)
+        }
 }

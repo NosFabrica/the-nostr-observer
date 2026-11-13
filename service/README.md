@@ -47,7 +47,8 @@ tables: it learns that an occurrence is settled from the `200` this service answ
 3. **The schedule**, kind 34817 `d=observer` **by author** (never `#p`), from the owner's NIP-65
    write relays and the index relays, newest first. A `#p` read would never see the version an
    owner published to take printing back. None found: `NO_SCHEDULE`. More than half of the
-   owner's write relays must have answered (`NO_QUORUM` otherwise). The index relays stand in
+   owner's write relays must have answered (`NO_QUORUM` otherwise); only the first 8 in their
+   list, after vetting, are read (anyone's list, everywhere). The index relays stand in
    only for an owner an index relay answered for in full and found no NIP-65 list for: a list
    read that failed (CLOSED, a timeout, a cap), or a list whose every write relay is refused
    (`ws`, an internal host), is `NO_QUORUM`.

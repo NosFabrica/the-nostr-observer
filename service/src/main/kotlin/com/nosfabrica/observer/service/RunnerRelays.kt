@@ -333,10 +333,14 @@ class RunnerNostr(
     private fun vetted(list: AdvertisedRelayListEvent): WriteRelays {
         val listed = list.writeRelays().orEmpty()
         if (listed.isEmpty()) return WriteRelays(emptySet(), WriteRelays.State.NONE)
+        // The first [MAX_WRITE_RELAYS], in the list's order: one owner listing hundreds would
+        // otherwise open that many sockets for one read.
         val relays =
             listed
                 .filter { UrlGuard.refusal(it, setOf("wss")) == null }
                 .mapNotNull { RelayUrlNormalizer.normalizeOrNull(it) }
+                .distinct()
+                .take(MAX_WRITE_RELAYS)
                 .toSet()
         return WriteRelays(relays, if (relays.isEmpty()) WriteRelays.State.REFUSED else WriteRelays.State.LISTED)
     }
@@ -526,6 +530,9 @@ class RunnerNostr(
 
     companion object {
         private const val TAG = "RunnerNostr"
+
+        /** The most write relays read for one person: the first in their list, after vetting. */
+        const val MAX_WRITE_RELAYS = 8
 
         /** One 64-hex author is 67 bytes of JSON: 500 is far under the search relay's 262,144-byte REQ frame. */
         const val AUTHORS_PER_REQ = 500
