@@ -43,6 +43,9 @@ class SafeHttpTest {
             "::ffff:10.0.0.1",
             "::ffff:127.0.0.1",
             "64:ff9b::a00:1",
+            // RFC 8215's local-use NAT64 prefix: whatever IPv4 it carries, it is a network's own.
+            "64:ff9b:1::a00:1",
+            "64:ff9b:1:ffff::808:808",
         ).forEach { assertTrue(UrlGuard.isInternal(ip(it)), it) }
     }
 

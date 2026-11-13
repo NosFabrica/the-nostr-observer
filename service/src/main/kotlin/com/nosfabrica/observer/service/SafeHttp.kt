@@ -180,8 +180,8 @@ object UrlGuard {
 
     /**
      * Loopback, unspecified, private (RFC 1918), link-local, shared (RFC 6598, used inside
-     * clusters), benchmark, reserved, multicast, IPv6 unique-local, and IPv4 inside IPv6
-     * (mapped, compatible, NAT64) judged by its IPv4.
+     * clusters), benchmark, reserved, multicast, IPv6 unique-local, the local-use NAT64 prefix
+     * (RFC 8215), and IPv4 inside IPv6 (mapped, compatible, NAT64) judged by its IPv4.
      */
     fun isInternal(address: InetAddress): Boolean {
         if (address.isLoopbackAddress || address.isAnyLocalAddress || address.isLinkLocalAddress ||
@@ -194,6 +194,8 @@ object UrlGuard {
         if (address is Inet6Address) {
             // fc00::/7 unique local; fec0::/10 is site-local (above).
             if (b[0] and 0xfe == 0xfc) return true
+            // 64:ff9b:1::/48, RFC 8215's local-use NAT64 prefix: a network's own translator, internal whatever it carries.
+            if (b[0] == 0 && b[1] == 0x64 && b[2] == 0xff && b[3] == 0x9b && b[4] == 0 && b[5] == 1) return true
             val embedded =
                 when {
                     // ::ffff:a.b.c.d (mapped) and ::a.b.c.d (compatible)

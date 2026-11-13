@@ -198,7 +198,8 @@ reader: the AI key's endpoint (NIP-FA allows `http` to loopback), their Blossom 
 relays. So all of them go through `guardedClient` (`SafeHttp.kt`):
 
 - the URL: `https` (`wss` for relays) only; no address literal that is loopback, unspecified,
-  RFC 1918, link-local, shared (100.64/10), benchmark, reserved, multicast or IPv6 ULA (IPv4
+  RFC 1918, link-local, shared (100.64/10), benchmark, reserved, multicast, IPv6 ULA or the
+  local-use NAT64 prefix 64:ff9b:1::/48 (IPv4
   inside IPv6 judged by its IPv4); no internal-only name (`localhost`, single labels, `.local`,
   `.internal`, `.svc`, `.cluster.local`, …); no credentials in the URL. A host whose last label
   is a number is an address, read as `inet_aton` reads it (`127.1`, `10.1`, `0x7f.1`,
