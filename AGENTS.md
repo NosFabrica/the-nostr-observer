@@ -41,8 +41,8 @@ Other agents build Quartz and Amethyst on the same machine: one Gradle invocatio
   the difference. What is deliberately left out (accounts, the local store, the per-device
   claim, view models, the picker) is listed at the top of that script.
 - **Settled** (don't reopen; see PLAN.md): the reader's own NIP-FA key writes, never a
-  NosFabrica key; a fixed 24-hour window; the model writes the whole document and inlines the
-  house stylesheet; only checked pages are shown or published; hotlinked art; no NSFW
+  NosFabrica key; a fixed 24-hour window; the model writes the whole document (the engine
+  inserts the house stylesheet, as Amethyst's does); only checked pages are shown or published; hotlinked art; no NSFW
   classification; the name is The Observer.
 - **Never log a key or a plaintext.** Not the AI key, not a decrypted schedule, not a
   decrypted kind 12000, not a ciphertext. Log owner, kind and outcome. `askedOf` names a

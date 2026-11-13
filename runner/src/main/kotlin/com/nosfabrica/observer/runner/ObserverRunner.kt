@@ -1,20 +1,31 @@
 package com.nosfabrica.observer.runner
 
 import com.nosfabrica.observer.frontpage.AgentModel
+import com.nosfabrica.observer.frontpage.EditionClock
+import com.nosfabrica.observer.frontpage.EditionContext
+import com.nosfabrica.observer.frontpage.FrontPageParams
 import com.nosfabrica.observer.frontpage.FrontPagePress
 import com.nosfabrica.observer.frontpage.IRoleBasedHttpClientBuilder
 import com.nosfabrica.observer.frontpage.ObserverPage
 import com.nosfabrica.observer.frontpage.ObserverPublishResult
 import com.nosfabrica.observer.frontpage.ObserverPublisher
+import com.nosfabrica.observer.frontpage.ObserverSiteIO
 import com.nosfabrica.observer.frontpage.PaperBoundary
+import com.nosfabrica.observer.frontpage.PaperLinkSet
 import com.nosfabrica.observer.frontpage.PrintResult
 import com.nosfabrica.observer.frontpage.WriterException
 import com.nosfabrica.observer.frontpage.WriterFailure
+import com.nosfabrica.observer.frontpage.WritingEffort
 import com.nosfabrica.observer.frontpage.chatComplete
+import com.nosfabrica.observer.frontpage.editionNumber
+import com.nosfabrica.observer.frontpage.outputLimitFor
 import com.nosfabrica.observer.frontpage.profilesFrom
 import com.nosfabrica.observer.frontpage.publishedSha256
 import com.nosfabrica.observer.frontpage.rankModels
+import com.nosfabrica.observer.frontpage.recentHeadlines
+import com.nosfabrica.observer.frontpage.savedFromSite
 import com.nosfabrica.observer.frontpage.shortNpub
+import com.nosfabrica.observer.frontpage.standingPaper
 import com.nosfabrica.observer.frontpage.withPaperCsp
 import com.vitorpamplona.quartz.nip01Core.core.Event
 import com.vitorpamplona.quartz.nip01Core.core.HexKey
@@ -22,6 +33,7 @@ import com.vitorpamplona.quartz.nip01Core.relay.client.INostrClient
 import com.vitorpamplona.quartz.nip01Core.relay.filters.Filter
 import com.vitorpamplona.quartz.nip01Core.relay.normalizer.NormalizedRelayUrl
 import com.vitorpamplona.quartz.nip51Lists.encryption.PrivateTagsInContent
+import com.vitorpamplona.quartz.nip5aStaticWebsites.observer.ObserverEdition
 import com.vitorpamplona.quartz.nip5aStaticWebsites.observer.ObserverParams
 import com.vitorpamplona.quartz.nip5aStaticWebsites.observer.ObserverSchedule
 import com.vitorpamplona.quartz.nip5aStaticWebsites.observer.ObserverSite
@@ -131,8 +143,8 @@ enum class RunOutcome {
     UNREACHABLE_ONION,
 
     /**
-     * A Routstr key's balance doesn't cover the print: under twice the model's `max_cost` before
-     * it (nothing spent, looked at again hourly), or the node's 402 during it (ended).
+     * A Routstr key's balance doesn't cover the print: under [RoutstrFunds.requiredMsats] before it
+     * (nothing spent, looked at again hourly), or the node's 402 during it (ended).
      */
     INSUFFICIENT_BALANCE,
 
@@ -158,7 +170,7 @@ enum class RunOutcome {
     /** The worker is shutting down: no new print starts. */
     STOPPING,
 
-    /** The page failed the page checks twice: never published. */
+    /** The page still failed the page checks after its repairs: never published. */
     PAGE_REFUSED,
     PUBLISH_FAILED,
     ERROR,
@@ -171,8 +183,29 @@ fun interface PaperPrinter {
         model: String,
         owner: HexKey,
         readerName: String,
+        options: PrintOptions,
     ): PrintResult
 }
+
+/** What a print is asked with beyond its key and model. */
+class PrintOptions(
+    /** The schedule's `effort` param: Deep, or Standard by its absence. */
+    val effort: WritingEffort = WritingEffort.STANDARD,
+    /** The edition's number, recent headlines, standing paper and the reader's clock. */
+    val context: EditionContext = EditionContext(),
+    /** The model as its endpoint lists it (its output limit, its context); null when it isn't listed. */
+    val listed: AgentModel? = null,
+)
+
+/**
+ * The Assistant's papers are read on Brainstorm: citations open `brainstorm.world/e/<nevent or
+ * naddr>`, bylines `brainstorm.world/p/<npub>`. The boundary accepts only these forms, so a paper
+ * the Assistant prints never carries another app's links.
+ */
+val BRAINSTORM_LINKS = PaperLinkSet("https://brainstorm.world/e/", "https://brainstorm.world/p/")
+
+/** The writing effort [task] asks for (NIP-FB `param` `effort`): Deep, or Standard by its absence. */
+fun effortOf(task: ScheduledTask): WritingEffort = FrontPageParams.effort(task)
 
 /**
  * [PaperPrinter] with Amethyst's press: the same desks, writer and page checks as the apps.
@@ -193,18 +226,32 @@ class PressPrinter(
         model: String,
         owner: HexKey,
         readerName: String,
+        options: PrintOptions,
     ): PrintResult =
         cancellingCalls(http) { tracked ->
+            // The output limit is the listed model's; unlisted, the engine's defaults.
+            val limits = options.listed?.takeIf { it.id == model } ?: AgentModel(model)
             var answered = 0
             try {
                 FrontPagePress(
                     client,
                     searchRelay,
                     boundary,
-                    { call, onEvent -> tracked.chatComplete(key, model, call.messages, onEvent = onEvent).also { answered++ } },
-                ).print(owner, readerName)
+                    { call, onEvent ->
+                        tracked
+                            .chatComplete(
+                                key,
+                                model,
+                                call.messages,
+                                outputLimitFor(limits, call),
+                                options.effort,
+                                onEvent,
+                            ).also { answered++ }
+                    },
+                    links = BRAINSTORM_LINKS,
+                ).print(owner, readerName, context = options.context)
             } catch (e: WriterException) {
-                // The repair round failed after the first page was paid for: never "nothing spent".
+                // A later call failed after an earlier one (the plan, the page) was answered and paid for: never "nothing spent".
                 throw if (answered > 0) AfterAnswerException(e) else e
             }
         }
@@ -427,7 +474,7 @@ class ObserverRunner(
         pending.of(owner).takeIf { it.isNotEmpty() }?.let { publishPending(pair, it, assistantSite()) }
 
         val task = ScheduledTask(event.tags, decryptTags(pair, event))
-        if (!ObserverParams.understands(task)) return report(owner, RunOutcome.UNKNOWN_PARAMS)
+        if (!FrontPageParams.understands(task)) return report(owner, RunOutcome.UNKNOWN_PARAMS)
         val zone = zoneOf(task.tz) ?: return report(owner, RunOutcome.UNKNOWN_ZONE)
         val at = now()
 
@@ -463,13 +510,15 @@ class ObserverRunner(
         val servers = servers()
         val assistantSite = assistantSite()
         val readerSite = ReaderSiteIO(owner, nostr, ownerRelays, servers, blossom)
-        val runnerEditions =
+        val runnerRead =
             when (val site = editionsOn(assistantSite, pair.assistant)) {
                 SiteEditions.Unreadable -> return report(owner, RunOutcome.SITE_UNREADABLE)
-                is SiteEditions.Read -> site.editions
+                is SiteEditions.Read -> site
             }
+        val runnerEditions = runnerRead.editions
         // The owner's site unreadable: decide from the Assistant's own (and its records), as a device decides from its store.
-        val readerEditions = (editionsOn(readerSite, owner) as? SiteEditions.Read)?.editions.orEmpty()
+        val readerRead = editionsOn(readerSite, owner) as? SiteEditions.Read
+        val readerEditions = readerRead?.editions.orEmpty()
         val second =
             ScheduledTaskClaims.decideAsRunner(
                 task,
@@ -517,12 +566,19 @@ class ObserverRunner(
 
         suspend fun listed() = listed ?: listModels(key).also { listed = it }
         val model = ObserverParams.model(task) ?: rankModels(listed().map { it.id }).firstOrNull() ?: return settle(RunOutcome.NO_MODEL)
+        val effort = effortOf(task)
         // A Routstr key's balance must cover the print before anything is spent; asked of the key's own node only.
-        if (routstr.isRoutstr(key) { listed() } && routstr.tooLow(key, listed().firstOrNull { it.id == model })) {
+        if (routstr.isRoutstr(key) { listed() } && routstr.tooLow(key, listed().firstOrNull { it.id == model }, effort)) {
             return settle(RunOutcome.INSUFFICIENT_BALANCE)
         }
 
         val name = readerName(owner, ownerRelays)
+        val options =
+            PrintOptions(
+                effort = effort,
+                context = editionContext(owner, occurrence, task, listOf(assistantSite to runnerRead, readerSite to readerRead)),
+                listed = listed?.firstOrNull { it.id == model },
+            )
         if (!accepting()) return report(owner, RunOutcome.STOPPING)
         // Right before spending: the owner's newest schedule, read again with a quorum, must still be this one.
         val again = nostr.schedule(owner)
@@ -536,7 +592,7 @@ class ObserverRunner(
         }
         val result =
             try {
-                withTimeout(printTimeoutMs) { printer.print(key, model, owner, name) }
+                withTimeout(printTimeoutMs) { printer.print(key, model, owner, name, options) }
             } catch (e: TimeoutCancellationException) {
                 onDisk { records.ended(owner, occurrence) }
                 return settle(RunOutcome.TIMED_OUT)
@@ -746,6 +802,55 @@ class ObserverRunner(
         relays: Set<NormalizedRelayUrl>,
     ): String = nostr.newest(assistant, relays, keyListFilter(assistant))?.id ?: ""
 
+    /**
+     * What the edition knows beyond its posts (Amethyst's FrontPagePrinter.editionContext, for a
+     * runner): its number, counting the days on the Assistant's site, on the owner's own and in
+     * this worker's run records; the last front pages of both sites; the masthead, motto and
+     * sections the newest page announces; and the schedule's own clock. Never fails a print: what
+     * can't be read is left out.
+     */
+    private suspend fun editionContext(
+        owner: HexKey,
+        occurrence: Long,
+        task: ScheduledTask,
+        sites: List<Pair<ObserverSiteIO, SiteEditions.Read?>>,
+    ): EditionContext {
+        // Every producer names a site's edition by the UTC day of its printedAt, which for a
+        // scheduled paper is its occurrence: the records' days are counted the same way.
+        val today = ObserverSite.utcDay(occurrence)
+        val read = sites.mapNotNull { (io, site) -> site?.let { io to it } }
+        val editions = read.flatMap { it.second.editions }
+        val ranDays = records.occurrences(owner).map { ObserverSite.utcDay(it) }
+        val newest =
+            read
+                .flatMap { (io, site) -> site.editions.filter { it.day != today }.map { Triple(io, site.servers, it) } }
+                .maxWithOrNull(
+                    compareBy<Triple<ObserverSiteIO, List<String>, ObserverEdition>>({ it.third.day }, { it.third.printedAt ?: 0 }),
+                )
+        val page = newest?.let { (io, servers, edition) -> pageOf(io, servers, edition) }
+        return EditionContext(
+            paper = standingPaper(listOfNotNull(page)),
+            number = editionNumber(editions.map { it.day } + ranDays, today),
+            recent = recentHeadlines(editions.map { savedFromSite(it, byRunner = false) }, today),
+            clock = EditionClock.of(task.tz) ?: EditionClock.UTC,
+        )
+    }
+
+    /** [edition]'s page, by its hash, within [PAGE_READ_TIMEOUT_MS]; null when no server has it. */
+    private suspend fun pageOf(
+        io: ObserverSiteIO,
+        servers: List<String>,
+        edition: ObserverEdition,
+    ): String? =
+        try {
+            withTimeoutOrNull(PAGE_READ_TIMEOUT_MS) { io.download(servers, edition.sha256.lowercase())?.decodeToString() }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w(TAG) { "could not read back the newest page: ${e.javaClass.simpleName}" }
+            null
+        }
+
     /** The models [key]'s endpoint lists ([models]), within [modelsTimeoutMs]; empty when it can't say. */
     private suspend fun listModels(key: AgentKeyTag): List<AgentModel> =
         try {
@@ -858,6 +963,9 @@ class ObserverRunner(
 
         /** The `/models` listing before a print; a SIGTERM's grace waits for it. */
         const val MODELS_TIMEOUT_MS = 20_000L
+
+        /** Reading back the newest page for its masthead, motto and sections: optional, so short. */
+        const val PAGE_READ_TIMEOUT_MS = 20_000L
 
         const val FIXABLE_RETRY_SECONDS = 3_600L
 

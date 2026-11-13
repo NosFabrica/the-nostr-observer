@@ -238,13 +238,18 @@ class FakePrinter(
 ) : PaperPrinter {
     val calls = mutableListOf<Triple<AgentKeyTag, String, HexKey>>()
 
+    /** What each print was asked with beyond its key and model: the effort and the edition's context. */
+    val options = mutableListOf<PrintOptions>()
+
     override suspend fun print(
         key: AgentKeyTag,
         model: String,
         owner: HexKey,
         readerName: String,
+        options: PrintOptions,
     ): PrintResult {
         calls += Triple(key, model, owner)
+        this.options += options
         return result(key, model)
     }
 

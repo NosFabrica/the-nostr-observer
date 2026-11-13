@@ -68,10 +68,10 @@ class RunnerBoundsTest : RunnerWorld() {
             val release = CompletableDeferred<Unit>()
             // The owner's print is under way (it may have paid) when the server refuses the token for the stranger.
             val slow =
-                PaperPrinter { key, model, who, name ->
+                PaperPrinter { key, model, who, name, options ->
                     printing.complete(Unit)
                     release.await()
-                    printer.print(key, model, who, name)
+                    printer.print(key, model, who, name, options)
                 }
             val refusing =
                 object : InternalApi by api {
@@ -173,9 +173,9 @@ class RunnerBoundsTest : RunnerWorld() {
             var stopping = false
             // One run at a time; SIGTERM arrives during the first print.
             val stopper =
-                PaperPrinter { key, model, who, name ->
+                PaperPrinter { key, model, who, name, options ->
                     stopping = true
-                    printer.print(key, model, who, name)
+                    printer.print(key, model, who, name, options)
                 }
             val outcomes = runnerWith(printer = stopper, accepting = { !stopping }, parallelism = 1).poll()
             assertEquals(1, printer.calls.size)

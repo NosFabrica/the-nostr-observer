@@ -56,6 +56,9 @@ interface RunRecords {
         owner: HexKey,
         occurrence: Long,
     )
+
+    /** The occurrences of [owner]'s runs this worker remembers, started or ended: the edition number counts their days. */
+    fun occurrences(owner: HexKey): List<Long> = emptyList()
 }
 
 /** The run records can't be kept (a write failed) or read (a corrupt file): nothing may be printed. */
@@ -147,6 +150,9 @@ class FileRunRecords(
         // then not tried again, which costs a paper, never a second payment.
         saveOrLog()
     }
+
+    @Synchronized
+    override fun occurrences(owner: HexKey): List<Long> = records.keys.filter { it.first == owner }.map { it.second }
 
     private fun put(
         owner: HexKey,

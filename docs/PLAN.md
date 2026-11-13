@@ -36,8 +36,8 @@ These win over anything written here. Read them instead of a summary.
 - **The writer is the reader's own AI key** (NIP-FA), called in the OpenAI Chat Completions
   format at the key's own URL. There is no NosFabrica-wide model key. The Assistant prints
   with the Assistant's own NIP-FA list.
-- **A fixed 24-hour window.** **The model writes the whole document**, inlining the house
-  stylesheet. **Only pages that pass the page checks** are shown or published. **Art is
+- **A fixed 24-hour window.** **The model writes the whole document**; the engine inserts the
+  house stylesheet into it (Amethyst's `insertHouseCss`) before the page checks. **Only pages that pass the page checks** are shown or published. **Art is
   hotlinked**, never downloaded. **No NSFW classification**: the reader's lens is the
   moderator. The product is called **The Observer**.
 - **The site**: one NIP-5A named nsite per person, kind 35128, `d` = `observer`, dated pages,
@@ -63,8 +63,10 @@ no nsec: it decrypts and signs as an owner's Assistant through brainstorm_server
    after the time it was set, params understood;
 5. reads both Observer sites (the owner's and the Assistant's) and skips an occurrence that
    is already printed on either;
-6. picks the Assistant's NIP-FA key by the `key` param and the model by `model`;
-7. prints with the engine (the same press and page checks as the apps);
+6. picks the Assistant's NIP-FA key by the `key` param, the model by `model` and the writing
+   effort by `effort` (`deep`, or Standard by its absence);
+7. prints with the engine (the same plan, page and page checks as the apps), with Brainstorm's
+   links and the edition's number, recent headlines, masthead and the schedule's clock;
 8. uploads to the **owner's** Blossom servers, with each 24242 signed through the server;
 9. publishes the **Assistant's** Observer site, with `["p", owner]`, signed through the server.
 

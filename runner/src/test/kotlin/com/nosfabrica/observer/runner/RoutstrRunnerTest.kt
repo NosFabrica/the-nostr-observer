@@ -1,11 +1,13 @@
 package com.nosfabrica.observer.runner
 
 import com.nosfabrica.observer.frontpage.AgentModel
+import com.nosfabrica.observer.frontpage.FrontPageParams
 import com.nosfabrica.observer.frontpage.RoutstrInfo
 import com.nosfabrica.observer.frontpage.SatsPricing
 import com.nosfabrica.observer.frontpage.SingleHttpClient
 import com.nosfabrica.observer.frontpage.WriterException
 import com.nosfabrica.observer.frontpage.WriterFailure
+import com.nosfabrica.observer.frontpage.WritingEffort
 import com.nosfabrica.observer.frontpage.writerExceptionFor
 import com.vitorpamplona.quartz.nipFAAgentKeys.tags.AgentKeyTag
 import com.vitorpamplona.quartz.nipFBScheduledTasks.ScheduledTaskClaims.OwnRun
@@ -32,7 +34,7 @@ class RoutstrRunnerTest : RunnerWorld() {
     private val nodeKey = AgentKeyTag("sk-routstr-node-key-7f3a", "https://node.example/v1")
     private val model = "routstr/writer"
 
-    /** 300 sats reserved per request: a print needs 600 sats (600,000 msats) of balance. */
+    /** 300 sats reserved per request, and cheap tokens: a print needs two reserves, 600 sats (600,000 msats) of balance. */
     private val priced = listOf(AgentModel(model, sats = SatsPricing(0.001, 0.002, 0.0, 300.0)))
 
     /** A node, faked: what it says about itself and the key's balance, and who asked. */
@@ -78,6 +80,38 @@ class RoutstrRunnerTest : RunnerWorld() {
             // `sats_pricing` in the key's own /models said it is a Routstr node: /info was never needed.
             assertTrue(node.calls.none { it.startsWith("info") })
             assertTrue(node.calls.all { it.endsWith(nodeKey.url) }, "only the key's own node is asked")
+        }
+
+    @Test
+    fun theReserveCoversThePlanAndThePageNotJustTwoMaxCosts() =
+        runTest {
+            // Dear tokens: the two passes cost more than a second 300-sat reserve.
+            val dear = listOf(AgentModel(model, sats = SatsPricing(0.01, 0.05, 1.0, 300.0)))
+            val required = RoutstrFunds.requiredMsats(dear.single())
+            assertTrue(required > 600_000, "$required")
+            val node = FakeNode(balanceMsats = 600_000)
+            val worker = routstrWorld(node)
+            listedModels = dear
+            assertEquals(RunOutcome.INSUFFICIENT_BALANCE, worker.poll()[owner.pubKey], "twice max_cost no longer covers a print")
+            assertTrue(printer.calls.isEmpty())
+            node.balanceMsats = required
+            clock += ObserverRunner.FIXABLE_RETRY_SECONDS
+            assertEquals(RunOutcome.PRINTED, worker.poll()[owner.pubKey])
+        }
+
+    @Test
+    fun aDeepScheduleNeedsTheDeepReserve() =
+        runTest {
+            val dear = listOf(AgentModel(model, sats = SatsPricing(0.01, 0.05, 1.0, 300.0)))
+            val standard = RoutstrFunds.requiredMsats(dear.single())
+            val deep = RoutstrFunds.requiredMsats(dear.single(), WritingEffort.DEEP)
+            assertTrue(deep > standard)
+            val worker = runnerWith(routstr = RoutstrFunds(FakeNode(balanceMsats = standard)))
+            world(listOf(nodeKey, openRouter))
+            listedModels = dear
+            schedule(FrontPageParams.withEffort(task(model = model, key = nodeKey), WritingEffort.DEEP))
+            assertEquals(RunOutcome.INSUFFICIENT_BALANCE, worker.poll()[owner.pubKey])
+            assertTrue(printer.calls.isEmpty())
         }
 
     @Test

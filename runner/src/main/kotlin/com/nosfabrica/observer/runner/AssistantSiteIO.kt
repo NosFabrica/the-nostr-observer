@@ -204,7 +204,10 @@ suspend fun editionsOn(
     return when (read) {
         SiteRead.Unreadable -> SiteEditions.Unreadable
         SiteRead.None -> SiteEditions.Read(emptyList())
-        is SiteRead.Found -> SiteEditions.Read(ObserverPublisher(SingleReadIO(io, read), author, { null }).read()?.editions.orEmpty())
+        is SiteRead.Found -> {
+            val view = ObserverPublisher(SingleReadIO(io, read), author, { null }).read()
+            SiteEditions.Read(view?.editions.orEmpty(), view?.servers.orEmpty())
+        }
     }
 }
 
@@ -212,6 +215,8 @@ suspend fun editionsOn(
 sealed interface SiteEditions {
     data class Read(
         val editions: List<ObserverEdition>,
+        /** Where its files are: the servers its pages are read back from. */
+        val servers: List<String> = emptyList(),
     ) : SiteEditions
 
     data object Unreadable : SiteEditions

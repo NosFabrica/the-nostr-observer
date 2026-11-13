@@ -2,9 +2,12 @@ package com.nosfabrica.observer.runner
 
 import com.nosfabrica.observer.frontpage.AgentModel
 import com.nosfabrica.observer.frontpage.AgentProviderPresets
+import com.nosfabrica.observer.frontpage.DEFAULT_DIGEST_BUDGET
 import com.nosfabrica.observer.frontpage.IRoleBasedHttpClientBuilder
 import com.nosfabrica.observer.frontpage.RoutstrInfo
 import com.nosfabrica.observer.frontpage.RoutstrJson
+import com.nosfabrica.observer.frontpage.RoutstrPricing
+import com.nosfabrica.observer.frontpage.WritingEffort
 import com.vitorpamplona.quartz.nipFAAgentKeys.tags.AgentKeyTag
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -14,7 +17,6 @@ import okhttp3.Request
 import java.io.IOException
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
-import kotlin.math.ceil
 
 /**
  * The worker's calls to a Routstr node, always at a key's OWN URL (its NIP-FA `key` tag): never
@@ -139,14 +141,14 @@ class RoutstrFunds(
     )
 
     /**
-     * Whether [key]'s balance is too low to print with [model]: under twice the model's
-     * `sats_pricing.max_cost` (what the node reserves per request; the repair round can be a second
-     * request), or nothing at all when the node gives no `max_cost`. False when the node didn't
-     * say what the balance is: then the print goes ahead, and a 402 ends it without a charge.
+     * Whether [key]'s balance is too low to print with [model] at [effort]: under [requiredMsats].
+     * False when the node didn't say what the balance is: then the print goes ahead, and a 402
+     * ends it without a charge.
      */
     suspend fun tooLow(
         key: AgentKeyTag,
         model: AgentModel?,
+        effort: WritingEffort = WritingEffort.STANDARD,
     ): Boolean {
         val balance =
             try {
@@ -156,7 +158,7 @@ class RoutstrFunds(
             } catch (e: Exception) {
                 null
             } ?: return false
-        return balance < requiredMsats(model)
+        return balance < requiredMsats(model, effort)
     }
 
     companion object {
@@ -165,13 +167,29 @@ class RoutstrFunds(
         /** A node's answer to `/info` or `/balance/info`; neither is ever slow on a live node. */
         const val CALL_TIMEOUT_MS = 20_000L
 
-        /** A print is at most two requests: the page, and one repair round when the page checks fail. */
-        const val REQUESTS_PER_PRINT = 2
+        /**
+         * A print is a plan, the page and up to three repairs, one request at a time. The node
+         * reserves `max_cost` while each is in flight and then charges what it cost, so the
+         * balance must hold one reserve plus what the calls before it spent.
+         */
+        const val RESERVES_PER_PRINT = 2
 
-        /** What a print may reserve, in msats: [REQUESTS_PER_PRINT] times `max_cost` (sats) rounded up; 1 msat when it isn't said. */
-        fun requiredMsats(model: AgentModel?): Long {
-            val maxCost = model?.sats?.maxCost?.takeIf { it.isFinite() && it >= 0 } ?: return 1
-            return REQUESTS_PER_PRINT * ceil(maxCost).toLong() * 1000
+        /**
+         * What a print may need, in msats: [RESERVES_PER_PRINT] times `max_cost` (sats), and never
+         * less than one `max_cost` plus Amethyst's estimate of the edition in sats
+         * ([RoutstrPricing.editionSats]: the plan and the page, Deep's reasoning, over a digest of
+         * the whole [DEFAULT_DIGEST_BUDGET], since the worker keeps no last digest to size it by).
+         * 1 msat when the node says neither.
+         */
+        fun requiredMsats(
+            model: AgentModel?,
+            effort: WritingEffort = WritingEffort.STANDARD,
+        ): Long {
+            val maxCost = RoutstrPricing.maxCostSats(model?.sats)
+            val estimate = RoutstrPricing.editionSats(model?.sats, DEFAULT_DIGEST_BUDGET, effort = effort)
+            if (maxCost == null && estimate == null) return 1
+            val reserve = maxCost ?: 0
+            return maxOf(RESERVES_PER_PRINT * reserve, reserve + (estimate ?: 0)) * 1000
         }
     }
 }

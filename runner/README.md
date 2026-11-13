@@ -30,7 +30,8 @@ runner"). It runs on Brainstorm's servers, beside brainstorm_server, as its own 
    server maps to that Assistant). No `p`: the owner took printing back (`NOT_NAMED`). More than
    half of the owner's write relays must have answered the read (`NO_QUORUM` otherwise).
 5. Has the server decrypt the schedule (`decrypt` with the whole signed event; the plaintext is
-   kept by event id), skips one with a param it doesn't understand (`ObserverParams.understands`),
+   kept by event id), skips one with a param it doesn't understand (`FrontPageParams.understands`:
+   Quartz's `model` and `key`, and `effort`),
    and decides with `ScheduledTaskClaims.decideAsRunner`: due, not paused, after the time it was
    set, not already started here, no live claim by one of the owner's devices
    (`CLAIMED_BY_DEVICE`).
@@ -55,7 +56,15 @@ runner"). It runs on Brainstorm's servers, beside brainstorm_server, as its own 
 10. Reads the owner's schedule once more, with the same quorum, right before spending: if it
     changed (`SCHEDULE_CHANGED`) the next poll decides on the new one.
 11. Prints with the engine (`generator/`, Amethyst's press and page checks), at most 438 s
-    (what Amethyst's scheduled run leaves a device's print), four owners at a time.
+    (what Amethyst's scheduled run leaves a device's print), four owners at a time. A print is
+    a plan call, then the page from the digest and the plan's posts in full, then up to three
+    repairs; a plan call that fails (an HTTP error, a cut-off, a timeout) leaves one pass from
+    the digest alone. Every call carries `max_tokens`, and the schedule's `effort=deep` asks for
+    the provider's high reasoning effort. The page's citations and bylines are Brainstorm's,
+    `https://brainstorm.world/e/<nevent|naddr>` and `https://brainstorm.world/p/<npub>`. The
+    writer is told the edition's number (the distinct days on both sites and in the run
+    records, plus one), the last five headlines from both sites' `editions.json`, the masthead,
+    motto and sections the newest page announces, and the date and time on the schedule's zone.
 12. Uploads the page, `archive.html` and `editions.json` to the **owner's** Blossom servers only,
     each with a kind 24242 the server signs (`t=upload`, one `x`, 5 minutes to expiry, no `p`).
 13. Publishes the **Assistant's** Observer site (35128, `d=observer`, `["p", owner]`), signed by
@@ -91,8 +100,10 @@ worker reads no kind 38421: every call goes to the key's own URL, never to an en
 announcement names.
 
 - **Before printing**, `GET /v1/balance/info` with the key. Under twice the model's
-  `sats_pricing.max_cost` (the repair round can be a second request), or nothing when the model
-  gives no `max_cost`, there is no print: `INSUFFICIENT_BALANCE`, nothing spent, looked at again
+  `sats_pricing.max_cost`, or under one `max_cost` plus Amethyst's estimate of the edition in
+  sats (`RoutstrPricing.editionSats`: the plan and the page over a full digest, Deep's reasoning
+  when the schedule asks for it), whichever is more, there is no print (nothing when the node
+  gives neither): `INSUFFICIENT_BALANCE`, nothing spent, looked at again
   hourly that occurrence. A balance the node doesn't give lets the print go ahead.
 - **During the print**: a 402 is `INSUFFICIENT_BALANCE`, a 503 `payment_settlement_failed` is
   `CHARGED_NO_ANSWER` (the node charged and withheld the page), both ended and never resent. A

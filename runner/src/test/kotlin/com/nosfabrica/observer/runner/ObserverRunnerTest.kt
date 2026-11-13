@@ -339,7 +339,7 @@ class ObserverRunnerTest : RunnerWorld() {
         runTest {
             world()
             schedule()
-            val hanging = PaperPrinter { _, _, _, _ -> awaitCancellation() }
+            val hanging = PaperPrinter { _, _, _, _, _ -> awaitCancellation() }
             assertEquals(RunOutcome.TIMED_OUT, runnerWith(printer = hanging).poll()[owner.pubKey])
             // It may have reached the model: never again on its own.
             assertEquals(OwnRun.ENDED, records.ownRun(owner.pubKey, Instant.parse("2026-11-12T06:00:00Z").epochSecond))
@@ -373,13 +373,13 @@ class ObserverRunnerTest : RunnerWorld() {
             // The owner's print waits until the stranger's is done: run one after the other, it never would.
             val strangerDone = CompletableDeferred<Unit>()
             val gated =
-                PaperPrinter { key, model, who, name ->
+                PaperPrinter { key, model, who, name, options ->
                     if (who == owner.pubKey) {
                         strangerDone.await()
                     } else {
                         strangerDone.complete(Unit)
                     }
-                    printer.print(key, model, who, name)
+                    printer.print(key, model, who, name, options)
                 }
             val outcomes = runnerWith(printer = gated).poll()
             assertEquals(RunOutcome.PRINTED, outcomes[owner.pubKey])
