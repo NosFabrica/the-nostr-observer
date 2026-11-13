@@ -22,7 +22,9 @@ Assistant can print it for you.
 - **`service/`**: the Brainstorm Assistant's Observer task service. It runs on Brainstorm's
   servers, beside brainstorm_server, and prints for readers whose schedule names their
   Assistant when [assistant-runner](https://github.com/NosFabrica/assistant-runner) wakes it for
-  one of them (`POST /v1/run`). See [`service/README.md`](service/README.md).
+  one of them (`POST /v1/run`). The two share no code: only the wake's contract,
+  brainstorm_server's `brainstorm_nsec` columns and its Fernet key file. See
+  [`service/README.md`](service/README.md).
 
 The design is [`docs/PLAN.md`](docs/PLAN.md).
 

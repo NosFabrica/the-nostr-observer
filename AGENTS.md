@@ -14,10 +14,11 @@ repo.
 - `service/`: the Brainstorm Assistant's Observer task service (`observer-service`), a
   container on Brainstorm's servers that assistant-runner wakes with `POST /v1/run` for one
   owner. It reads the Assistant's key from brainstorm_server's `brainstorm_nsec` and Fernet key
-  file (`:core`'s `AssistantKeys`), decrypts and signs as the Assistant with the allowlist the
-  server enforced (`LocalAssistant`), and keeps its runs and unpublished papers in Postgres
-  (`assistant_runner.*`). It never calls brainstorm_server. `service/README.md` has what a wake
-  does and the deployment.
+  file (its own `keys` package: `Fernet`, `FernetKeyFile`, `AssistantKeys`), decrypts and signs as
+  the Assistant with the allowlist the server enforced (`LocalAssistant`), and keeps its runs and
+  unpublished papers in its own Postgres schema, `observer` (the `state` package: `Migrations`,
+  `RunStore`, `PendingStore`). It never calls brainstorm_server. `service/README.md` has what a
+  wake does and the deployment.
 
 - `.claude/skills/`: the two Claude Code skills, still in use. `nostr-observer` prints a
   paper with Claude Code as the writer and publishes it as a claude.ai artifact;
@@ -54,21 +55,23 @@ Other agents build Quartz and Amethyst on the same machine: one Gradle invocatio
   assert this on captured logs.
 - **Never call a real model, relay, Blossom server or database from a test.** Tests fake the
   HTTP layer (OkHttp interceptors), the relay client (`INostrClient`) and the key table
-  (`MemoryDirectory`), and use `:core`'s in-memory stores. Postgres tests use `:core`'s
-  `TestPostgres` (a throwaway `initdb` cluster, or `TEST_DATABASE_URL`) and are skipped, saying
-  so, when there is neither.
+  (`MemoryDirectory`), and use the in-memory stores (`MemoryRunStore`, `MemoryPendingStore`).
+  Postgres tests use `service/src/test/…/testing/TestPostgres` (a throwaway `initdb` cluster, or
+  `TEST_DATABASE_URL`) and are skipped, saying so, when there is neither.
 - **Only the owner's Blossom servers.** No kind 10063 means no publish, never a fallback.
 - **Quartz** comes from JitPack pinned by a full commit hash (`gradle/libs.versions.toml`).
   Hashes carry no order, so every module `force()`s the pin; the only relation between two
   hashes is `git merge-base --is-ancestor`. Quartz is KMP with Android in its graph, so
   `settings.gradle.kts` needs `google()`. `-PquartzDir=../quartz` builds a local checkout.
-- **assistant-runner's `:core`** (`NosFabrica/assistant-runner`: the Assistant keys, the
-  `assistant_runner` schema's stores, the trigger contract) is pinned the same way
-  (`assistantRunner` in `gradle/libs.versions.toml`, forced, its `quartz` pin equal to ours).
-  That repository is **private**, so JitPack can't build it yet: `settings.gradle.kts` builds a
-  checkout instead, `-PassistantRunnerDir=<path>` or `../assistant-runner` when it exists. Until
-  the repository is public, CI needs a checkout of it beside this one (or the build fails to
-  resolve the pin).
+- **No code is shared with the runner**, in either direction: never depend on its repository,
+  vendor a module of it, or have it read the service's tables. What the two share is only what
+  both talk to: the wake (`POST /v1/run`; its vectors are copied from the runner's
+  `contract/v1/vectors/` into `service/src/test/resources/contract/v1/vectors/`), the four
+  `brainstorm_nsec` columns read with the server's `_plaintext_nsec` rule, and the Fernet key
+  file. The key reading (`service/…/keys/`) is this repository's own copy, with its own tests (the
+  Python-made Fernet vectors, the column-grant role): a fix to it is ported by hand to the
+  runner's copy, and the other way round. The `observer` schema changes only by a new versioned
+  file in `service/src/main/resources/observer/`, never by editing one that shipped.
 - **Dependency licences**: read the LICENSE or POM before adding one. Permissive is fine;
   LGPL or a linking exception, say so; anything stricter, stop and ask.
 - Comments say why, especially why not. Run `spotlessApply` before committing.

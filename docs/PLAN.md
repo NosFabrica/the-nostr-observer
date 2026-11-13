@@ -29,7 +29,8 @@ These win over anything written here. Read them instead of a summary.
 | The reader's AI key (kind 12000) | NIP-FA (`FA.md` on `nips` branch `claude/nip-fa-ai-agent-keys`) |
 | The schedule (kind 34817), `param`, the runner `p` | NIP-FB (`FB.md` on `nips` branch `claude/nip-fb-scheduled-tasks`) |
 | The engine's behaviour | Amethyst `commons/src/commonMain/kotlin/com/vitorpamplona/amethyst/commons/frontpage/` |
-| The wake (`POST /v1/run`), the keys, the `assistant_runner` schema | assistant-runner's `docs/PLAN.md` and `contract/v1/` |
+| The wake (`POST /v1/run`) | assistant-runner's `docs/PLAN.md` and `contract/v1/` (its vectors are copied into `service/src/test/resources/`) |
+| The Assistant's key (`brainstorm_nsec`, `_plaintext_nsec`, the Fernet key file) | brainstorm_server's `app/repos/brainstorm_nsec.py` and `app/utils/encryption.py` |
 | What one wake does, the deployment | `service/README.md` |
 | Brainstorm's TypeScript copy, for cross-checking | Brainstorm-UI `client/src/lib/frontPage/` |
 
@@ -56,7 +57,7 @@ brainstorm_server holds one Assistant key per Brainstorm user (the owner). The s
 schedules, finds a due occurrence and wakes this service with `POST /v1/run` for that owner. The
 service never calls brainstorm_server: it reads the Assistant's key from the server's
 `brainstorm_nsec` table (four columns, under a column grant) and Fernet key file, and keeps its
-runs and unpublished papers in that Postgres's `assistant_runner` schema. For the owner it:
+runs and unpublished papers in that Postgres's `observer` schema, its own. For the owner it:
 
 1. answers the wake at once (`202`, a joined `202` for an owner already printing, `200` for an
    occurrence its `runs` row settles, `429` when busy, `400` when malformed), then runs:
@@ -72,7 +73,7 @@ runs and unpublished papers in that Postgres's `assistant_runner` schema. For th
    is already printed on either;
 6. picks the Assistant's NIP-FA key by the `key` param, the model by `model` and the writing
    effort by `effort` (`deep`, or Standard by its absence);
-7. claims the occurrence in `assistant_runner.runs` before spending: only the inserter prints;
+7. claims the occurrence in `observer.runs` before spending: only the inserter prints;
 8. prints with the engine (the same plan, page and page checks as the apps), with Brainstorm's
    links and the edition's number, recent headlines, masthead and the schedule's clock;
 9. stores the paper, then uploads to the **owner's** Blossom servers, each 24242 signed by the
@@ -80,6 +81,14 @@ runs and unpublished papers in that Postgres's `assistant_runner` schema. For th
 10. publishes the **Assistant's** Observer site, with `["p", owner]`, signed by the Assistant;
 11. ends the run. A paper that didn't go out is published again for 12 hours, never printed
     again, while the schedule still names the Assistant.
+
+**The service and the runner share no code.** Neither depends on the other's repository. They
+share only what both talk to: the wake and its JSON (the contract's vectors, which each side tests
+against), brainstorm_server's four `brainstorm_nsec` columns read with the server's
+`_plaintext_nsec` rule, and the Fernet key file. The service has its own copy of the key reading
+(`service/…/keys/`) and its own state (`service/…/state/`, the `observer` schema), each tested on
+its own; the runner never reads the service's tables, and learns that an occurrence is settled
+from the `200` the service answers.
 
 Consent to a public site stays with Brainstorm: it asks the reader before it names the
 Assistant in their schedule, and the service publishes whenever the schedule names it.

@@ -7,25 +7,34 @@ the task service [assistant-runner](https://github.com/NosFabrica/assistant-runn
 runner finds a due occurrence and sends `POST /v1/run`; this service does the whole job.
 
 **brainstorm_server is never called.** The service reads the Assistant's key itself, from the
-server's `brainstorm_nsec` table and Fernet key file (assistant-runner's `:core` `AssistantKeys`),
-decrypts and signs as the Assistant with the same allowlist the server enforced when it did that
-work (`LocalAssistant`), and keeps its run records and unpublished papers in the
-`assistant_runner` schema of the same Postgres.
+server's `brainstorm_nsec` table and Fernet key file (its own `keys` package: `Fernet`,
+`FernetKeyFile`, `AssistantKeys`), decrypts and signs as the Assistant with the same allowlist the
+server enforced when it did that work (`LocalAssistant`), and keeps its run records and unpublished
+papers in its own `observer` schema of the same Postgres (the `state` package: `Migrations`,
+`RunStore`, `PendingStore`).
+
+**It shares no code with the runner that wakes it**, and depends on nothing of it. The two share only what
+both talk to: the wake and its JSON (the vectors, copied from the runner's `contract/v1/vectors/`
+into `src/test/resources/contract/v1/vectors/`), the four `brainstorm_nsec` columns read with the
+server's `_plaintext_nsec` rule, and the Fernet key file. The runner reads none of this service's
+tables: it learns that an occurrence is settled from the `200` this service answers.
 
 ## What one wake does
 
 `POST /v1/run` `{"v": 1, "task": "observer", "owner": "<64-hex>", "occurrence": <unix s>}`
-(the trigger contract, v1: assistant-runner's `contract/v1/`).
+(the trigger contract, v1: assistant-runner's `contract/v1/`; parsed here by this service's own
+`WakeRequest`).
 
 1. **The answer**, at once:
    - `400 {"why": …}` for a body that isn't a v1 wake (`WakeRequest.parse`), or a `task` that
      isn't `observer`;
    - `202` when a run for the owner is already under way here: the wake **joins** it, and no
      second print starts (`{"joined": true}`);
-   - `200 {"outcome": …}` when `assistant_runner.runs` already has a row for that occurrence: an
+   - `200 {"outcome": …}` when `observer.runs` already has a row for that occurrence: an
      ended one answers with its outcome (`PRINTED`, `PUBLISH_PENDING`, `WRITER_FAILED`, …), a
      `started` one nobody here runs (another replica's, or one that died) with `ATTEMPTED`. One
-     cheap read, no relay;
+     cheap read, no relay. The runner takes a `200` as settled and doesn't wake that occurrence
+     again (until it restarts, which costs one more wake, answered the same);
    - `429` with `Retry-After: 60` when all `PARALLELISM` slots are busy, or the service is
      stopping;
    - otherwise `202` (`{"joined": false}`), and the owner's path runs in the background.
@@ -70,7 +79,7 @@ work (`LocalAssistant`), and keeps its run records and unpublished papers in the
     first (below).
 12. Reads the owner's schedule once more, with the same quorum, right before spending: if it
     changed (`SCHEDULE_CHANGED`) the next wake decides on the new one.
-13. **Claims the occurrence**: `INSERT … ON CONFLICT DO NOTHING` into `assistant_runner.runs`.
+13. **Claims the occurrence**: `INSERT … ON CONFLICT DO NOTHING` into `observer.runs`.
     Only the inserter prints, so two replicas (or a restart) never pay for one morning twice. A
     claim that can't be written is no start (`RECORDS_UNAVAILABLE`, nothing spent); one another
     process holds is `ATTEMPTED`.
@@ -84,7 +93,7 @@ work (`LocalAssistant`), and keeps its run records and unpublished papers in the
     days on both sites and in the `runs` rows, plus one), the last five headlines from both
     sites' `editions.json`, the masthead, motto and sections the newest page announces, and the
     date and time on the schedule's zone.
-15. **Stores the paper** in `assistant_runner.pending` (the edition's fields in `meta`, the page
+15. **Stores the paper** in `observer.pending` (the edition's fields in `meta`, the page
     as a file) before its first publish.
 16. Uploads the page, `archive.html` and `editions.json` to the **owner's** Blossom servers only,
     each with a kind 24242 the Assistant signs (`t=upload`, one `x`, 5 minutes to expiry, no
@@ -108,7 +117,7 @@ turned on the Assistant's keys is looked at again as soon as its kind 12000 chan
 
 ## The papers still waiting
 
-A paper that didn't publish (Blossom down, a relay refusing) stays in `assistant_runner.pending`
+A paper that didn't publish (Blossom down, a relay refusing) stays in `observer.pending`
 for 12 hours, never printed again. Every `PENDING_SECONDS` (300) the service drops the papers past
 their time, then, one owner at a time in a free slot (never beside a run for the same owner),
 publishes each owner's again (`ObserverRunner.republish`): only while the owner's newest schedule
@@ -199,7 +208,7 @@ Postgres is reached by JDBC, outside the guard: its address is the operator's, n
 | Variable | Default | |
 |---|---|---|
 | `DATABASE_URL` | (required) | JDBC URL of brainstorm_server's Postgres, `jdbc:postgresql://host:5432/db` |
-| `DATABASE_USER`, `DATABASE_PASSWORD` | | the `assistant_runner` role (below). The password is a secret: from a k8s Secret |
+| `DATABASE_USER`, `DATABASE_PASSWORD` | | the `observer_service` role (below). The password is a secret: from a k8s Secret |
 | `NSEC_KEYS_FILE` | `/run/secrets/nsec_encryption_keys` | brainstorm_server's Fernet key file, mounted read-only |
 | `PORT` | `8080` | where `POST /v1/run` is served |
 | `PARALLELISM` | `4` | owners' runs at once (1 to 64); a wake past them is a `429` |
@@ -216,19 +225,22 @@ Postgres is reached by JDBC, outside the guard: its address is the operator's, n
   token and is for assistant-runner alone (its `TASK_URL_OBSERVER=http://observer-service:8080`).
   A NetworkPolicy that admits only the runner's pods is a good second fence.
 - Replicas may be more than one, and a rolling update is fine: the claim in
-  `assistant_runner.runs` is what keeps two processes from printing one morning, and the papers
+  `observer.runs` is what keeps two processes from printing one morning, and the papers
   waiting are in Postgres, not on a volume. There is no volume.
-- At startup it applies the `assistant_runner` migrations (whichever process starts first;
-  `:core`'s `Migrations`) and exits with status 3 when it can't, or can't listen on `PORT`; with
-  status 2 on a bad setting.
-- Postgres: the role ops creates for the runner, or one of its own with the same grants:
+- At startup it applies its own `observer` schema's migrations (versioned SQL in
+  `src/main/resources/observer/`, recorded in `observer.schema_version`, under an advisory lock
+  of its own, so whichever of its processes starts first does it) and exits with status 3 when it
+  can't, or can't listen on `PORT`; with status 2 on a bad setting.
+- Postgres: a role of its own, not the runner's (which has the column grant alone):
 
-      CREATE ROLE assistant_runner LOGIN PASSWORD '…';
-      GRANT SELECT (pubkey, assistant_pubkey, encrypted_nsec, nsec) ON brainstorm_nsec TO assistant_runner;
-      CREATE SCHEMA IF NOT EXISTS assistant_runner AUTHORIZATION assistant_runner;
+      CREATE ROLE observer_service LOGIN PASSWORD '…';
+      GRANT SELECT (pubkey, assistant_pubkey, encrypted_nsec, nsec) ON brainstorm_nsec TO observer_service;
+      CREATE SCHEMA IF NOT EXISTS observer AUTHORIZATION observer_service;
 
   The service reads those four columns of brainstorm_server's `brainstorm_nsec` and nothing
   else of it, and is **coupled to them**: a server migration that renames or drops one breaks it.
+  It owns the `observer` schema, so it needs no CREATE on the database. (The schema was
+  `assistant_runner` before; a database migrated under that name keeps those rows there, unread.)
 - Mount brainstorm_server's Fernet key file read-only at `NSEC_KEYS_FILE`. The server writes and
   rotates it; the service re-reads it when it changes.
 - On SIGTERM it stops taking wakes (the listener closes), starts no new print, and lets the runs
