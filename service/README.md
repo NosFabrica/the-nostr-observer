@@ -219,6 +219,11 @@ Postgres is reached by JDBC, outside the guard: its address is the operator's, n
 
 ## Deploying beside brainstorm_server
 
+CI (`.github/workflows/build.yml`) builds and pushes the image on every push, after the tests
+pass: `ghcr.io/nosfabrica/the-nostr-observer/observer-service`, tagged with the branch name,
+`sha-<short>`, a `v*` tag's version, and `latest` on `main`. Staging pins one of those tags. By
+hand, from the repository root:
+
     docker build -f service/Dockerfile -t observer-service .
 
 - A Deployment with a ClusterIP Service on `PORT`, and **no Ingress**: the endpoint has no

@@ -1,13 +1,31 @@
 name: build
 
+# Every branch push builds, tests and pushes the Observer service's image, as brainstorm_server's
+# CI does: staging pins one of those tags (brainstorm-k8s `docs/staging-workflow.md`).
 on:
+  workflow_dispatch:
   push:
-    branches: [main]
-  pull_request:
+    branches:
+      - '**'
+    tags:
+      - 'v*'
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+  # The repo also holds the engine and the skills; the image is the service alone.
+  IMAGE_NAME: ${{ github.repository }}/observer-service
 
 jobs:
   build:
+    name: Build and test
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
 
     # The Postgres the service's key-read and store tests run against (its TestPostgres reads
     # TEST_DATABASE_URL when it can't start a cluster of its own). Nothing else in the build
@@ -70,3 +88,62 @@ jobs:
           name: test-results
           path: '**/build/test-results/test/*.xml'
           if-no-files-found: warn
+
+  image:
+    name: Build and push the service image
+    needs: [build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Lint Dockerfile
+        uses: hadolint/hadolint-action@v3.3.0
+        with:
+          dockerfile: service/Dockerfile
+          failure-threshold: warning
+
+      - name: Compute lowercase image name
+        id: img
+        run: |
+          echo "name=$(echo '${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: |
+            ${{ steps.img.outputs.name }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=tag
+            type=semver,pattern={{version}}
+            type=sha,format=short,prefix=sha-
+            type=raw,value=latest,enable=${{ github.ref == format('refs/heads/{0}', 'main') }}
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # The context is the repository root: the service builds with the engine beside it.
+      - name: Build and push image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: service/Dockerfile
+          push: true
+          provenance: false
+          platforms: linux/amd64
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          annotations: ${{ steps.meta.outputs.annotations }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
