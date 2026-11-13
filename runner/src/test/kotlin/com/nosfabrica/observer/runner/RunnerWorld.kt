@@ -41,12 +41,13 @@ abstract class RunnerWorld {
     protected val blossom = FakeBlossom()
     protected val printer = FakePrinter()
     protected val records = FileRunRecords(null)
-    protected val api = FakeInternalApi(mapOf(owner.pubKey to assistant, stranger.pubKey to strangersAssistant))
+    protected val api = RecordingAssistant(mapOf(owner.pubKey to assistant, stranger.pubKey to strangersAssistant), { clock })
     protected var listedModels = listed("openai/gpt-4o-mini", "anthropic/claude-sonnet-4.5", "text-embedding-3")
 
     protected val runner =
         ObserverRunner(
             api = api,
+            pairs = { api.pairs() },
             nostr = RunnerNostr(relays, setOf(index), null),
             blossom = BlossomHttp(blossom.client),
             printer = printer,
@@ -113,7 +114,7 @@ abstract class RunnerWorld {
         records: RunRecords = this.records,
         accepting: () -> Boolean = { true },
         access: RelayAccess = relays,
-        api: InternalApi = this.api,
+        api: AssistantSigner = this.api,
         pending: PendingPapers = PendingPapers(null),
         routstr: RoutstrFunds = RoutstrFunds(NoRoutstrNode),
         parallelism: Int = ObserverRunner.PARALLELISM,
@@ -121,6 +122,7 @@ abstract class RunnerWorld {
         nostr: RunnerNostr = RunnerNostr(access, setOf(index), null, now = { clock }),
     ) = ObserverRunner(
         api = api,
+        pairs = { this.api.pairs() },
         nostr = nostr,
         blossom = BlossomHttp(blossom.client),
         printer = printer,

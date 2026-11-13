@@ -36,12 +36,12 @@ internal fun asNamedSite(event: Event): NamedSiteEvent? =
  * Assistant as runner"): kind 35128 `d=observer` signed by the Assistant with `["p", owner]`,
  * read from and published to the Assistant's write relays. Its files go only to the OWNER's
  * Blossom servers (their kind 10063, [ownerServers]), each upload authorised by the Assistant
- * through brainstorm_server. A server that refuses fails the upload; there is no fallback server.
+ * ([AssistantSigner]). A server that refuses fails the upload; there is no fallback server.
  */
 class AssistantSiteIO(
     private val owner: HexKey,
     private val assistant: HexKey,
-    private val api: InternalApi,
+    private val api: AssistantSigner,
     private val nostr: RunnerNostr,
     private val assistantRelays: Set<NormalizedRelayUrl>,
     private val ownerServers: List<String>,
@@ -87,17 +87,17 @@ class AssistantSiteIO(
                 hash = sha256,
                 size = bytes.size.toLong(),
                 servers = targets,
-                // The server signs one at most 10 minutes ahead; 5 leaves room for clock skew.
+                // The Assistant signs one at most 10 minutes ahead; 5 leaves room for clock skew.
                 expiration = at + AUTH_SECONDS,
                 createdAt = at,
             )
-        // The server refuses a 24242 with a `p` naming the Assistant (nostr-sdk would drop it): never send one.
+        // The Assistant refuses a 24242 with a `p` naming itself: never send one.
         check(template.tags.none { it.size > 1 && it[0] == "p" && it[1] == assistant }) { "an upload authorisation naming the Assistant" }
         val signed = api.sign(owner, template)
         if (signed.pubKey != assistant ||
             signed.kind != BlossomAuthorizationEvent.KIND
         ) {
-            throw InternalApiException("sign: the upload authorisation isn't the Assistant's")
+            throw AssistantException("sign: the upload authorisation isn't the Assistant's")
         }
         val header = BlossomHttp.authHeader(signed)
         return coroutineScope {
@@ -112,22 +112,22 @@ class AssistantSiteIO(
         reader: HexKey,
     ): SiteRead = if (runner == assistant && reader == owner) latestSite(assistant) else SiteRead.None
 
-    // The server adds its own `client` tag to what it signs: one tag fewer for the editions.
+    // The Assistant adds Brainstorm's `client` tag to what it signs: one tag fewer for the editions.
     override suspend fun maxEventTags(): List<Int?> = listOf(ObserverSite.DEFAULT_MAX_TAGS - 1)
 
     override suspend fun publish(template: EventTemplate<NamedSiteEvent>): NamedSiteEvent {
         val signed = api.sign(owner, template)
-        val site = asNamedSite(signed) ?: throw InternalApiException("sign: not a named site")
+        val site = asNamedSite(signed) ?: throw AssistantException("sign: not a named site")
         if (!ObserverSite.isRunnerSiteFor(
                 site,
                 assistant,
                 owner,
             )
         ) {
-            throw InternalApiException("sign: not the Assistant's site for this owner")
+            throw AssistantException("sign: not the Assistant's site for this owner")
         }
         val accepted = nostr.access.publish(site, assistantRelays)
-        if (accepted == 0) throw InternalApiException("no relay accepted the Observer site")
+        if (accepted == 0) throw AssistantException("no relay accepted the Observer site")
         return site
     }
 

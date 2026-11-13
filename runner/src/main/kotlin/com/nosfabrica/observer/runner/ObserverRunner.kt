@@ -1,5 +1,6 @@
 package com.nosfabrica.observer.runner
 
+import com.nosfabrica.assistant.core.AssistantPair
 import com.nosfabrica.observer.frontpage.AgentModel
 import com.nosfabrica.observer.frontpage.EditionClock
 import com.nosfabrica.observer.frontpage.EditionContext
@@ -66,7 +67,6 @@ import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.Call
 import okhttp3.EventListener
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.atomic.AtomicReference
 
 /** How one schedule went on one poll. Logged by name, with the owner: never a key or a plaintext. */
 enum class RunOutcome {
@@ -97,9 +97,16 @@ enum class RunOutcome {
     /** Its author isn't the owner of the Assistant it names, it names another key than the owner's Assistant, or its signature is bad. */
     REJECTED,
 
-    /** brainstorm_server has no Assistant for the owner, or refused to decrypt. */
+    /** The key view has no Assistant for the owner. */
     NO_ASSISTANT,
+
+    /** The owner's Assistant key doesn't open (no Fernet key opens it) or isn't the stored Assistant's. */
+    KEY_UNREADABLE,
+
+    /** The Assistant's allowlist refused to decrypt the event ([LocalAssistant]). */
     DECRYPT_REFUSED,
+
+    /** The schedule's or the key list's content doesn't decrypt, or isn't a tag array. */
     UNREADABLE,
 
     /** A param this code doesn't understand: NIP-FB says not to run it. */
@@ -305,7 +312,9 @@ suspend fun <T> cancellingCalls(
  * their Assistant, checks it, decides, prints and publishes. See runner/README.md.
  */
 class ObserverRunner(
-    private val api: InternalApi,
+    private val api: AssistantSigner,
+    /** Every (owner, Assistant) there is: the key view's pairs. */
+    private val pairs: suspend () -> List<AssistantPair>,
     private val nostr: RunnerNostr,
     private val blossom: BlossomHttp,
     private val printer: PaperPrinter,
@@ -329,18 +338,6 @@ class ObserverRunner(
     /** Where the blocking writes of the records and the pending papers run. */
     private val diskDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) {
-    /** Every (owner, Assistant) brainstorm_server holds, page by page. */
-    suspend fun assistants(): List<AssistantPair> {
-        val all = ArrayList<AssistantPair>()
-        var after: HexKey? = null
-        do {
-            val page = api.assistants(after)
-            all += page.items
-            after = page.next?.takeIf { it != after }
-        } while (after != null)
-        return all
-    }
-
     /**
      * What this worker already settled for an owner's occurrence, so a poll doesn't read both
      * sites and decrypt the keys again every few minutes until the next one is due: [outcome]
@@ -366,22 +363,17 @@ class ObserverRunner(
 
     /**
      * One pass over every schedule. Returns each owner's outcome, for tests and the log.
-     *
-     * A [RunnerTokenRejectedException] (the server refuses this worker) stops new runs, but the
-     * runs under way finish: they may already have paid for a page, which is ended in the records
-     * and kept to publish. It is thrown once they have.
      */
     suspend fun poll(): Map<HexKey, RunOutcome> {
-        val pairs = assistants()
+        val pairs = pairs()
         val byOwner = pairs.associateBy { it.owner }
         val gate = Semaphore(parallelism)
         val reads = nostr.schedules(byOwner.keys)
         decryptedTags.keys.retainAll(reads.map { it.event.id }.toSet())
         settled.keys.retainAll(byOwner.keys)
-        val rejected = AtomicReference<RunnerTokenRejectedException?>(null)
 
-        // Neither a stopping worker nor a refused token starts a run, even one queued for a permit.
-        fun mayStart() = accepting() && rejected.get() == null
+        // A stopping worker starts no run, even one queued for a permit.
+        fun mayStart() = accepting()
         val ran =
             coroutineScope {
                 reads
@@ -395,9 +387,6 @@ class ObserverRunner(
                                         if (!mayStart()) report(pair.owner, RunOutcome.STOPPING) else runSchedule(read, pair)
                                     } catch (e: CancellationException) {
                                         throw e
-                                    } catch (e: RunnerTokenRejectedException) {
-                                        rejected.compareAndSet(null, e)
-                                        RunOutcome.ERROR
                                     } catch (e: Exception) {
                                         // The class only: a message could carry what a provider or server echoed.
                                         Log.w(TAG) { "owner=${pair.owner} outcome=${RunOutcome.ERROR} error=${e.javaClass.simpleName}" }
@@ -407,7 +396,6 @@ class ObserverRunner(
                         }
                     }.awaitAll()
             }
-        rejected.get()?.let { throw it }
         // A pending paper whose owner no longer has an Assistant, or is past its time, goes.
         pending.all().forEach { paper ->
             if (paper.owner !in byOwner || now() > paper.until) {
@@ -706,8 +694,6 @@ class ObserverRunner(
                 }
             } catch (e: CancellationException) {
                 throw e
-            } catch (e: RunnerTokenRejectedException) {
-                throw e
             } catch (e: Exception) {
                 // `sign` refused, Blossom threw: the class only, never a message.
                 e.javaClass.simpleName
@@ -735,7 +721,7 @@ class ObserverRunner(
         if (publish(pair, live, site) == RunOutcome.PRINTED) report(pair.owner, RunOutcome.PRINTED, "${live.size} published late")
     }
 
-    /** The schedule's private tags, decrypted by the server from the whole signed event, once per event. */
+    /** The schedule's private tags, decrypted by the Assistant from the whole signed event, once per event. */
     private suspend fun decryptTags(
         pair: AssistantPair,
         event: ScheduledTaskEvent,
@@ -747,8 +733,8 @@ class ObserverRunner(
     }
 
     /**
-     * [event]'s content, decrypted by the owner's Assistant on the server. The plaintext stays in
-     * memory, unlogged. The Assistant's own keys (12000) open only beside the [schedule] being printed.
+     * [event]'s content, decrypted by the owner's Assistant. The plaintext stays in memory,
+     * unlogged. The Assistant's own keys (12000) open only beside the [schedule] being printed.
      */
     private suspend fun decrypt(
         pair: AssistantPair,
@@ -759,8 +745,12 @@ class ObserverRunner(
             api.decrypt(pair.owner, event, schedule)
         } catch (e: NoAssistantException) {
             stop(pair.owner, RunOutcome.NO_ASSISTANT)
-        } catch (e: RefusedByServerException) {
-            stop(pair.owner, RunOutcome.DECRYPT_REFUSED)
+        } catch (e: AssistantKeyException) {
+            stop(pair.owner, RunOutcome.KEY_UNREADABLE, e.failure.name)
+        } catch (e: RefusedException) {
+            stop(pair.owner, RunOutcome.DECRYPT_REFUSED, e.reason)
+        } catch (e: UndecryptableException) {
+            stop(pair.owner, RunOutcome.UNREADABLE)
         }
 
     /** What [assistantKey] read: the key and the list it came from, or too few relays answered. */
@@ -777,7 +767,7 @@ class ObserverRunner(
     private fun keyListFilter(assistant: HexKey) = Filter(kinds = listOf(AgentKeyEvent.KIND), authors = listOf(assistant), limit = 4)
 
     /**
-     * The Assistant's own NIP-FA list (kind 12000, by the Assistant), decrypted by the server
+     * The Assistant's own NIP-FA list (kind 12000, by the Assistant), decrypted by the Assistant
      * beside [schedule], and the key the schedule picks. Read with the server's majority rule:
      * more than half of the Assistant's relays must answer, or a list the owner just replaced
      * (a key taken back) could still be the one read.

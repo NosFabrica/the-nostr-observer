@@ -1,5 +1,9 @@
 package com.nosfabrica.observer.runner
 
+import com.nosfabrica.assistant.core.AssistantDirectory
+import com.nosfabrica.assistant.core.AssistantKey
+import com.nosfabrica.assistant.core.AssistantPair
+import com.nosfabrica.assistant.core.KeyFailure
 import com.nosfabrica.observer.frontpage.AgentModel
 import com.nosfabrica.observer.frontpage.PrintResult
 import com.nosfabrica.observer.frontpage.ProbeVerdict
@@ -8,7 +12,6 @@ import com.nosfabrica.observer.frontpage.assemble
 import com.vitorpamplona.quartz.nip01Core.core.Event
 import com.vitorpamplona.quartz.nip01Core.core.HexKey
 import com.vitorpamplona.quartz.nip01Core.crypto.KeyPair
-import com.vitorpamplona.quartz.nip01Core.crypto.verify
 import com.vitorpamplona.quartz.nip01Core.relay.filters.Filter
 import com.vitorpamplona.quartz.nip01Core.relay.normalizer.NormalizedRelayUrl
 import com.vitorpamplona.quartz.nip01Core.relay.normalizer.RelayUrlNormalizer
@@ -17,8 +20,6 @@ import com.vitorpamplona.quartz.nip01Core.signers.NostrSignerInternal
 import com.vitorpamplona.quartz.nip51Lists.encryption.PrivateTagsInContent
 import com.vitorpamplona.quartz.nipFAAgentKeys.tags.AgentKeyTag
 import com.vitorpamplona.quartz.utils.EventFactory
-import com.vitorpamplona.quartz.utils.Log
-import com.vitorpamplona.quartz.utils.LogSink
 import okhttp3.Interceptor
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -27,8 +28,6 @@ import okhttp3.Request
 import okhttp3.Response
 import okhttp3.ResponseBody.Companion.toResponseBody
 import okio.Buffer
-import java.io.ByteArrayOutputStream
-import java.io.PrintStream
 import java.security.MessageDigest
 
 fun relay(url: String): NormalizedRelayUrl = RelayUrlNormalizer.normalizeOrNull(url)!!
@@ -46,86 +45,54 @@ suspend fun NostrSignerInternal.signed(
 
 fun sha256Hex(bytes: ByteArray): String = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
 
+/** brainstorm_server's key view in memory: each owner's Assistant signer, or why there is none. */
+class MemoryDirectory(
+    private val assistants: Map<HexKey, NostrSignerInternal>,
+    private val failures: Map<HexKey, KeyFailure> = emptyMap(),
+) : AssistantDirectory {
+    override suspend fun page(
+        after: HexKey?,
+        limit: Int,
+    ): List<AssistantPair> =
+        assistants.keys
+            .sorted()
+            .filter { after == null || it > after }
+            .take(limit)
+            .map { AssistantPair(it, assistants.getValue(it).pubKey) }
+
+    override suspend fun key(owner: HexKey): AssistantKey =
+        failures[owner]?.let { AssistantKey.Failed(owner, it) }
+            ?: assistants[owner]?.let { AssistantKey.Ready(owner, it) }
+            ?: AssistantKey.Failed(owner, KeyFailure.NO_ASSISTANT)
+}
+
 /**
- * brainstorm_server's internal API, with its rules (contract section 2 and 4): it decrypts a
- * whole signed schedule only when its author is the owner and its one `p` is the owner's
- * Assistant, the Assistant's own kind 12000, nothing else; it signs 35128 and 24242 only, and
- * replaces the `client` tag with its own.
+ * The real [LocalAssistant] (its allowlist and all) over [MemoryDirectory], on the test's clock,
+ * recording what it decrypted and signed.
  */
-class FakeInternalApi(
-    val assistants: Map<HexKey, NostrSignerInternal>,
-) : InternalApi {
+class RecordingAssistant(
+    assistants: Map<HexKey, NostrSignerInternal>,
+    now: () -> Long,
+    failures: Map<HexKey, KeyFailure> = emptyMap(),
+) : AssistantSigner {
+    val local = LocalAssistant(MemoryDirectory(assistants, failures), now)
     val decrypted = mutableListOf<Pair<HexKey, Int>>()
     val signedKinds = mutableListOf<Int>()
 
-    override suspend fun assistants(after: HexKey?): AssistantPage {
-        val sorted = assistants.entries.sortedBy { it.key }.filter { after == null || it.key > after }
-        val page = sorted.take(1)
-        return AssistantPage(page.map { AssistantPair(it.key, it.value.pubKey) }, if (sorted.size > 1) page.last().key else null)
-    }
+    suspend fun pairs() = local.pairs()
+
+    override suspend fun assistantOf(owner: HexKey): HexKey = local.assistantOf(owner)
 
     override suspend fun decrypt(
         owner: HexKey,
         event: Event,
         schedule: Event?,
-    ): String {
-        val assistant = assistants[owner] ?: throw NoAssistantException(owner)
-        if (!event.verify()) throw RefusedByServerException("bad signature")
-
-        fun isOwnersSchedule(e: Event): Boolean {
-            val p = e.tags.filter { it.size > 1 && it[0] == "p" }.map { it[1] }
-            return e.kind == 34817 && e.verify() && e.pubKey == owner && p == listOf(assistant.pubKey)
-        }
-        val peer =
-            when (event.kind) {
-                34817 -> {
-                    if (!isOwnersSchedule(event)) throw RefusedByServerException("not this owner's schedule")
-                    owner
-                }
-
-                12000 -> {
-                    if (event.pubKey != assistant.pubKey) throw RefusedByServerException("not the Assistant's keys")
-                    // The keys open only for a print the owner asked this Assistant for (contract section 2).
-                    if (schedule == null || !isOwnersSchedule(schedule)) throw RefusedByServerException("no schedule")
-                    assistant.pubKey
-                }
-
-                else -> {
-                    throw RefusedByServerException("kind")
-                }
-            }
-        decrypted += owner to event.kind
-        return assistant.nip44Decrypt(event.content, peer)
-    }
+    ): String = local.decrypt(owner, event, schedule).also { synchronized(decrypted) { decrypted += owner to event.kind } }
 
     override suspend fun sign(
         owner: HexKey,
         template: EventTemplate<out Event>,
-    ): Event {
-        val assistant = assistants[owner] ?: throw NoAssistantException(owner)
-
-        fun values(name: String) = template.tags.filter { it.isNotEmpty() && it[0] == name }.map { it.getOrElse(1) { "" } }
-        when (template.kind) {
-            35128 -> {
-                if (values("d") != listOf("observer") || values("p") != listOf(owner)) throw RefusedByServerException("site shape")
-            }
-
-            24242 -> {
-                if (values("t") != listOf("upload") ||
-                    values("expiration").singleOrNull()?.toLongOrNull() == null
-                ) {
-                    throw RefusedByServerException("auth shape")
-                }
-            }
-
-            else -> {
-                throw RefusedByServerException("kind")
-            }
-        }
-        signedKinds += template.kind
-        val tags = template.tags.filter { it.isEmpty() || it[0] != "client" }.toTypedArray() + arrayOf(arrayOf("client", "Brainstorm"))
-        return typed(assistant.sign(EventTemplate<Event>(template.createdAt, template.kind, tags, template.content)))
-    }
+    ): Event = typed(local.sign(owner, template)).also { synchronized(signedKinds) { signedKinds += template.kind } }
 }
 
 /**
@@ -264,26 +231,6 @@ class FakePrinter(
         fun notReady() = PrintResult.NotReady(ProbeVerdict.PROJECTION_PENDING)
 
         fun failing(e: WriterException): (AgentKeyTag, String) -> PrintResult = { _, _ -> throw e }
-    }
-}
-
-/** Everything logged, through Quartz's sink and on stdout/stderr, while [block] runs. */
-suspend fun <T> capturingLogs(block: suspend () -> T): Pair<T, String> {
-    val lines = StringBuilder()
-    val oldSink = Log.sink
-    val oldOut = System.out
-    val oldErr = System.err
-    val stream = ByteArrayOutputStream()
-    Log.sink = LogSink { level, tag, message, throwable -> lines.append("$level [$tag] $message ${throwable?.toString().orEmpty()}\n") }
-    System.setOut(PrintStream(stream, true))
-    System.setErr(PrintStream(stream, true))
-    try {
-        val result = block()
-        return result to (lines.toString() + stream.toString())
-    } finally {
-        Log.sink = oldSink
-        System.setOut(oldOut)
-        System.setErr(oldErr)
     }
 }
 

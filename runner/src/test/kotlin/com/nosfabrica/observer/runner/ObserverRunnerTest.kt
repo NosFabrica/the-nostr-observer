@@ -1,5 +1,7 @@
 package com.nosfabrica.observer.runner
 
+import com.nosfabrica.assistant.core.KeyFailure
+import com.nosfabrica.assistant.core.capturingLogs
 import com.nosfabrica.observer.frontpage.WriterException
 import com.nosfabrica.observer.frontpage.WriterFailure
 import com.vitorpamplona.quartz.nip01Core.core.Event
@@ -275,28 +277,24 @@ class ObserverRunnerTest : RunnerWorld() {
         }
 
     @Test
-    fun anOwnerTheServerNoLongerHasIsAnOutcome() =
+    fun anOwnerTheKeyViewNoLongerHasIsAnOutcome() =
         runTest {
             world()
             schedule()
-            val gone =
-                ObserverRunner(
-                    api =
-                        object : InternalApi by api {
-                            override suspend fun decrypt(
-                                owner: HexKey,
-                                event: Event,
-                                schedule: Event?,
-                            ): String = throw NoAssistantException(owner)
-                        },
-                    nostr = RunnerNostr(relays, setOf(index), null),
-                    blossom = BlossomHttp(blossom.client),
-                    printer = printer,
-                    records = records,
-                    models = { listedModels },
-                    now = { now },
-                )
-            assertEquals(RunOutcome.NO_ASSISTANT, gone.poll()[owner.pubKey])
+            val gone = RecordingAssistant(mapOf(stranger.pubKey to strangersAssistant), { clock })
+            assertEquals(RunOutcome.NO_ASSISTANT, runnerWith(api = gone).poll()[owner.pubKey])
+            assertTrue(printer.calls.isEmpty())
+        }
+
+    @Test
+    fun anAssistantKeyThatDoesNotOpenIsAnOutcome() =
+        runTest {
+            world()
+            schedule()
+            for (failure in listOf(KeyFailure.NSEC_UNREADABLE, KeyFailure.NSEC_MISMATCH)) {
+                val broken = RecordingAssistant(mapOf(owner.pubKey to assistant), { clock }, mapOf(owner.pubKey to failure))
+                assertEquals(RunOutcome.KEY_UNREADABLE, runnerWith(api = broken).poll()[owner.pubKey], failure.name)
+            }
             assertTrue(printer.calls.isEmpty())
         }
 
@@ -471,10 +469,7 @@ class ObserverRunnerTest : RunnerWorld() {
                         return this@ObserverRunnerTest.relays.fetch(relays, filter)
                     }
                 }
-            val r =
-                ObserverRunner(api, RunnerNostr(editing, setOf(index), null), BlossomHttp(blossom.client), printer, records, {
-                    listedModels
-                }, now = { now })
+            val r = runnerWith(access = editing)
             assertEquals(RunOutcome.SCHEDULE_CHANGED, r.poll()[owner.pubKey])
             assertTrue(printer.calls.isEmpty())
             assertEquals(OwnRun.NONE, records.ownRun(owner.pubKey, six))

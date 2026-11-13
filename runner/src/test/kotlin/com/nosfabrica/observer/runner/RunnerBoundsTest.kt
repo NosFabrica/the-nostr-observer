@@ -1,22 +1,18 @@
 package com.nosfabrica.observer.runner
 
 import com.vitorpamplona.quartz.nip01Core.core.Event
-import com.vitorpamplona.quartz.nip01Core.core.HexKey
 import com.vitorpamplona.quartz.nip01Core.relay.filters.Filter
 import com.vitorpamplona.quartz.nip01Core.relay.normalizer.NormalizedRelayUrl
 import com.vitorpamplona.quartz.nip5aStaticWebsites.observer.ObserverSite
 import com.vitorpamplona.quartz.nipFAAgentKeys.tags.AgentKeyTag
 import com.vitorpamplona.quartz.nipFBScheduledTasks.ScheduledTask
-import com.vitorpamplona.quartz.nipFBScheduledTasks.ScheduledTaskClaims.OwnRun
 import com.vitorpamplona.quartz.nipFBScheduledTasks.ScheduledTaskEvent
-import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withTimeoutOrNull
 import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -56,46 +52,6 @@ class RunnerBoundsTest : RunnerWorld() {
             // It answered for nobody: no quorum on the owner's relays, nothing spent.
             assertEquals(RunOutcome.NO_QUORUM, outcomes[owner.pubKey])
             assertTrue(printer.calls.isEmpty())
-        }
-
-    @Test
-    fun aTokenRefusedForOneOwnerLetsTheOthersRunningPrintFinishAndKeepTheirPaper() =
-        runTest {
-            world()
-            schedule()
-            secondOwner()
-            val printing = CompletableDeferred<Unit>()
-            val release = CompletableDeferred<Unit>()
-            // The owner's print is under way (it may have paid) when the server refuses the token for the stranger.
-            val slow =
-                PaperPrinter { key, model, who, name, options ->
-                    printing.complete(Unit)
-                    release.await()
-                    printer.print(key, model, who, name, options)
-                }
-            val refusing =
-                object : InternalApi by api {
-                    override suspend fun decrypt(
-                        owner: HexKey,
-                        event: Event,
-                        schedule: Event?,
-                    ): String {
-                        if (owner == stranger.pubKey) {
-                            printing.await()
-                            release.complete(Unit)
-                            throw RunnerTokenRejectedException()
-                        }
-                        return api.decrypt(owner, event, schedule)
-                    }
-                }
-            val dir = Files.createTempDirectory("pending").toFile()
-            blossom.down = true
-            val worker = runnerWith(printer = slow, api = refusing, pending = PendingPapers(dir))
-            assertFailsWith<RunnerTokenRejectedException> { worker.poll() }
-            // The print finished, is ended (never paid for twice), and its paper is kept on disk.
-            assertEquals(1, printer.calls.size)
-            assertEquals(OwnRun.ENDED, records.ownRun(owner.pubKey, six))
-            assertEquals(listOf(six), PendingPapers(dir).of(owner.pubKey).map { it.occurrence })
         }
 
     @Test
