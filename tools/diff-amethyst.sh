@@ -15,6 +15,7 @@
 #   ObserverSiteIO's AccountObserverSiteIO, FrontPageEditionStore, and the FrontPagePrinter
 #   class (only its account-free declarations are here). The runner (runner/) is this repo's
 #   printer and its ObserverSiteIO.
+#   The ObserverTwoSitesTest case for observerSitesOf (FrontPageMorning's ObserverSites).
 # Deliberately different:
 #   ObserverPublisher takes `forReader`, for a runner's site (to be upstreamed).
 #   Platform.kt stands in for the bits of Amethyst's commons the engine imports.

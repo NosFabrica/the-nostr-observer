@@ -20,7 +20,12 @@
  */
 package com.nosfabrica.observer.frontpage
 
+import com.vitorpamplona.quartz.nip01Core.core.HexKey
+import com.vitorpamplona.quartz.nip5aStaticWebsites.observer.ObserverParams
 import com.vitorpamplona.quartz.nipFAAgentKeys.tags.AgentKeyTag
+import com.vitorpamplona.quartz.nipFBScheduledTasks.CronExpression
+import com.vitorpamplona.quartz.nipFBScheduledTasks.CronZone
+import com.vitorpamplona.quartz.nipFBScheduledTasks.ScheduledTask
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
@@ -33,7 +38,9 @@ import kotlin.concurrent.Volatile
  * The account-free half of Amethyst's FrontPagePrinter.kt. The `FrontPagePrinter` class itself
  * (one account's print, its local store, notifications, the per-device morning claim) is the
  * app's, and is not ported: the Assistant's worker (`runner/`) is this repo's printer.
- * [FrontPageGate] and [FrontPageRun] come from Amethyst's FrontPageViewModel.kt.
+ * [FrontPageGate] and [FrontPageRun] come from Amethyst's FrontPageViewModel.kt. Not ported
+ * either: `unattendedBlocker` (a device's signer), `FrontPageNotifier`, `observerSitesOf` (its
+ * `ObserverSites` is FrontPageMorning's), `FrontPageSchedule` and `FrontPagePrinters`.
  */
 
 /** What stands between the reader and a paper, one thing at a time. */
@@ -125,6 +132,48 @@ fun gateOf(
         else -> FrontPageGate.READY
     }
 
+/** Opening The Observer reads both sites again, unless they were read less than this long ago (seconds): a rotation or a tab switch isn't news. */
+const val SITE_REREAD_ON_OPEN_SECONDS = 60L
+
+/** After an occurrence is due, the open app reads both sites again this long after (seconds): the paper of a print that went well is out by then. */
+const val SITE_REREAD_AFTER_DUE_SECONDS = 20 * 60L
+
+/** And once more this long before a missing paper is called missed ([ScheduledTask.GRACE_SECONDS]), so the warning reads what is there. */
+const val SITE_REREAD_BEFORE_MISSED_SECONDS = 10 * 60L
+
+/** The longest single sleep before a re-read: the wall clock is looked at again after it. */
+const val SITE_REREAD_STEP_SECONDS = 10 * 60L
+
+/**
+ * When, strictly after [now], the open app next reads both Observer sites again for [expression]
+ * on [zone]'s clock: [SITE_REREAD_AFTER_DUE_SECONDS] after an occurrence, and
+ * [SITE_REREAD_BEFORE_MISSED_SECONDS] before its missed-run warning could show. Null when the
+ * schedule has no occurrence around [now].
+ */
+fun nextSiteReread(
+    expression: CronExpression,
+    zone: CronZone,
+    now: Long,
+): Long? {
+    val occurrences = listOfNotNull(expression.lastAtOrBefore(now, zone), expression.nextAfter(now, zone))
+    return occurrences
+        .flatMap { due -> listOf(due + SITE_REREAD_AFTER_DUE_SECONDS, due + ScheduledTask.GRACE_SECONDS - SITE_REREAD_BEFORE_MISSED_SECONDS) }
+        .filter { it > now }
+        .minOrNull()
+}
+
+/** The site the runner [runner] publishes for the reader, as last read. */
+class RunnerSiteView(
+    val runner: HexKey,
+    val view: ObserverSiteView,
+)
+
+/** The key to print with: the schedule's `key` param among [keys] ([ObserverParams.key]), else NIP-FA's default (the first). */
+fun scheduledKey(
+    task: ScheduledTask?,
+    keys: List<AgentKeyTag>,
+): AgentKeyTag? = task?.let { ObserverParams.key(it, keys) } ?: keys.firstOrNull()
+
 /** How the last publish to the reader's Observer site went. */
 sealed interface ObserverStatus {
     data object Idle : ObserverStatus
@@ -163,7 +212,10 @@ class PrintCancelled : CancellationException("The reader cancelled the print")
  * ([runCancellable]): the reader's, or the morning's that a scheduled run holds the slot for from
  * before its claim to its end.
  */
-class PrintSlot {
+class PrintSlot(
+    /** Told each time the slot is taken (true) and let go (false), in that order. */
+    private val onHeld: (Boolean) -> Unit = {},
+) {
     private val mutex = Mutex()
 
     @Volatile
@@ -172,9 +224,17 @@ class PrintSlot {
     /** Whether a print (or a scheduled run on its way to one) holds the slot. */
     val isHeld: Boolean get() = mutex.isLocked
 
-    fun tryHold(): Boolean = mutex.tryLock()
+    fun tryHold(): Boolean {
+        if (!mutex.tryLock()) return false
+        onHeld(true)
+        return true
+    }
 
-    fun release() = mutex.unlock()
+    fun release() {
+        // Said before the unlock, so the next holder's true always comes after this false.
+        onHeld(false)
+        mutex.unlock()
+    }
 
     /**
      * [body] as its own job, so [cancel] stops it alone: then [cancelled] comes back and the

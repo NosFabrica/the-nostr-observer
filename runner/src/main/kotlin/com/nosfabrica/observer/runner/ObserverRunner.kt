@@ -65,6 +65,12 @@ enum class RunOutcome {
     /** This worker already ran the occurrence (and may have paid for it). */
     ATTEMPTED,
 
+    /**
+     * A device of the owner holds a live claim on the occurrence: it may be printing it now. Not
+     * run, nothing spent; a later poll runs it only once that claim is stale and unfinished.
+     */
+    CLAIMED_BY_DEVICE,
+
     /** The occurrence's paper is on the owner's site or the Assistant's. */
     ALREADY_PRINTED,
 
@@ -413,6 +419,7 @@ class ObserverRunner(
             ScheduledTaskClaims.RunnerVerdict.NOT_DUE -> RunOutcome.NOT_DUE
             ScheduledTaskClaims.RunnerVerdict.ALREADY_DONE -> RunOutcome.ALREADY_PRINTED
             ScheduledTaskClaims.RunnerVerdict.ATTEMPTED_HERE -> RunOutcome.ATTEMPTED
+            ScheduledTaskClaims.RunnerVerdict.CLAIMED_BY_DEVICE -> RunOutcome.CLAIMED_BY_DEVICE
             ScheduledTaskClaims.RunnerVerdict.RUN -> RunOutcome.ERROR
         }
 

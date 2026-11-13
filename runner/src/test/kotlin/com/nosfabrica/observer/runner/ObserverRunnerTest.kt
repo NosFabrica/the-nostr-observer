@@ -87,7 +87,7 @@ class ObserverRunnerTest {
         var t =
             ScheduledTask
                 .create("observer", "observer", "0 6 * * *", "Europe/London", setAt = 0)
-                .withRunner(assistant.pubKey)
+                .withRunner(assistant.pubKey, 0)
         if (model != null) t = t.withParam("model", listOf(model))
         if (key != null) t = t.withParam("key", listOf(key.url, key.key.takeLast(4)))
         return t

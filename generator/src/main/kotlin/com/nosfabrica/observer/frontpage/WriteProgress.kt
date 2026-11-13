@@ -76,6 +76,9 @@ private val SPACE = Regex("\\s+")
 /** How far back [latestSection] looks for a heading still being closed. */
 private const val SECTION_WINDOW = 4_000
 
+/** The page text that must arrive between two [latestSection] scans of a stream. */
+const val SECTION_SCAN_CHARS = 200
+
 /** A section's name as the progress line shows it, at most this long. */
 const val SECTION_MAX_CHARS = 80
 
@@ -133,6 +136,10 @@ class WriteTracker(
     private val page = StringBuilder()
     private var heard = false
 
+    /** The page's length when [latestSection] last ran, and whether a tag has closed since. */
+    private var scannedAt = 0
+    private var closedSince = false
+
     fun on(event: WriterEvent): PrintStep.Write? =
         when (event) {
             is WriterEvent.Sent -> {
@@ -172,8 +179,12 @@ class WriteTracker(
             log.add(PrintLogKind.WRITING)
             shown = shown.copy(phase = WritePhase.WRITING)
         }
-        // A heading closes on a '>': no new section can have ended in a chunk without one.
-        if (event.delta.contains('>')) {
+        // A heading closes on a '>': no new section can have ended in a chunk without one. The
+        // regexes run once per [SECTION_SCAN_CHARS] of page at most, not on every chunk.
+        if (event.delta.contains('>')) closedSince = true
+        if (closedSince && page.length - scannedAt >= SECTION_SCAN_CHARS) {
+            closedSince = false
+            scannedAt = page.length
             val section = latestSection(page)
             if (section != null && section != step.section) {
                 log.add(PrintLogKind.SECTION, detail = section)
@@ -245,6 +256,11 @@ data class PrintLogEntry(
 data class PrintLog(
     val entries: List<PrintLogEntry> = emptyList(),
     val reasoning: String = "",
+    /**
+     * How many characters of reasoning have arrived in all, as published: it keeps growing after
+     * [reasoning] is capped at [PrintLogBook.REASONING_KEPT], so a view that follows the end keys on it.
+     */
+    val reasoningReceived: Long = 0,
 )
 
 /** Where a print writes its log lines. */
@@ -282,10 +298,12 @@ class PrintLogBook(
     // Written by one stream at a time (a print's calls run one after another).
     private val reasoning = StringBuilder()
     private var unpublished = 0
+    private var received = 0L
 
     fun start(asked: String) {
         reasoning.clear()
         unpublished = 0
+        received = 0
         _log.value = PrintLog(listOf(PrintLogEntry(now(), PrintLogKind.ASKED, asked)))
     }
 
@@ -302,6 +320,7 @@ class PrintLogBook(
         reasoning.append(delta)
         if (reasoning.length > REASONING_KEPT * 2) reasoning.deleteRange(0, reasoning.length - REASONING_KEPT)
         unpublished += delta.length
+        received += delta.length
         if (unpublished >= REASONING_STEP) flushReasoning()
     }
 
@@ -309,7 +328,8 @@ class PrintLogBook(
         if (unpublished == 0) return
         unpublished = 0
         val tail = if (reasoning.length > REASONING_KEPT) reasoning.substring(reasoning.length - REASONING_KEPT) else reasoning.toString()
-        _log.update { it.copy(reasoning = tail) }
+        val total = received
+        _log.update { it.copy(reasoning = tail, reasoningReceived = total) }
     }
 
     companion object {
