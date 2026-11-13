@@ -91,6 +91,8 @@ class AssistantSiteIO(
                 expiration = at + AUTH_SECONDS,
                 createdAt = at,
             )
+        // The server refuses a 24242 with a `p` naming the Assistant (nostr-sdk would drop it): never send one.
+        check(template.tags.none { it.size > 1 && it[0] == "p" && it[1] == assistant }) { "an upload authorisation naming the Assistant" }
         val signed = api.sign(owner, template)
         if (signed.pubKey != assistant ||
             signed.kind != BlossomAuthorizationEvent.KIND

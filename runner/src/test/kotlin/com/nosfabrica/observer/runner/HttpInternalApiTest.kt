@@ -52,7 +52,7 @@ class HttpInternalApiTest {
                             .build()
                     },
                 ).build()
-        return HttpInternalApi("http://brainstorm-server:8000/", "runner-token", client)
+        return HttpInternalApi("http://brainstorm-server:8001/", "runner-token", client)
     }
 
     @Test
@@ -146,4 +146,61 @@ class HttpInternalApiTest {
                 ).sign("a".repeat(64), EventTemplate<Event>(1_000, 24242, emptyArray(), "Upload"))
             }
         }
+
+    @Test
+    fun theAssistantsKeysAreAskedBesideTheScheduleBeingPrinted() =
+        runTest {
+            val owner = newSigner()
+            val assistant = newSigner()
+            val schedule =
+                owner.signed(
+                    34817,
+                    arrayOf(arrayOf("d", "observer"), arrayOf("p", assistant.pubKey)),
+                    "ciphertext",
+                    createdAt = 100,
+                )
+            val keys = assistant.signed(12000, emptyArray(), "keys-ciphertext", createdAt = 90)
+            api(Answer(200, """{"code":200,"data":{"plaintext":"[]"},"message":""}""")).decrypt(owner.pubKey, keys, schedule)
+            val (request, body) = seen.single()
+            // No trailing slash: the server 404s one.
+            assertEquals("/internal/observerRunner/decrypt", request.url.encodedPath)
+            val sent = Json.parseToJsonElement(body).jsonObject
+            assertEquals(setOf("owner", "event", "schedule"), sent.keys)
+            assertEquals(keys.id, sent["event"]!!.jsonObject["id"]!!.jsonPrimitive.content)
+            val sentSchedule = sent["schedule"]!!.jsonObject
+            assertEquals(schedule.id, sentSchedule["id"]!!.jsonPrimitive.content)
+            assertEquals(schedule.sig, sentSchedule["sig"]!!.jsonPrimitive.content)
+        }
+
+    @Test
+    fun theWorkerCallsTheInternalPortWithALongToken() {
+        val token = "0123456789abcdef0123456789abcdef"
+
+        fun config(vararg env: Pair<String, String>) = RunnerConfig.fromEnv(mapOf("OBSERVER_RUNNER_TOKEN" to token, *env))
+        assertEquals("http://brainstorm-server:8001", config("BRAINSTORM_SERVER_URL" to "http://brainstorm-server").serverUrl)
+        assertEquals("http://brainstorm-server:8001", config("BRAINSTORM_SERVER_URL" to "http://brainstorm-server:8001/").serverUrl)
+        assertEquals(
+            "http://brainstorm-server:9001",
+            config("BRAINSTORM_SERVER_URL" to "http://brainstorm-server", "OBSERVER_RUNNER_PORT" to "9001").serverUrl,
+        )
+        // The public port answers 404 to every /internal/ path: refused at startup, not on every call.
+        assertFailsWith<IllegalArgumentException> { config("BRAINSTORM_SERVER_URL" to "http://brainstorm-server:8000") }
+        assertFailsWith<IllegalArgumentException> {
+            config(
+                "BRAINSTORM_SERVER_URL" to "http://brainstorm-server",
+                "OBSERVER_RUNNER_PORT" to "8000",
+            )
+        }
+        assertFailsWith<IllegalArgumentException> {
+            config(
+                "BRAINSTORM_SERVER_URL" to "http://brainstorm-server:8001",
+                "OBSERVER_RUNNER_PORT" to "9001",
+            )
+        }
+        assertFailsWith<IllegalArgumentException> { config("BRAINSTORM_SERVER_URL" to "http://brainstorm-server/api") }
+        // A token the server would refuse to serve with.
+        assertFailsWith<IllegalArgumentException> {
+            RunnerConfig.fromEnv(mapOf("OBSERVER_RUNNER_TOKEN" to "short", "BRAINSTORM_SERVER_URL" to "http://brainstorm-server"))
+        }
+    }
 }

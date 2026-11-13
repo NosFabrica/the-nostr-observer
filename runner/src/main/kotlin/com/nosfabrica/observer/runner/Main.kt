@@ -17,6 +17,7 @@ import kotlinx.coroutines.runBlocking
 import okhttp3.OkHttpClient
 import java.io.File
 import java.io.IOException
+import java.net.URI
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
@@ -39,15 +40,62 @@ class RunnerConfig(
     companion object {
         const val DEFAULT_SEARCH_RELAY = "wss://search.brainstorm.world"
 
+        /** What brainstorm_server requires of `OBSERVER_RUNNER_TOKEN` before it serves the internal API at all. */
+        const val MIN_TOKEN_LENGTH = 32
+
+        /** brainstorm_server's internal API port (its `OBSERVER_RUNNER_PORT`). */
+        const val DEFAULT_INTERNAL_PORT = 8001
+
+        /** The public API's port, which answers 404 to every `/internal/` path. */
+        const val PUBLIC_PORT = 8000
+
+        /**
+         * The internal API's base URL: [url]'s scheme and host, on [port] (else the URL's own
+         * port, else [DEFAULT_INTERNAL_PORT]), with no path and no trailing slash. The public port
+         * is refused: there `/internal/` is always a 404.
+         */
+        fun internalBase(
+            url: String,
+            port: String?,
+        ): String {
+            val uri =
+                try {
+                    URI(url.trim().trimEnd('/'))
+                } catch (e: Exception) {
+                    throw IllegalArgumentException("BRAINSTORM_SERVER_URL is not a URL")
+                }
+            val scheme = uri.scheme?.lowercase()
+            require(scheme == "http" || scheme == "https") { "BRAINSTORM_SERVER_URL must be http or https" }
+            val host = uri.host ?: throw IllegalArgumentException("BRAINSTORM_SERVER_URL has no host")
+            require(uri.rawPath.isNullOrEmpty()) { "BRAINSTORM_SERVER_URL takes no path: the worker adds /internal/observerRunner" }
+            val named =
+                port?.let {
+                    it.toIntOrNull()?.takeIf { p -> p in 1..65535 }
+                        ?: throw IllegalArgumentException("OBSERVER_RUNNER_PORT is not a port")
+                }
+            require(named == null || uri.port == -1 || uri.port == named) { "BRAINSTORM_SERVER_URL's port and OBSERVER_RUNNER_PORT differ" }
+            val chosen = named ?: uri.port.takeIf { it != -1 } ?: DEFAULT_INTERNAL_PORT
+            require(chosen != PUBLIC_PORT) {
+                "port $PUBLIC_PORT is the public API's; the internal API is on OBSERVER_RUNNER_PORT ($DEFAULT_INTERNAL_PORT by default)"
+            }
+            val shownHost = if (':' in host && !host.startsWith("[")) "[$host]" else host
+            return "$scheme://$shownHost:$chosen"
+        }
+
         /** A print's budget and the publish after it: the pod's terminationGracePeriodSeconds must be longer. */
         const val DEFAULT_GRACE_SECONDS = ObserverRunner.PRINT_TIMEOUT_SECONDS + 60
 
         fun fromEnv(env: Map<String, String> = System.getenv()): RunnerConfig {
             fun need(name: String) = env[name]?.trim()?.takeIf { it.isNotEmpty() } ?: throw IllegalArgumentException("$name is not set")
             val search = env["OBSERVER_SEARCH_RELAY"]?.trim()?.takeIf { it.isNotEmpty() } ?: DEFAULT_SEARCH_RELAY
+            val token = need("OBSERVER_RUNNER_TOKEN")
+            // The server leaves its internal API off with a shorter token, and every call would be a 404.
+            require(
+                token.length >= MIN_TOKEN_LENGTH,
+            ) { "OBSERVER_RUNNER_TOKEN must be at least $MIN_TOKEN_LENGTH characters (openssl rand -hex 32)" }
             return RunnerConfig(
-                serverUrl = need("BRAINSTORM_SERVER_URL"),
-                token = need("OBSERVER_RUNNER_TOKEN"),
+                serverUrl = internalBase(need("BRAINSTORM_SERVER_URL"), env["OBSERVER_RUNNER_PORT"]?.trim()?.takeIf { it.isNotEmpty() }),
+                token = token,
                 pollSeconds = env["OBSERVER_RUNNER_POLL_SECONDS"]?.toLongOrNull()?.coerceAtLeast(30) ?: 300,
                 indexRelays =
                     env["OBSERVER_INDEX_RELAYS"]
