@@ -24,7 +24,10 @@ repo.
   paper with Claude Code as the writer and publishes it as a claude.ai artifact;
   `observer-pages` deploys chosen editions to Vercel. Node, tested in CI with
   `node --test ".claude/skills/*/test/*.test.mjs"` and a fake relay (no network). Their
-  `reference/` brief and stylesheet are edited in place now.
+  `reference/` brief and stylesheet are edited in place now (`tools/sync-skill.sh` and its
+  `skill-brief.patch` went with the server's system prompt). The skill's links are Brainstorm
+  pages (`brainstorm.world/e/` and `/p/`, an `naddr` for an addressable event), decoded and
+  checked against the corpus by `scripts/validate.mjs`; its Kitchen desk reads Nostr recipes.
 
 The first design's web app (sign-in, NosFabrica's own Anthropic key, a bunker countersigning
 the publish, its own SQLite store) was removed on 2026-11-12. It was never deployed. Its history
