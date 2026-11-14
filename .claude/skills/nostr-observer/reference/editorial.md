@@ -1,7 +1,8 @@
 <!--
-  GENERATED FILE — do not edit.
-  Source: generator/src/main/resources/system-prompt.md
-  Regenerate: tools/sync-skill.sh
+  The skill's own copy of the editorial brief. It was generated from the old server's
+  system prompt until that server was removed (2026-11-12); it is now edited here. The
+  apps' engine carries its own copy (Amethyst's EditorialBrief.kt, Brainstorm's
+  client/src/lib/frontPage/editorial.md).
 
   Four corrections for this harness, which override the text below wherever
   they disagree:

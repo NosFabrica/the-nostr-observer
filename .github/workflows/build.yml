@@ -1,21 +1,58 @@
 name: build
 
-# Phase 1 said the adversarial fixture runs in CI from the first commit. It did
-# not: the fixture and the tests existed and nothing ran them on push, which is
-# the same as not having them the first time somebody lands a change without
-# running `./gradlew build` locally.
+# Every branch push builds, tests and pushes the Observer service's image, as brainstorm_server's
+# CI does: staging pins one of those tags (brainstorm-k8s `docs/staging-workflow.md`).
 on:
+  workflow_dispatch:
   push:
-    branches: [main]
-  pull_request:
+    branches:
+      - '**'
+    tags:
+      - 'v*'
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+  # The repo also holds the engine and the skills; the image is the service alone.
+  IMAGE_NAME: ${{ github.repository }}/observer-service
 
 jobs:
   build:
+    name: Build and test
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+
+    # The Postgres the service's key-read and store tests run against (its TestPostgres reads
+    # TEST_DATABASE_URL when it can't start a cluster of its own). Nothing else in the build
+    # talks to a network service.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: observer_test
+          POSTGRES_PASSWORD: observer_test
+          POSTGRES_DB: observer_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U observer_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      TEST_DATABASE_URL: jdbc:postgresql://localhost:5432/observer_test
+      TEST_DATABASE_USER: observer_test
+      TEST_DATABASE_PASSWORD: observer_test
+
     steps:
       # Node 20 is gone from the runners; every action here is pinned to a
-      # major that ships a node24 entry point, so nothing has to be forced onto
-      # a runtime it was not built for.
+      # major that ships a node24 entry point.
       - uses: actions/checkout@v7
 
       - uses: actions/setup-java@v5
@@ -26,15 +63,15 @@ jobs:
       - uses: gradle/actions/setup-gradle@v6
 
       # `build` is compile + test + spotlessCheck, so formatting alone fails
-      # here exactly as it does in the pre-commit hook.
+      # here exactly as it does in the pre-commit hook. Nothing in it talks to
+      # a model, a relay or a Blossom server: every test passes with no network.
       - name: Build, test and check formatting
         run: ./gradlew build --no-daemon --console=plain
 
-      # The Claude Code skill is Node, not Kotlin, so gradle never sees it. Its
-      # tests use a fake relay that reproduces the hazards in AGENTS.md — the
-      # AUTH challenge sent before an answer, the subscription that says
-      # nothing — rather than dialling search.brainstorm.world, so this step holds to
-      # the same no-network rule as the one below.
+      # The Claude Code skills are Node, not Kotlin, so gradle never sees them. Their
+      # tests use a fake relay (the AUTH challenge sent before an answer, the
+      # subscription that says nothing) rather than dialling search.brainstorm.world,
+      # so this step holds to the same no-network rule as the build.
       - uses: actions/setup-node@v5
         with:
           node-version: '22'
@@ -42,24 +79,8 @@ jobs:
       - name: Test the Claude Code skills
         run: node --test ".claude/skills/*/test/*.test.mjs"
 
-      # `reference/` is generated. If someone edits system-prompt.md or
-      # house.css and does not re-run the sync, the skill ships yesterday's
-      # brief — silently, because nothing else reads those copies.
-      - name: Check the skill's generated files are current
-        run: |
-          ./tools/sync-skill.sh
-          git diff --exit-code -- .claude/skills/nostr-observer/reference \
-            || { echo "::error::.claude/skills/nostr-observer/reference is stale - run tools/sync-skill.sh"; exit 1; }
-
-      # Nothing in this job talks to a relay or to the model API. Every test is
-      # meant to pass with no network at all, and a test that quietly needed one
-      # would stop running the first week CI was busy.
-      #
-      # `warn`, not `error`: the step runs on failure so a red test still hands
-      # back its report, and when the build dies before `test` there is nothing
-      # to upload. Failing here in that case only buries the real error under a
-      # louder one about a missing file, which is how the wrapper jar being
-      # absent first showed up.
+      # `warn`, not `error`: when the build dies before `test` there is nothing
+      # to upload, and failing here would bury the real error.
       - name: Publish test results
         if: always()
         uses: actions/upload-artifact@v7
@@ -67,3 +88,62 @@ jobs:
           name: test-results
           path: '**/build/test-results/test/*.xml'
           if-no-files-found: warn
+
+  image:
+    name: Build and push the service image
+    needs: [build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Lint Dockerfile
+        uses: hadolint/hadolint-action@v3.3.0
+        with:
+          dockerfile: service/Dockerfile
+          failure-threshold: warning
+
+      - name: Compute lowercase image name
+        id: img
+        run: |
+          echo "name=$(echo '${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: |
+            ${{ steps.img.outputs.name }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=tag
+            type=semver,pattern={{version}}
+            type=sha,format=short,prefix=sha-
+            type=raw,value=latest,enable=${{ github.ref == format('refs/heads/{0}', 'main') }}
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # The context is the repository root: the service builds with the engine beside it.
+      - name: Build and push image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: service/Dockerfile
+          push: true
+          provenance: false
+          platforms: linux/amd64
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          annotations: ${{ steps.meta.outputs.annotations }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

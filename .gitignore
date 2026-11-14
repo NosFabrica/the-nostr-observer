@@ -21,16 +21,11 @@ hs_err_pid*
 local.properties
 *.local.conf
 
-# Runtime data
-data/
-# Printed papers plus corpus/digest (every run)
+# Local dry runs of the CLI, and the skill's printed papers plus corpus/digest
 editions/
-# The public shelf — selected papers only, staged for Vercel
+# observer-pages: the public shelf, staged for Vercel
 dist/
 .vercel/
-*.db
-*.sqlite
-*.sqlite3
 
 # OS
 .DS_Store

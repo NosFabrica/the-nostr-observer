@@ -163,6 +163,7 @@ caption and alt, and the run says which.
 
 ## Editing it
 
-`reference/editorial.md` and `reference/house.css` are **generated**. Edit
-`generator/src/main/resources/system-prompt.md` or `house.css` at the repository
-root and run `tools/sync-skill.sh`.
+`reference/editorial.md` and `reference/house.css` are edited here. They used to be
+generated from the old server's system prompt, which was removed on 2026-11-12. The apps'
+engine keeps its own copy of the brief (Amethyst's `EditorialBrief.kt`, Brainstorm's
+`client/src/lib/frontPage/editorial.md`); a change that should reach both goes in both.

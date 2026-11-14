@@ -1,0 +1,15 @@
+root = true
+
+[*]
+charset = utf-8
+trim_trailing_whitespace = true
+
+# The engine is a port of Amethyst's commons/frontpage and is formatted the way Amethyst formats
+# it (Amethyst's .editorconfig), so the two copies diff cleanly: tools/diff-amethyst.sh. (ktlint is Amethyst's
+# version too, in gradle/libs.versions.toml.)
+[generator/src/{main,test}/kotlin/com/nosfabrica/observer/frontpage/*.kt]
+max_line_length = 5000
+ij_kotlin_allow_trailing_comma = true
+ij_kotlin_allow_trailing_comma_on_call_site = true
+# Amethyst's FrontPageEditions.kt also holds the edition store, which isn't ported.
+ktlint_standard_filename = disabled
