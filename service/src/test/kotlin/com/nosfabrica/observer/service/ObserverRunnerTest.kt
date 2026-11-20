@@ -256,6 +256,16 @@ class ObserverRunnerTest : RunnerWorld() {
         }
 
     @Test
+    fun aWeatherPlaceIsUnderstoodAndRun() =
+        runTest {
+            world()
+            // The apps draw the weather over the paper they show; the Assistant prints without it.
+            schedule(task().withParam("place", listOf("Lisboa, Portugal", "38.72", "-9.13", "metric")))
+            runner.run(owner.pubKey)
+            assertEquals(1, printer.calls.size)
+        }
+
+    @Test
     fun aPausedScheduleIsNotRun() =
         runTest {
             world()
