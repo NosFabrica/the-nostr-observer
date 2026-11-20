@@ -3,6 +3,7 @@ package com.nosfabrica.observer.service
 import com.nosfabrica.observer.frontpage.AgentModel
 import com.nosfabrica.observer.frontpage.EditionClock
 import com.nosfabrica.observer.frontpage.EditionContext
+import com.nosfabrica.observer.frontpage.FrontPageParams
 import com.nosfabrica.observer.frontpage.FrontPagePress
 import com.nosfabrica.observer.frontpage.IRoleBasedHttpClientBuilder
 import com.nosfabrica.observer.frontpage.ObserverPage
@@ -117,6 +118,13 @@ enum class RunOutcome {
 
     /** A param this code doesn't understand: NIP-FB says not to run it. */
     UNKNOWN_PARAMS,
+
+    /**
+     * The owner turned publishing off (`["param", "publish", "no"]`): the Assistant delivers only
+     * through its public site, so it doesn't print, and papers waiting to go out stay unsent. Not
+     * final: the owner can turn it back on within the occurrence.
+     */
+    PUBLISH_OFF,
     UNKNOWN_ZONE,
     NOT_RUNNABLE,
     NOT_DUE,
@@ -572,11 +580,15 @@ class ObserverRunner(
         suspend fun servers() = serversRead ?: ownerServers(owner, ownerRelays).also { serversRead = it }
 
         suspend fun assistantSite() = AssistantSiteIO(owner, pair.assistant, api, nostr, assistantRelays, servers(), blossom, now)
+        val task = ScheduledTask(event.tags, decryptTags(pair, event))
+        // The owner turned publishing off (the schedule's `publish` param, set in any of their
+        // apps): this service's only way to deliver a paper is the Assistant's public site, so it
+        // neither prints nor sends out a paper it printed earlier.
+        if (!FrontPageParams.publishing(task).publish) return report(owner, RunOutcome.PUBLISH_OFF)
         // Papers already paid for go out first, before anything else is decided.
         waiting(owner).takeIf { it.isNotEmpty() }?.let { publishPending(pair, it, assistantSite()) }
 
-        val task = ScheduledTask(event.tags, decryptTags(pair, event))
-        if (!ObserverParams.understands(task)) return report(owner, RunOutcome.UNKNOWN_PARAMS)
+        if (!FrontPageParams.understands(task)) return report(owner, RunOutcome.UNKNOWN_PARAMS)
         val zone = zoneOf(task.tz) ?: return report(owner, RunOutcome.UNKNOWN_ZONE)
         val at = now()
 

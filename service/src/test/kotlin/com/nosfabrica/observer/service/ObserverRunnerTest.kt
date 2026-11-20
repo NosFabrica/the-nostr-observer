@@ -238,6 +238,24 @@ class ObserverRunnerTest : RunnerWorld() {
         }
 
     @Test
+    fun publishingOffIsNotRun() =
+        runTest {
+            world()
+            schedule(task().withParam("publish", listOf("no")))
+            assertEquals(RunOutcome.PUBLISH_OFF, runner.run(owner.pubKey))
+            assertTrue(printer.calls.isEmpty())
+        }
+
+    @Test
+    fun publishingConfirmedInAnAppIsUnderstoodAndRun() =
+        runTest {
+            world()
+            schedule(task().withParam("publish", listOf("yes")))
+            runner.run(owner.pubKey)
+            assertEquals(1, printer.calls.size)
+        }
+
+    @Test
     fun aPausedScheduleIsNotRun() =
         runTest {
             world()
