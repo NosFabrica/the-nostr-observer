@@ -3,6 +3,7 @@ package com.nosfabrica.observer.service
 import com.nosfabrica.observer.frontpage.AgentModel
 import com.nosfabrica.observer.frontpage.EditionClock
 import com.nosfabrica.observer.frontpage.EditionContext
+import com.nosfabrica.observer.frontpage.FrontPageParams
 import com.nosfabrica.observer.frontpage.FrontPagePress
 import com.nosfabrica.observer.frontpage.IRoleBasedHttpClientBuilder
 import com.nosfabrica.observer.frontpage.ObserverPage
@@ -117,6 +118,13 @@ enum class RunOutcome {
 
     /** A param this code doesn't understand: NIP-FB says not to run it. */
     UNKNOWN_PARAMS,
+
+    /**
+     * The owner turned publishing off (`["param", "publish", "no"]`): the Assistant delivers only
+     * through its public site, so it doesn't print, and papers waiting to go out stay unsent. Not
+     * final: the owner can turn it back on within the occurrence.
+     */
+    PUBLISH_OFF,
     UNKNOWN_ZONE,
     NOT_RUNNABLE,
     NOT_DUE,
@@ -382,12 +390,13 @@ class ObserverRunner(
 
     /**
      * Publishes [owner]'s papers that are still waiting, never printing anything: only while their
-     * newest schedule (read with a quorum) still names their Assistant, as [run] does. An owner who
-     * no longer has an Assistant has theirs dropped.
+     * newest schedule (read with a quorum) still names their Assistant, as [run] does, and doesn't
+     * turn publishing off ([RunOutcome.PUBLISH_OFF]: they keep waiting, until they expire). An owner
+     * who no longer has an Assistant has theirs dropped.
      */
     suspend fun republish(owner: HexKey): RunOutcome =
         guarded(owner) {
-            val (_, pair) =
+            val (read, pair) =
                 try {
                     front(owner)
                 } catch (s: Stop) {
@@ -396,10 +405,25 @@ class ObserverRunner(
                 }
             val papers = waiting(owner)
             if (papers.isEmpty()) return@guarded RunOutcome.PRINTED
+            if (publishingOff(read, pair)) return@guarded RunOutcome.PUBLISH_OFF
             val ownerRelays = nostr.writeRelays(owner)
             val assistantRelays = nostr.writeRelays(pair.assistant)
             val site = AssistantSiteIO(owner, pair.assistant, api, nostr, assistantRelays, ownerServers(owner, ownerRelays), blossom, now)
             publishPending(pair, papers, site)
+        }
+
+    /**
+     * Whether the owner's schedule says `["param", "publish", "no"]`. A schedule that won't open says
+     * nothing either way: false, and the papers go out as they did before the param existed.
+     */
+    private suspend fun publishingOff(
+        read: ScheduleRead,
+        pair: AssistantPair,
+    ): Boolean =
+        try {
+            !FrontPageParams.publishing(ScheduledTask(read.event.tags, decryptTags(pair, read.event))).publish
+        } catch (s: Stop) {
+            false
         }
 
     /** [block], its [Stop] read as its outcome, and any other failure as [RunOutcome.ERROR]. */
@@ -572,11 +596,25 @@ class ObserverRunner(
         suspend fun servers() = serversRead ?: ownerServers(owner, ownerRelays).also { serversRead = it }
 
         suspend fun assistantSite() = AssistantSiteIO(owner, pair.assistant, api, nostr, assistantRelays, servers(), blossom, now)
+        val task =
+            try {
+                ScheduledTask(event.tags, decryptTags(pair, event))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // A schedule that won't open says nothing about publishing: papers already paid for
+                // still go out first, as they always did, before the run stops with why.
+                sendWaiting(owner) { waiting(owner).takeIf { it.isNotEmpty() }?.let { publishPending(pair, it, assistantSite()) } }
+                throw e
+            }
+        // The owner turned publishing off (the schedule's `publish` param, set in any of their
+        // apps): this service's only way to deliver a paper is the Assistant's public site, so it
+        // neither prints nor sends out a paper it printed earlier.
+        if (!FrontPageParams.publishing(task).publish) return report(owner, RunOutcome.PUBLISH_OFF)
         // Papers already paid for go out first, before anything else is decided.
         waiting(owner).takeIf { it.isNotEmpty() }?.let { publishPending(pair, it, assistantSite()) }
 
-        val task = ScheduledTask(event.tags, decryptTags(pair, event))
-        if (!ObserverParams.understands(task)) return report(owner, RunOutcome.UNKNOWN_PARAMS)
+        if (!FrontPageParams.understands(task)) return report(owner, RunOutcome.UNKNOWN_PARAMS)
         val zone = zoneOf(task.tz) ?: return report(owner, RunOutcome.UNKNOWN_ZONE)
         val at = now()
 
@@ -868,6 +906,20 @@ class ObserverRunner(
         val outcome = publish(pair, live, site)
         if (outcome == RunOutcome.PRINTED) report(pair.owner, RunOutcome.PRINTED, "${live.size} published late")
         return outcome
+    }
+
+    /** Sends the papers waiting for [owner] on a path that is already ending: a failure here is logged, never the run's outcome. */
+    private suspend fun sendWaiting(
+        owner: HexKey,
+        send: suspend () -> Unit,
+    ) {
+        try {
+            send()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w(TAG) { "owner=$owner waiting papers not sent: error=${e.javaClass.simpleName}" }
+        }
     }
 
     /** The schedule's private tags, decrypted by the Assistant from the whole signed event, once per event. */

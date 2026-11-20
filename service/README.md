@@ -42,7 +42,8 @@ tables: it learns that an occurrence is settled from the `200` this service answ
      while this service reads only `d=observer`, and would otherwise wake every 10 minutes until
      the next occurrence. Kept in memory for two days. Every other outcome without a row (the
      transient ones: `NO_QUORUM`, `NOT_READY`, `NOT_DUE`, `CLAIMED_BY_DEVICE`, which may go stale
-     and be taken over, a low balance, no 10063, …) is looked at again on the next wake, `202`;
+     and be taken over, `PUBLISH_OFF` (the owner set `["param", "publish", "no"]` in one of their
+     apps, and may set it back), a low balance, no 10063, …) is looked at again on the next wake, `202`;
    - `429` with `Retry-After: 60` when all `PARALLELISM` slots are busy, or the service is
      stopping;
    - otherwise `202` (`{"joined": false}`), and the owner's path runs in the background.

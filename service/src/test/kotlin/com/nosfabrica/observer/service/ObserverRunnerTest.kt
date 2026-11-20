@@ -238,6 +238,34 @@ class ObserverRunnerTest : RunnerWorld() {
         }
 
     @Test
+    fun publishingOffIsNotRun() =
+        runTest {
+            world()
+            schedule(task().withParam("publish", listOf("no")))
+            assertEquals(RunOutcome.PUBLISH_OFF, runner.run(owner.pubKey))
+            assertTrue(printer.calls.isEmpty())
+        }
+
+    @Test
+    fun publishingConfirmedInAnAppIsUnderstoodAndRun() =
+        runTest {
+            world()
+            schedule(task().withParam("publish", listOf("yes")))
+            runner.run(owner.pubKey)
+            assertEquals(1, printer.calls.size)
+        }
+
+    @Test
+    fun aWeatherPlaceIsUnderstoodAndRun() =
+        runTest {
+            world()
+            // The apps draw the weather over the paper they show; the Assistant prints without it.
+            schedule(task().withParam("place", listOf("Lisboa, Portugal", "38.72", "-9.13", "metric")))
+            runner.run(owner.pubKey)
+            assertEquals(1, printer.calls.size)
+        }
+
+    @Test
     fun aPausedScheduleIsNotRun() =
         runTest {
             world()

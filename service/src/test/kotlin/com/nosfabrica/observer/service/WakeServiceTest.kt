@@ -284,6 +284,28 @@ class WakeServiceTest : RunnerWorld() {
         }
 
     @Test
+    fun theRetryLoopSendsNothingWhileTheOwnerTurnedPublishingOff() =
+        runTest {
+            world()
+            schedule()
+            val service = service()
+            blossom.down = true
+            service.wake(wake())
+            service.idle()
+            blossom.down = false
+            // The owner turned publishing off in one of their apps; the Assistant is still named.
+            schedule(task().withParam("publish", listOf("no")), createdAt = now)
+            clock += 600
+            val asked = blossom.requests.size
+            service.republishPending()
+            service.idle()
+            assertTrue(relays.published.isEmpty())
+            assertEquals(asked, blossom.requests.size, "a paper went to Blossom")
+            // Still waiting, in case they turn it back on within its 12 hours.
+            assertEquals(1, pending.list(ObserverRunner.TASK, owner.pubKey).size)
+        }
+
+    @Test
     fun theRetryLoopDropsThePapersOfAnOwnerWithNoAssistant() =
         runTest {
             world()

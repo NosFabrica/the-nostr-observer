@@ -11,7 +11,7 @@
 #
 # Deliberately NOT ported, because they are the app, not the engine:
 #   FrontPageViewModel, FrontPageMorning (the per-device claim), FrontPageSchedule (local
-#   prefs), FrontPagePrintJob, FrontPageModelMemory, ObserverPrefs, ModelChoices (the picker),
+#   prefs), FrontPagePrintJob, FrontPageModelMemory, ModelChoices (the picker),
 #   ObserverSiteIO's AccountObserverSiteIO, FrontPageEditionStore, and the FrontPagePrinter
 #   class (only its account-free declarations are here; its editionContext, the edition's number,
 #   headlines, standing paper and clock, is the runner's ObserverRunner.editionContext here). The
@@ -20,6 +20,8 @@
 #   FrontPageMorning's setEffort and observerSettingsOnly: WriterRequestTest keeps a private copy
 #   of the latter for its one effort test.
 # Deliberately different:
+#   ObserverPrefs.kt is only the data class (the `publish` param's reading, FrontPageParams.publishing,
+#   is in FrontPageEffort.kt); its SyncedSchedule.observerPrefs() reader is the app's schedule state.
 #   ObserverPublisher takes `forReader`, for a runner's site (to be upstreamed).
 #   Platform.kt stands in for the bits of Amethyst's commons the engine imports.
 #   Routstr.kt is commons/routstr's RoutstrError.kt, RoutstrPricing.kt (the runner's balance
