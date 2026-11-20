@@ -279,6 +279,117 @@ const FORBIDDEN_SCHEME = /^\s*(javascript|vbscript|data)\s*:/i
 /** Scheme-bearing attributes. A `data:` image is allowed nowhere; see below. */
 const URL_ATTRS = ['href', 'src', 'action', 'formaction', 'poster', 'background', 'srcset', 'data', 'xlink:href']
 
+// --- CSS that prints or hides words the markup doesn't hold --------------------
+//
+// The same rules as the generator's JsoupPaperBoundary (and Amethyst's, and
+// Brainstorm's): every word on the page is in its markup. A nested rule
+// (`main { & blockquote em { display:none } }`) is refused outright, since the
+// checks below read flat declarations only; `content`, `quotes` that are words,
+// and a string `list-style`/`hyphenate-character` print text of their own.
+
+/** End of the quoted string starting at `at`. */
+function skipString (css, at) {
+  const end = css.indexOf(css[at], at + 1)
+  return end < 0 ? css.length : end + 1
+}
+
+/** Top-level `prelude { body }` blocks; strings may hold braces. */
+function cssBlocks (css) {
+  const out = []
+  let start = 0
+  for (let i = 0; i < css.length;) {
+    const ch = css[i]
+    if (ch === '"' || ch === "'") {
+      i = skipString(css, i)
+    } else if (ch === '{') {
+      let depth = 1
+      let j = i + 1
+      while (j < css.length && depth > 0) {
+        const c = css[j]
+        if (c === '"' || c === "'") { j = skipString(css, j); continue }
+        if (c === '{') depth++
+        else if (c === '}') depth--
+        j++
+      }
+      out.push({ prelude: css.slice(start, i).trim(), body: css.slice(i + 1, depth === 0 ? j - 1 : j) })
+      i = j
+      start = j
+    } else {
+      if (ch === ';' || ch === '}') start = i + 1
+      i++
+    }
+  }
+  return out
+}
+
+/** Every style rule's body, at any depth of @media / @supports / @layer / @container. */
+function ruleBodies (css) {
+  const out = []
+  const visit = (text) => {
+    for (const { prelude, body } of cssBlocks(text)) {
+      if (!prelude.startsWith('@')) out.push(body)
+      else if (!/^@(-webkit-)?keyframes\b/i.test(prelude)) visit(body)
+    }
+  }
+  visit(css.replace(/\/\*[\s\S]*?(\*\/|$)/g, ' '))
+  return out
+}
+
+/** A `{` in a declaration block, outside its strings: a nested rule. */
+function hasNestedRule (body) {
+  for (let i = 0; i < body.length;) {
+    const ch = body[i]
+    if (ch === '"' || ch === "'") i = skipString(body, i)
+    else if (ch === '{') return true
+    else i++
+  }
+  return false
+}
+
+function declarations (body) {
+  const out = []
+  let start = 0
+  const push = (end) => {
+    const part = body.slice(start, end)
+    const colon = part.indexOf(':')
+    if (colon > 0) out.push({ prop: part.slice(0, colon).trim().toLowerCase(), value: part.slice(colon + 1).replace(/!important\s*$/i, '').trim() })
+  }
+  for (let i = 0; i < body.length;) {
+    const ch = body[i]
+    if (ch === '"' || ch === "'") { i = skipString(body, i); continue }
+    if (ch === ';') { push(i); start = i + 1 }
+    i++
+  }
+  push(body.length)
+  return out
+}
+
+const QUOTE_MARKS = /^[\s"'“”‘’«»‹›„‚‛‟「」『』〝〞]*$/
+const MARKER_TEXT = new Set(['list-style', 'list-style-type', 'hyphenate-character'])
+
+function generatedText (prop, value) {
+  if (prop === 'content' && !/^(none|normal|""|'')$/i.test(value)) return 'CSS generated content - every word on the page is in its markup'
+  if (prop === 'quotes') {
+    for (const m of value.matchAll(/"([^"]*)"|'([^']*)'/g)) {
+      if (!QUOTE_MARKS.test(m[1] ?? m[2] ?? '')) return 'CSS quotes: that are words, not quote marks'
+    }
+  }
+  if (MARKER_TEXT.has(prop) && !/^[-\w\s]*$/.test(value)) return `CSS ${prop} that is not a keyword - every word on the page is in its markup`
+  return null
+}
+
+const NESTED = 'a nested CSS rule - every rule is flat, so the checks read what a browser applies'
+
+function cssTextViolations (bodies, excerpt, out) {
+  for (const body of bodies) {
+    if (hasNestedRule(body)) { out.push({ kind: 'MARKUP', detail: NESTED, excerpt }); continue }
+    for (const { prop, value } of declarations(body)) {
+      const detail = generatedText(prop, value)
+      if (detail) out.push({ kind: 'MARKUP', detail, excerpt: `${prop}: ${value}`.slice(0, 80) })
+    }
+  }
+}
+
 export function markupViolations (html) {
   const out = []
   for (const tag of tags(html)) {
@@ -288,6 +399,7 @@ export function markupViolations (html) {
     if (tag.name === 'meta' && FORBIDDEN_META.test(attrs['http-equiv'] || '')) {
       out.push({ kind: 'MARKUP', detail: `a <meta http-equiv="${attrs['http-equiv']}">, which redirects or rewrites policy`, excerpt: tag.raw.slice(0, 80) })
     }
+    if (typeof attrs.style === 'string') cssTextViolations([attrs.style], tag.raw.slice(0, 80), out)
     for (const [name, value] of Object.entries(attrs)) {
       if (name.startsWith('on')) {
         out.push({ kind: 'MARKUP', detail: `the page contains an inline event handler (${name}=)`, excerpt: tag.raw.slice(0, 80) })
@@ -302,6 +414,7 @@ export function markupViolations (html) {
     if (/@import|url\s*\(\s*["']?\s*(javascript|data)\s*:/i.test(block.raw)) {
       out.push({ kind: 'MARKUP', detail: 'the stylesheet imports or embeds something', excerpt: block.raw.slice(0, 80) })
     }
+    cssTextViolations(ruleBodies(block.raw), block.raw.slice(0, 80), out)
   }
   return out
 }

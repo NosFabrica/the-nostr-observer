@@ -447,3 +447,37 @@ test('unwrapping an open-web link does not depend on the case of its closing tag
     assert.doesNotMatch(html, /<a\b/i)
   }
 })
+
+// --- Audit, 2026-11-20: CSS that prints or hides words past the boundary ----
+
+test('a nested CSS rule is refused, wherever it sits', () => {
+  const quote = "<main><blockquote><p>The relay answered in three seconds flat</p></blockquote></main>"
+  for (const css of [
+    'main { & blockquote em { display:none } }',
+    'main { & blockquote::after { content:" - just kidding" } }',
+    'main { blockquote em { display:none } }',
+    '@media screen { main { & em { display:none } } }',
+  ]) {
+    assert.ok(kinds(`<style>${css}</style>${quote}`).includes('MARKUP'), `not refused: ${css}`)
+  }
+  assert.ok(kinds(`<main style="& em { display:none }">${quote}</main>`).includes('MARKUP'))
+  // A brace inside a string is not a nested rule, and @media holds rules of its own.
+  assert.deepEqual(kinds('<style>p{font-family:"a{b}"} @media (max-width:600px){p{margin:0}}</style><p>x</p>'), [])
+})
+
+test('generated text is refused: content, quotes that are words, string list markers, hyphenate-character', () => {
+  const quote = "<blockquote><p>The relay answered in three seconds flat</p></blockquote>"
+  for (const css of [
+    'blockquote::after { content:" - just kidding" }',
+    'q { quotes: "Never: " "" }',
+    'body { list-style-type: "Nobody believes this: " } blockquote p { display: list-item }',
+    "body { list-style: 'Nobody believes this: ' inside } blockquote p { display: list-item }",
+    'body { list-style-type: symbols(cyclic "Nobody") } blockquote p { display: list-item }',
+    'blockquote p { hyphens: manual; hyphenate-character: " - not really - " }',
+  ]) {
+    assert.ok(kinds(`<style>${css}</style>${quote}`).includes('MARKUP'), `not refused: ${css}`)
+  }
+  assert.ok(kinds(`<p style="list-style-type:'Nobody: '">x</p>`).includes('MARKUP'))
+  // Keywords, empty content and real quote marks are fine.
+  assert.deepEqual(kinds('<style>ul{list-style:disc inside}ol{list-style-type:decimal}p{hyphens:auto;hyphenate-character:auto}.rule::after{content:""}q{quotes:"“" "”"}</style><p>x</p>'), [])
+})
