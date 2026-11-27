@@ -21,7 +21,7 @@ cryptoKmp = "2.1.0"
 coroutines = "1.11.0"
 serialization = "1.12.0"
 okhttp = "5.5.1"
-jsoup = "1.21.1"
+jsoup = "1.23.2"
 # The service's Postgres (brainstorm_server's `brainstorm_nsec` columns, its own `observer` schema).
 # BSD-2-Clause (its POM's <licenses>); its one required runtime dependency, checker-qual, is MIT.
 postgresql = "42.7.14"
